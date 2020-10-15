@@ -2,6 +2,8 @@ module Ourlude
   ( module Prelude,
     (|>),
     (<|),
+    (>>>),
+    (<<<),
   )
 where
 
