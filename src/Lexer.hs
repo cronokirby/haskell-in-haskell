@@ -2,7 +2,7 @@
 
 module Lexer (Token (..), lexer) where
 
-import Control.Applicative
+import Control.Applicative (Alternative (..))
 import Data.List (foldl1')
 import Ourlude
 
