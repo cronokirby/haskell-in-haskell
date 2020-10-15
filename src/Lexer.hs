@@ -3,7 +3,42 @@
 module Lexer (Token (..), lexer) where
 
 import Control.Applicative
+import Data.List (foldl1')
 import Ourlude
+
+newtype Lexer a = Lexer {runLexer :: String -> Maybe (a, String)}
+
+instance Functor Lexer where
+  fmap f (Lexer l) = Lexer (l >>> fmap (\(a, s) -> (f a, s)))
+
+instance Applicative Lexer where
+  pure a = Lexer (\input -> Just (a, input))
+  Lexer lF <*> Lexer lA =
+    Lexer <| \input -> case lF input of
+      Nothing -> Nothing
+      Just (f, rest) -> lA rest |> fmap (\(a, s) -> (f a, s))
+
+instance Alternative Lexer where
+  empty = Lexer (const Nothing)
+  Lexer lA <|> Lexer lB =
+    Lexer <| \input -> case (lA input, lB input) of
+      (res, Nothing) -> res
+      (Nothing, res) -> res
+      -- Implement the longest match rule
+      (a@(Just (_, restA)), b@(Just (_, restB))) ->
+        if length restA <= length restB then a else b
+
+satisfies :: (Char -> Bool) -> Lexer Char
+satisfies p =
+  Lexer <| \input -> case input of
+    c : cs | p c -> Just (c, cs)
+    _ -> Nothing
+
+char :: Char -> Lexer Char
+char target = satisfies (== target)
+
+string :: String -> Lexer String
+string = traverse char
 
 -- Represents a kind of Token we can lex out.
 --
@@ -43,40 +78,9 @@ data Token
   | Name String -- A reference to some kind of name
   deriving (Eq, Show)
 
-newtype Lexer a = Lexer {runLexer :: String -> Maybe (a, String)}
-
-instance Functor Lexer where
-  fmap f (Lexer l) = Lexer (l >>> fmap (\(a, s) -> (f a, s)))
-
-instance Applicative Lexer where
-  pure a = Lexer (\input -> Just (a, input))
-  Lexer lF <*> Lexer lA =
-    Lexer <| \input -> case lF input of
-      Nothing -> Nothing
-      Just (f, rest) -> lA rest |> fmap (\(a, s) -> (f a, s))
-
-instance Alternative Lexer where
-  empty = Lexer (const Nothing)
-  Lexer lA <|> Lexer lB =
-    Lexer <| \input -> case (lA input, lB input) of
-      (res, Nothing) -> res
-      (Nothing, res) -> res
-      -- Implement the longest match rule
-      (a@(Just (_, restA)), b@(Just (_, restB))) ->
-        if length restA <= length restB then a else b
-
-char :: Char -> Lexer Char
-char target =
-  Lexer <| \input -> case input of
-    c : cs | c == target -> Just (target, cs)
-    _ -> Nothing
-
-string :: String -> Lexer String
-string = traverse char
-
 token :: Lexer Token
 token =
-  foldr1
+  foldl1'
     (<|>)
     [ Let <$ string "let",
       Where <$ string "where",
