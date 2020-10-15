@@ -9,5 +9,5 @@ tests :: TestTree
 tests =
   testGroup
     "Lexer Tests"
-    [ testCase "parsing keywords" (lexer "letcaseifthenelse" @=? Just [Let, Case, If, Then, Else])
+    [ testCase "parsing keywords" (lexer "let case \n of if then else" @=? Just [Let, Case, Of, If, Then, Else])
     ]

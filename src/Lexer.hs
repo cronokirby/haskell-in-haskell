@@ -3,6 +3,7 @@
 module Lexer (Token (..), lexer) where
 
 import Control.Applicative (Alternative (..))
+import Data.Char (isSpace)
 import Data.List (foldl1')
 import Ourlude
 
@@ -94,5 +95,14 @@ token =
       Of <$ string "of"
     ]
 
+whitespace :: Lexer String
+whitespace = some (satisfies isSpace)
+
 lexer :: String -> Maybe [Token]
-lexer = runLexer (many token) >>> fmap fst
+lexer = runLexer (many item) >>> fmap (fst >>> filterRight)
+  where
+    item = fmap Right token <|> fmap Left whitespace
+    filterRight =
+      let go (Right x) acc = x : acc
+          go (Left _) acc = acc
+       in foldr go []
