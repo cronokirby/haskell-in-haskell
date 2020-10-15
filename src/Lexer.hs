@@ -92,17 +92,21 @@ token =
       Then <$ string "then",
       Else <$ string "else",
       Case <$ string "case",
-      Of <$ string "of"
+      Of <$ string "of",
+      Dash <$ char '-',
+      ThinArrow <$ string "->"
     ]
 
 whitespace :: Lexer String
 whitespace = some (satisfies isSpace)
 
+data RawToken = Whitespace String | RawToken Token
+
 lexer :: String -> Maybe [Token]
-lexer = runLexer (many item) >>> fmap (fst >>> filterRight)
+lexer = runLexer (some item) >>> fmap (fst >>> filterTokens)
   where
-    item = fmap Right token <|> fmap Left whitespace
-    filterRight =
-      let go (Right x) acc = x : acc
-          go (Left _) acc = acc
+    item = fmap RawToken token <|> fmap Whitespace whitespace
+    filterTokens =
+      let go (RawToken x) acc = x : acc
+          go (Whitespace _) acc = acc
        in foldr go []
