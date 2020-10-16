@@ -7,11 +7,19 @@ import Data.Char (isAlphaNum, isDigit, isLower, isSpace, isUpper)
 import Data.List (foldl1')
 import Ourlude
 
+-- A Lexer takes an input string, and can consume part of that string to return a result, or fail
+--
+-- Lexers are like parser combinators, except that they cannot do conditional decision making,
+-- or return multiple results. They always return the result that consumed more input,
+-- which corresponds to the "longest match" rule you want in a lexical analyzer
 newtype Lexer a = Lexer {runLexer :: String -> Maybe (a, String)}
 
+-- We can map over the result of a lexer, without changing what strings are recognized
 instance Functor Lexer where
   fmap f (Lexer l) = Lexer (l >>> fmap (\(a, s) -> (f a, s)))
 
+-- We can squash two lexers together, getting a lexer that recognizes the first input,
+-- followed by the second input
 instance Applicative Lexer where
   pure a = Lexer (\input -> Just (a, input))
   Lexer lF <*> Lexer lA =
@@ -19,6 +27,7 @@ instance Applicative Lexer where
       Nothing -> Nothing
       Just (f, rest) -> lA rest |> fmap (\(a, s) -> (f a, s))
 
+-- We can choose between two successful lexes by picking the one that consumed more input
 instance Alternative Lexer where
   empty = Lexer (const Nothing)
   Lexer lA <|> Lexer lB =
@@ -29,18 +38,24 @@ instance Alternative Lexer where
       (a@(Just (_, restA)), b@(Just (_, restB))) ->
         if length restA <= length restB then a else b
 
+-- A lexer that matches a single character matching a predicate
 satisfies :: (Char -> Bool) -> Lexer Char
 satisfies p =
   Lexer <| \input -> case input of
     c : cs | p c -> Just (c, cs)
     _ -> Nothing
 
+-- A lexer that matches a single character
 char :: Char -> Lexer Char
 char target = satisfies (== target)
 
+-- A lexer that matches an entire string
 string :: String -> Lexer String
 string = traverse char
 
+-- Create an alternation of a list of lexers.
+--
+-- This will match if any of the lexers matches, picking the longest match, as usual.
 oneOf :: [Lexer a] -> Lexer a
 oneOf = foldl1' (<|>)
 
@@ -82,6 +97,7 @@ data Token
   | Name String -- A reference to some kind of name
   deriving (Eq, Show)
 
+-- Lex out one of the tokens in our language
 token :: Lexer Token
 token = keywords <|> operators <|> intLitt <|> typeName <|> name
   where
@@ -129,12 +145,14 @@ token = keywords <|> operators <|> intLitt <|> typeName <|> name
     name :: Lexer Token
     name = (liftA2 (:) (satisfies isLower) (many continuesName)) |> fmap Name
 
+-- A lexer that matches as much whitespace as ossible
 whitespace :: Lexer String
 whitespace = some (satisfies isSpace)
 
 -- A raw token is either a "real" token, or some whitespace that we actually want to ignore
 data RawToken = Whitespace String | RawToken Token
 
+-- Lex a specific string, producing a list of tokens if no errors occurred.
 lexer :: String -> Maybe [Token]
 lexer = runLexer (some item) >>> fmap (fst >>> filterTokens)
   where
