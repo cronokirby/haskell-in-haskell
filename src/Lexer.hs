@@ -145,19 +145,45 @@ token = keywords <|> operators <|> intLitt <|> typeName <|> name
     name :: Lexer Token
     name = (liftA2 (:) (satisfies isLower) (many continuesName)) |> fmap Name
 
--- A lexer that matches as much whitespace as ossible
-whitespace :: Lexer String
-whitespace = some (satisfies isSpace)
-
 -- A raw token is either a "real" token, or some whitespace that we actually want to ignore
-data RawToken = Whitespace String | RawToken Token
+data RawToken = Blankspace String | Newline | RawToken Token
+
+rawLexer :: Lexer [RawToken]
+rawLexer = some (fmap RawToken token <|> whitespace)
+  where
+    whitespace = blankspace <|> newline
+    blankspace = Blankspace <$> some (satisfies (\x -> isSpace x && x /= '\n'))
+    newline = Newline <$ char '\n'
 
 -- Lex a specific string, producing a list of tokens if no errors occurred.
 lexer :: String -> Maybe [Token]
-lexer = runLexer (some item) >>> fmap (fst >>> filterTokens)
+lexer = runLexer rawLexer >>> fmap (fst >>> filterTokens)
   where
-    item = fmap RawToken token <|> fmap Whitespace whitespace
     filterTokens =
       let go (RawToken x) acc = x : acc
-          go (Whitespace _) acc = acc
+          go (Blankspace _) acc = acc
+          go Newline acc = acc
        in foldr go []
+
+-- Represents a position a token can have.
+--
+-- A token is either at the start of a line, in which case we care about its column,
+-- or in the middle of a line, in which case we don't care
+data Position = Start Int | Middle
+
+-- Some type annotated with a position
+data Positioned a = Positioned a Position
+
+-- Take tokens and whitespace, and return positioned tokens, with whitespace filtered out
+position :: [RawToken] -> [Positioned Token]
+position = foldr go (Start 0, []) >>> snd
+  where
+    eat :: Position -> RawToken -> (Position, Maybe (Positioned Token))
+    eat (Start c) (Blankspace s) = (Start (c + length s), Nothing)
+    eat Middle (Blankspace _) = (Middle, Nothing)
+    eat _ Newline = (Start 0, Nothing)
+    eat p (RawToken t) = (Middle, Just (Positioned t p))
+    go :: RawToken -> (Position, [Positioned Token]) -> (Position, [Positioned Token])
+    go raw (p, acc) = case eat p raw of
+      (p', Just tok) -> (p', tok : acc)
+      (p', Nothing) -> (p', acc)
