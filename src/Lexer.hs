@@ -4,7 +4,7 @@ module Lexer (Token (..), lexer) where
 
 import Control.Applicative (Alternative (..), liftA2)
 import Data.Char (isAlphaNum, isDigit, isLower, isSpace, isUpper)
-import Data.List (foldl1')
+import Data.List (foldl', foldl1')
 import Ourlude
 
 -- A Lexer takes an input string, and can consume part of that string to return a result, or fail
@@ -92,7 +92,7 @@ data Token
   | Equal -- `=`
   | Dot -- `.`
   | Dollar -- `$`
-  | StartOfFile
+  | StartOfFile -- a virtual token that starts a file
   | IntLitt Int -- An integer litteral
   | TypeName String -- A reference to some kind of type name
   | Name String -- A reference to some kind of name
@@ -151,14 +151,17 @@ token = keywords <|> operators <|> intLitt <|> typeName <|> name
 -- A raw token is either a "real" token, or some whitespace that we actually want to ignore
 data RawToken = Blankspace String | Newline | RawToken Token String
 
+-- A Lexer for raw tokens
 rawLexer :: Lexer [RawToken]
-rawLexer = fmap (RawToken StartOfFile "" :) (some item)
+rawLexer = some (whitespace <|> fmap (uncurry RawToken) token)
   where
-    item = whitespace <|> fmap (uncurry RawToken) token
     whitespace = blankspace <|> newline
     blankspace = Blankspace <$> some (satisfies (\x -> isSpace x && x /= '\n'))
     newline = Newline <$ char '\n'
 
+-- Represents a position some token can have in the middle of a line.
+--
+-- A token is either at the start of the line, or appears somewhere in the middle
 data LinePosition = Start | Middle
 
 -- Some type annotated with a position
@@ -166,14 +169,14 @@ data Positioned a = Positioned a LinePosition Int
 
 -- Take tokens and whitespace, and return positioned tokens, with whitespace filtered out
 position :: [RawToken] -> [Positioned Token]
-position = foldr go ((Start, 0), []) >>> snd
+position = foldl' go ((Start, 0), []) >>> snd >>> reverse
   where
     eat :: (LinePosition, Int) -> RawToken -> ((LinePosition, Int), Maybe (Positioned Token))
     eat _ Newline = ((Start, 0), Nothing)
     eat (pos, col) (Blankspace s) = ((pos, col + length s), Nothing)
     eat (pos, col) (RawToken t s) = ((Middle, col + length s), Just (Positioned t pos col))
-    go :: RawToken -> ((LinePosition, Int), [Positioned Token]) -> ((LinePosition, Int), [Positioned Token])
-    go raw (p, acc) = case eat p raw of
+    go :: ((LinePosition, Int), [Positioned Token]) -> RawToken -> ((LinePosition, Int), [Positioned Token])
+    go (p, acc) raw = case eat p raw of
       (p', Just tok) -> (p', tok : acc)
       (p', Nothing) -> (p', acc)
 
@@ -181,7 +184,7 @@ position = foldr go ((Start, 0), []) >>> snd
 data Layout = Explicit | Implicit Int
 
 layout :: [Positioned Token] -> Maybe [Token]
-layout tokens = go tokens []
+layout tokens = go (Positioned StartOfFile Start 0 : tokens) []
   where
     startsLayout :: Token -> Bool
     startsLayout t = elem t [Let, Where, Of, StartOfFile]
@@ -206,7 +209,7 @@ layout tokens = go tokens []
     -- If nothing else applies, we just want to emit the tokens we see
     go (Positioned t _ _ : ts) ls = fmap (t :) (go ts ls)
     -- Close all of the implicit layouts
-    go [] (Implicit _ : ls) = fmap (OpenBrace :) (go [] ls)
+    go [] (Implicit _ : ls) = fmap (CloseBrace :) (go [] ls)
     -- Any remaining explicit layouts are unclosed, and an error
     go [] (Explicit : _) = Nothing
     go [] [] = Just []
