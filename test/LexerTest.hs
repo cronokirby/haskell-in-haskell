@@ -9,6 +9,27 @@ tests :: TestTree
 tests =
   testGroup
     "Lexer Tests"
-    [ testCase "parsing keywords" (Just [Let, Case, Of, If, Then, Else] @=? lexer "let case \n of if then else"),
-      testCase "parsing operators" (Just [ThinArrow, Dash] @=? lexer "-> -")
+    [ testCase "lexing keywords" (Just [Let, Where, In, Data, Type, If, Then, Else, Case, Of] @=? lexer "let where in data type if then else case of"),
+      testCase "lexing operators" (Just operators @=? lexer "() {} ; :: -> | \\ / + - * = . $"),
+      testCase "lexing names" (Just [Name "foo32'", TypeName "A34'"] @=? lexer "foo32' A34'"),
+      testCase "lexing integer litterals" (Just [Dash, IntLitt 42, IntLitt 32] @=? lexer "-42 32")
     ]
+  where
+    operators =
+      [ OpenParens,
+        CloseParens,
+        OpenBrace,
+        CloseBrace,
+        Semicolon,
+        DoubleColon,
+        ThinArrow,
+        VBar,
+        BSlash,
+        FSlash,
+        Plus,
+        Dash,
+        Asterisk,
+        Equal,
+        Dot,
+        Dollar
+      ]
