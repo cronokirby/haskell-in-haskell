@@ -197,39 +197,58 @@ position = foldl' go ((Start, 0), []) >>> snd >>> reverse
 -- A layout is either one explicitly declared by the user, or implicitly declared at a certain column
 data Layout = Explicit | Implicit Int
 
+-- Represents the state we have access to as we're laying out our tokens
+--
+-- We have a current stack of layouts, a stream of tokens, and a flag to know if the
+-- we're looking to start a layout with the next token.
 data LayoutState = LayoutState {layouts :: [Layout], tokens :: [Token], expectingLayout :: Bool}
 
+-- The Monadic context we use for laying out tokens.
+--
+-- We might fail with an error, and otherwise we have access to a context we can modify.
 type LayoutM a = ExceptT LexerError (State LayoutState) a
 
+-- Produce a token
 yieldToken :: Token -> LayoutM ()
 yieldToken t = modify' (\s -> s {tokens = t : tokens s})
 
+-- Push a new layout onto our stack
 pushLayout :: Layout -> LayoutM ()
 pushLayout l = modify' (\s -> s {layouts = l : layouts s})
 
+-- Pop a layout from our stack.
+--
+-- This has no effect if our stack is empty.
 popLayout :: LayoutM ()
 popLayout = modify' (\s -> s {layouts = pop (layouts s)})
   where
     pop [] = []
     pop (_ : xs) = xs
 
-topLayout :: LayoutM (Maybe Layout)
-topLayout = gets layouts |> fmap listToMaybe
+-- Get the current layout, if it exists.
+currentLayout :: LayoutM (Maybe Layout)
+currentLayout = gets layouts |> fmap listToMaybe
 
+-- Compare a level of indentation with the current layout.
+--
+-- The provided column is greater than no layout, or an explicit layout. And
+-- compares with an implicit layout based on its column.
 compareIndentation :: Int -> LayoutM Ordering
-compareIndentation col = do
-  top <- topLayout
-  return <| case top of
-    Nothing -> GT
-    Just Explicit -> GT
-    Just (Implicit n) -> compare col n
+compareIndentation col =
+  let cmp Nothing = GT
+      cmp (Just Explicit) = GT
+      cmp (Just (Implicit n)) = compare col n
+   in fmap cmp currentLayout
 
+-- Run the layout context, producing either an error, or the tokens with the inferred layout tokens.
 runLayoutM :: LayoutM a -> Either LexerError [Token]
 runLayoutM =
   runExceptT >>> (`runState` (LayoutState [] [] True)) >>> \case
     (Left e, _) -> Left e
     (Right _, LayoutState _ ts _) -> Right (reverse ts)
 
+-- Take a stream of positioned tokens, and produce either an error, or the tokens
+-- with semicolons and braces inserted judiciously.
 layout :: [Positioned Token] -> Either LexerError [Token]
 layout inputs =
   runLayoutM <| do
@@ -251,7 +270,7 @@ layout inputs =
       yieldToken t
     closeExplicitLayout :: LayoutM ()
     closeExplicitLayout =
-      topLayout >>= \case
+      currentLayout >>= \case
         Just Explicit -> popLayout
         _ -> throwError (Unexpected '}')
     startExplicitLayout :: LayoutM ()
@@ -261,10 +280,13 @@ layout inputs =
     startImplicitLayout :: Int -> LayoutM ()
     startImplicitLayout col = do
       modify' (\s -> s {expectingLayout = False})
+      -- Regardless of what happens, we're starting a layout...
       compareIndentation col >>= \case
         GT -> do
           yieldToken OpenBrace
           pushLayout (Implicit col)
+        -- But if we're not indented further, we're immediately ending that layout.
+        -- Furthermore, we might be continuing an implicit layout.
         _ -> do
           yieldToken OpenBrace
           yieldToken CloseBrace
@@ -285,7 +307,7 @@ layout inputs =
             _ -> return ()
     closeImplicitLayouts :: LayoutM ()
     closeImplicitLayouts =
-      topLayout >>= \case
+      currentLayout >>= \case
         Nothing -> return ()
         Just Explicit -> throwError UnmatchedLayout
         Just (Implicit _) -> do
