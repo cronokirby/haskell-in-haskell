@@ -4,8 +4,8 @@
 module Lexer (Token (..), lexer) where
 
 import Control.Applicative (Alternative (..), liftA2)
-import Control.Monad.Except
-import Control.Monad.State
+import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT)
+import Control.Monad.State (State, gets, modify', runState)
 import Data.Char (isAlphaNum, isDigit, isLower, isSpace, isUpper)
 import Data.List (foldl', foldl1')
 import Data.Maybe (listToMaybe)
@@ -174,10 +174,10 @@ rawLexer = some (whitespace <|> fmap (uncurry RawToken) token)
 -- Represents a position some token can have in the middle of a line.
 --
 -- A token is either at the start of the line, or appears somewhere in the middle
-data LinePosition = Start | Middle deriving (Eq)
+data LinePosition = Start | Middle deriving (Eq, Show)
 
 -- Some type annotated with a position
-data Positioned a = Positioned a LinePosition Int
+data Positioned a = Positioned a LinePosition Int deriving (Show)
 
 -- Take tokens and whitespace, and return positioned tokens, with whitespace filtered out
 position :: [RawToken] -> [Positioned Token]
