@@ -161,14 +161,15 @@ token = keywords <|> operators <|> intLitt <|> typeName <|> name
     name = (liftA2 (:) (satisfies isLower) (many continuesName)) |> fmap (\x -> (Name x, x))
 
 -- A raw token is either a "real" token, or some whitespace that we actually want to ignore
-data RawToken = Blankspace String | Newline | RawToken Token String
+data RawToken = Blankspace String | Comment String | Newline | RawToken Token String
 
 -- A Lexer for raw tokens
 rawLexer :: Lexer [RawToken]
-rawLexer = some (whitespace <|> fmap (uncurry RawToken) token)
+rawLexer = some (whitespace <|> comment <|> fmap (uncurry RawToken) token)
   where
     whitespace = blankspace <|> newline
     blankspace = Blankspace <$> some (satisfies (\x -> isSpace x && x /= '\n'))
+    comment = Comment <$> (string "--" *> some (satisfies (\x -> x /= '\n')))
     newline = Newline <$ char '\n'
 
 -- Represents a position some token can have in the middle of a line.
@@ -185,6 +186,7 @@ position = foldl' go ((Start, 0), []) >>> snd >>> reverse
   where
     eat :: (LinePosition, Int) -> RawToken -> ((LinePosition, Int), Maybe (Positioned Token))
     eat _ Newline = ((Start, 0), Nothing)
+    eat _ (Comment _) = ((Start, 0), Nothing)
     eat (pos, col) (Blankspace s) = ((pos, col + length s), Nothing)
     eat (pos, col) (RawToken t s) = ((Middle, col + length s), Just (Positioned t pos col))
     go :: ((LinePosition, Int), [Positioned Token]) -> RawToken -> ((LinePosition, Int), [Positioned Token])
