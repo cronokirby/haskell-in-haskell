@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Lexer (Token (..), lexer) where
 
@@ -7,12 +8,20 @@ import Data.Char (isAlphaNum, isDigit, isLower, isSpace, isUpper)
 import Data.List (foldl', foldl1')
 import Ourlude
 
+-- Represents the kind of error that can occur
+data LexerError = Unexpected Char | UnexpectedEOF | UnmatchedLayout deriving (Eq, Show)
+
+-- Create the right lex error when we encounter an unexpected string
+unexpected :: String -> LexerError
+unexpected [] = UnexpectedEOF
+unexpected (c : _) = Unexpected c
+
 -- A Lexer takes an input string, and can consume part of that string to return a result, or fail
 --
 -- Lexers are like parser combinators, except that they cannot do conditional decision making,
 -- or return multiple results. They always return the result that consumed more input,
 -- which corresponds to the "longest match" rule you want in a lexical analyzer
-newtype Lexer a = Lexer {runLexer :: String -> Maybe (a, String)}
+newtype Lexer a = Lexer {runLexer :: String -> Either LexerError (a, String)}
 
 -- We can map over the result of a lexer, without changing what strings are recognized
 instance Functor Lexer where
@@ -21,29 +30,30 @@ instance Functor Lexer where
 -- We can squash two lexers together, getting a lexer that recognizes the first input,
 -- followed by the second input
 instance Applicative Lexer where
-  pure a = Lexer (\input -> Just (a, input))
+  pure a = Lexer (\input -> Right (a, input))
   Lexer lF <*> Lexer lA =
-    Lexer <| \input -> case lF input of
-      Nothing -> Nothing
-      Just (f, rest) -> lA rest |> fmap (\(a, s) -> (f a, s))
+    Lexer <| \input -> do
+      (f, rest) <- lF input
+      (a, s) <- lA rest
+      return (f a, s)
 
 -- We can choose between two successful lexes by picking the one that consumed more input
 instance Alternative Lexer where
-  empty = Lexer (const Nothing)
+  empty = Lexer (Left <<< unexpected)
   Lexer lA <|> Lexer lB =
     Lexer <| \input -> case (lA input, lB input) of
-      (res, Nothing) -> res
-      (Nothing, res) -> res
+      (res, Left _) -> res
+      (Left _, res) -> res
       -- Implement the longest match rule
-      (a@(Just (_, restA)), b@(Just (_, restB))) ->
+      (a@(Right (_, restA)), b@(Right (_, restB))) ->
         if length restA <= length restB then a else b
 
 -- A lexer that matches a single character matching a predicate
 satisfies :: (Char -> Bool) -> Lexer Char
 satisfies p =
   Lexer <| \input -> case input of
-    c : cs | p c -> Just (c, cs)
-    _ -> Nothing
+    c : cs | p c -> Right (c, cs)
+    rest -> Left (unexpected rest)
 
 -- A lexer that matches a single character
 char :: Char -> Lexer Char
@@ -183,15 +193,15 @@ position = foldl' go ((Start, 0), []) >>> snd >>> reverse
 -- A layout is either one explicitly declared by the user, or implicitly declared at a certain column
 data Layout = Explicit | Implicit Int
 
-layout :: [Positioned Token] -> Maybe [Token]
+layout :: [Positioned Token] -> Either LexerError [Token]
 layout tokens = go (Positioned StartOfFile Start 0 : tokens) []
   where
     startsLayout :: Token -> Bool
     startsLayout t = elem t [Let, Where, Of, StartOfFile]
-    go :: [Positioned Token] -> [Layout] -> Maybe [Token]
+    go :: [Positioned Token] -> [Layout] -> Either LexerError [Token]
     -- An explicit } must close a corresponding explicit layout
     go (Positioned CloseBrace _ _ : ts) (Explicit : ls) = fmap (CloseBrace :) (go ts ls)
-    go (Positioned CloseBrace _ _ : _) _ = Nothing
+    go (Positioned CloseBrace _ _ : _) _ = Left (Unexpected '}')
     -- An explicit { starts an explicit layout
     go (Positioned OpenBrace _ _ : ts) ls = fmap (OpenBrace :) (go ts (Explicit : ls))
     -- If we see a token that starts a layout, three things can happen
@@ -211,11 +221,11 @@ layout tokens = go (Positioned StartOfFile Start 0 : tokens) []
     -- Close all of the implicit layouts
     go [] (Implicit _ : ls) = fmap (CloseBrace :) (go [] ls)
     -- Any remaining explicit layouts are unclosed, and an error
-    go [] (Explicit : _) = Nothing
-    go [] [] = Just []
+    go [] (Explicit : _) = Left UnmatchedLayout
+    go [] [] = Right []
 
 -- Lex a specific string, producing a list of tokens if no errors occurred.
-lexer :: String -> Maybe [Token]
+lexer :: String -> Either LexerError [Token]
 lexer input = do
   (raw, _) <- runLexer rawLexer input
   raw |> position |> layout

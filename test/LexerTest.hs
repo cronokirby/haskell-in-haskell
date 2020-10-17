@@ -5,14 +5,17 @@ import Ourlude
 import Test.Tasty
 import Test.Tasty.HUnit
 
+shouldLex :: String -> [Token] -> Assertion
+shouldLex str as = Right as @=? lexer str
+
 tests :: TestTree
 tests =
   testGroup
     "Lexer Tests"
-    [ testCase "lexing keywords" (Just [StartOfFile, OpenBrace, In, Data, Type, If, Then, Else, Case, CloseBrace] @=? lexer "in data type if then else case"),
-      testCase "lexing operators" (Just operators @=? lexer "() {} ; :: -> | \\ / + - * = . $"),
-      testCase "lexing names" (Just [StartOfFile, OpenBrace, Name "foo32'", TypeName "A34'", CloseBrace] @=? lexer "foo32' A34'"),
-      testCase "lexing integer litterals" (Just [StartOfFile, OpenBrace, Dash, IntLitt 42, IntLitt 32, CloseBrace] @=? lexer "-42 32")
+    [ testCase "lexing keywords" (shouldLex "in data type if then else case" [StartOfFile, OpenBrace, In, Data, Type, If, Then, Else, Case, CloseBrace]),
+      testCase "lexing operators" (shouldLex "() {} ; :: -> | \\ / + - * = . $" operators),
+      testCase "lexing names" (shouldLex "foo32' A34'" [StartOfFile, OpenBrace, Name "foo32'", TypeName "A34'", CloseBrace]),
+      testCase "lexing integer litterals" (shouldLex "-42 32" [StartOfFile, OpenBrace, Dash, IntLitt 42, IntLitt 32, CloseBrace])
     ]
   where
     operators =
