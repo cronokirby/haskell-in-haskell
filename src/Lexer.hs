@@ -4,8 +4,11 @@
 module Lexer (Token (..), lexer) where
 
 import Control.Applicative (Alternative (..), liftA2)
+import Control.Monad.Except
+import Control.Monad.State
 import Data.Char (isAlphaNum, isDigit, isLower, isSpace, isUpper)
 import Data.List (foldl', foldl1')
+import Data.Maybe (listToMaybe)
 import Ourlude
 
 -- Represents the kind of error that can occur
@@ -102,7 +105,6 @@ data Token
   | Equal -- `=`
   | Dot -- `.`
   | Dollar -- `$`
-  | StartOfFile -- a virtual token that starts a file
   | IntLitt Int -- An integer litteral
   | TypeName String -- A reference to some kind of type name
   | Name String -- A reference to some kind of name
@@ -172,7 +174,7 @@ rawLexer = some (whitespace <|> fmap (uncurry RawToken) token)
 -- Represents a position some token can have in the middle of a line.
 --
 -- A token is either at the start of the line, or appears somewhere in the middle
-data LinePosition = Start | Middle
+data LinePosition = Start | Middle deriving (Eq)
 
 -- Some type annotated with a position
 data Positioned a = Positioned a LinePosition Int
@@ -193,36 +195,101 @@ position = foldl' go ((Start, 0), []) >>> snd >>> reverse
 -- A layout is either one explicitly declared by the user, or implicitly declared at a certain column
 data Layout = Explicit | Implicit Int
 
+data LayoutState = LayoutState {layouts :: [Layout], tokens :: [Token], expectingLayout :: Bool}
+
+type LayoutM a = ExceptT LexerError (State LayoutState) a
+
+yieldToken :: Token -> LayoutM ()
+yieldToken t = modify' (\s -> s {tokens = t : tokens s})
+
+pushLayout :: Layout -> LayoutM ()
+pushLayout l = modify' (\s -> s {layouts = l : layouts s})
+
+popLayout :: LayoutM ()
+popLayout = modify' (\s -> s {layouts = pop (layouts s)})
+  where
+    pop [] = []
+    pop (_ : xs) = xs
+
+topLayout :: LayoutM (Maybe Layout)
+topLayout = gets layouts |> fmap listToMaybe
+
+compareIndentation :: Int -> LayoutM Ordering
+compareIndentation col = do
+  top <- topLayout
+  return <| case top of
+    Nothing -> GT
+    Just Explicit -> GT
+    Just (Implicit n) -> compare col n
+
+runLayoutM :: LayoutM a -> Either LexerError [Token]
+runLayoutM =
+  runExceptT >>> (`runState` (LayoutState [] [] True)) >>> \case
+    (Left e, _) -> Left e
+    (Right _, LayoutState _ ts _) -> Right (reverse ts)
+
 layout :: [Positioned Token] -> Either LexerError [Token]
-layout tokens = go (Positioned StartOfFile Start 0 : tokens) []
+layout inputs =
+  runLayoutM <| do
+    mapM_ step inputs
+    closeImplicitLayouts
   where
     startsLayout :: Token -> Bool
-    startsLayout t = elem t [Let, Where, Of, StartOfFile]
-    go :: [Positioned Token] -> [Layout] -> Either LexerError [Token]
-    -- An explicit } must close a corresponding explicit layout
-    go (Positioned CloseBrace _ _ : ts) (Explicit : ls) = fmap (CloseBrace :) (go ts ls)
-    go (Positioned CloseBrace _ _ : _) _ = Left (Unexpected '}')
-    -- An explicit { starts an explicit layout
-    go (Positioned OpenBrace _ _ : ts) ls = fmap (OpenBrace :) (go ts (Explicit : ls))
-    -- If we see a token that starts a layout, three things can happen
-    go (Positioned starter _ _ : tok@(Positioned t _ n) : ts) ls' | startsLayout starter = case ls' of
-      -- If no layouts exist yet, then we can start at any indentation
-      [] -> fmap ([starter, OpenBrace, t] ++) (go ts [Implicit n])
-      -- Otherwise we need to be further indented to start a new layout
-      Implicit m : ls | n > m -> fmap ([starter, OpenBrace, t] ++) (go ts (Implicit n : Implicit m : ls))
-      -- If we're less indented, that means that we've skipped a layout
-      ls -> fmap ([starter, OpenBrace, CloseBrace] ++) (go (tok : ts) ls)
-    -- If a starting token is at the same level of implicit indentation, that continues the layout
-    go (Positioned t Start n : ts) (Implicit m : ls) | n == m = fmap ([Semicolon, t] ++) (go ts (Implicit m : ls))
-    -- If a starting token has less than the implicit indentation, then close that layout
-    go (tok@(Positioned _ Start n) : ts) (Implicit m : ls) | n < m = fmap (CloseBrace :) (go (tok : ts) ls)
-    -- If nothing else applies, we just want to emit the tokens we see
-    go (Positioned t _ _ : ts) ls = fmap (t :) (go ts ls)
-    -- Close all of the implicit layouts
-    go [] (Implicit _ : ls) = fmap (CloseBrace :) (go [] ls)
-    -- Any remaining explicit layouts are unclosed, and an error
-    go [] (Explicit : _) = Left UnmatchedLayout
-    go [] [] = Right []
+    startsLayout t = elem t [Let, Where, Of]
+    step :: Positioned Token -> LayoutM ()
+    step (Positioned t linePos col) = do
+      expectingLayout' <- gets expectingLayout
+      case t of
+        CloseBrace -> closeExplicitLayout
+        OpenBrace | expectingLayout' -> startExplicitLayout
+        _ | startsLayout t -> modify' (\s -> s {expectingLayout = True})
+        _ | expectingLayout' -> startImplicitLayout col
+        _ | linePos == Start -> continueImplicitLayout col
+        _ -> return ()
+      yieldToken t
+    closeExplicitLayout :: LayoutM ()
+    closeExplicitLayout =
+      topLayout >>= \case
+        Just Explicit -> popLayout
+        _ -> throwError (Unexpected '}')
+    startExplicitLayout :: LayoutM ()
+    startExplicitLayout = do
+      modify' (\s -> s {expectingLayout = False})
+      pushLayout Explicit
+    startImplicitLayout :: Int -> LayoutM ()
+    startImplicitLayout col = do
+      modify' (\s -> s {expectingLayout = False})
+      compareIndentation col >>= \case
+        GT -> do
+          yieldToken OpenBrace
+          pushLayout (Implicit col)
+        _ -> do
+          yieldToken OpenBrace
+          yieldToken CloseBrace
+          continueImplicitLayout col
+    continueImplicitLayout :: Int -> LayoutM ()
+    continueImplicitLayout col = do
+      closeFurtherLayouts
+      compareIndentation col >>= \case
+        EQ -> yieldToken Semicolon
+        _ -> return ()
+      where
+        closeFurtherLayouts =
+          compareIndentation col >>= \case
+            LT -> do
+              yieldToken CloseBrace
+              popLayout
+              closeFurtherLayouts
+            _ -> return ()
+    closeImplicitLayouts :: LayoutM ()
+    closeImplicitLayouts =
+      topLayout >>= \case
+        Nothing -> return ()
+        Just Explicit -> throwError UnmatchedLayout
+        Just (Implicit _) -> do
+          yieldToken CloseBrace
+          popLayout
+          closeImplicitLayouts
 
 -- Lex a specific string, producing a list of tokens if no errors occurred.
 lexer :: String -> Either LexerError [Token]
