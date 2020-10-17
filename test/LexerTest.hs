@@ -42,5 +42,22 @@ layoutTests :: TestTree
 layoutTests =
   testGroup
     "Layout Tests"
-    [ testCase "basic layouts" (shouldLex "if =\n  let\n    if\n    if\n  in" [OpenBrace, If, Equal, Let, OpenBrace, If, Semicolon, If, CloseBrace, In, CloseBrace])
+    [ testCase "basic layouts" (shouldLex prog1 [OpenBrace, If, Equal, Let, OpenBrace, If, Semicolon, If, CloseBrace, In, CloseBrace]),
+      testCase "nested layouts" (shouldLex prog2 [OpenBrace, If, Equal, Let, OpenBrace, If, Equal, Let, OpenBrace, If, CloseBrace, In, Semicolon, If, CloseBrace, In, CloseBrace])
     ]
+  where
+    prog1 =
+      "if =\n\
+      \  let\n\
+      \    if\n\
+      \    if\n\
+      \  in"
+    prog2 =
+      "if =\n\
+      \  let\n\
+      \    if =\n\
+      \      let\n\
+      \        if\n\
+      \      in\n\
+      \    if\n\
+      \  in"
