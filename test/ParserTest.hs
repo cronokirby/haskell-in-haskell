@@ -112,5 +112,19 @@ tests =
             "x :: (Int -> String) -> A -> B"
             ( AST [ValueDefinition (TypeAnnotation "x" (FunctionType (FunctionType IntType StringType) (FunctionType (CustomType "A") (CustomType "B"))))]
             )
+        ),
+      testCase
+        "type definitions"
+        ( shouldParse
+            "type X = Int;data L = A Int | B String (String -> String)"
+            ( AST
+                [ TypeSynonym "X" IntType,
+                  TypeDefinition
+                    "L"
+                    [ ConstructorDefinition "A" [IntType],
+                      ConstructorDefinition "B" [StringType, FunctionType StringType StringType]
+                    ]
+                ]
+            )
         )
     ]

@@ -78,8 +78,8 @@ newtype AST = AST [Definition] deriving (Eq, Show)
 
 data Definition
   = ValueDefinition ValueDefinition
-  | TypeDefinition String [ConstructorDefinition]
-  | TypeSynonym String TypeExpr
+  | TypeDefinition TypeName [ConstructorDefinition]
+  | TypeSynonym TypeName TypeExpr
   deriving (Eq, Show)
 
 data ConstructorDefinition = ConstructorDefinition TypeName [TypeExpr] deriving (Eq, Show)
@@ -130,7 +130,16 @@ data Pattern
   deriving (Eq, Show)
 
 ast :: Parser AST
-ast = fmap AST (braced (ValueDefinition <$> valueDefinition))
+ast = fmap AST (braced definition)
+
+definition :: Parser Definition
+definition = (fmap ValueDefinition valueDefinition) <|> typeDefinition <|> typeSynonym
+  where
+    typeDefinition = token Data *> liftA2 TypeDefinition (typeName <* token Equal) (sepBy1 constructorDefinition (token VBar))
+    typeSynonym = token Type *> liftA2 TypeSynonym (typeName <* token Equal) typeExpr
+
+constructorDefinition :: Parser ConstructorDefinition
+constructorDefinition = liftA2 ConstructorDefinition typeName (many baseType)
 
 valueDefinition :: Parser ValueDefinition
 valueDefinition = nameDefinition <|> typeDefinition
@@ -140,8 +149,10 @@ valueDefinition = nameDefinition <|> typeDefinition
 
 typeExpr :: Parser TypeExpr
 typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
+
+baseType :: Parser TypeExpr
+baseType = namedType <|> parensed typeExpr
   where
-    baseType = namedType <|> parensed typeExpr
     namedType = typeName |> fmap extract
       where
         extract "Int" = IntType
