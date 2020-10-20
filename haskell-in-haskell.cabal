@@ -38,4 +38,5 @@ test-suite haskell-in-haskell-test
   ghc-options:         -threaded -rtsopts 
   main-is:             Suite.hs
   other-modules:       LexerTest
+                     , ParserTest
   type:                exitcode-stdio-1.0

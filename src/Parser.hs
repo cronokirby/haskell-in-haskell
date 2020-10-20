@@ -42,17 +42,13 @@ pluck f =
 token :: Token -> Parser Token
 token = (==) >>> satisifies
 
-data Associativity = LeftAssociative | RightAssociative
-
 sepBy :: Parser a -> Parser sep -> Parser [a]
 sepBy p sep = pure [] <|> liftA2 (:) p (many (sep *> p))
 
-ops :: Associativity -> (sep -> a -> a -> a) -> Parser a -> Parser sep -> Parser a
-ops assoc combine p s = liftA2 squash p (many (liftA2 (,) s p))
+opsL :: (sep -> a -> a -> a) -> Parser a -> Parser sep -> Parser a
+opsL combine p s = liftA2 squash p (many (liftA2 (,) s p))
   where
-    squash = case assoc of
-      RightAssociative -> foldr (\(sep, a) acc -> combine sep a acc)
-      LeftAssociative -> foldl' (\acc (sep, a) -> combine sep acc a)
+    squash = foldl' (\acc (sep, a) -> combine sep acc a)
 
 name :: Parser String
 name =
@@ -66,16 +62,21 @@ typeName =
     TypeName n -> Just n
     _ -> Nothing
 
-newtype AST = AST [Definition]
+braced :: Parser a -> Parser [a]
+braced p = token OpenBrace *> sepBy p (token Semicolon) <* token CloseBrace
+
+newtype AST = AST [Definition] deriving (Eq, Show)
 
 data Definition
   = TypeDefinition String TypeExpr
   | Definition String Expr
+  deriving (Eq, Show)
 
 data TypeExpr
   = StringType
   | IntType
   | CustomType String
+  deriving (Eq, Show)
 
 data Expr
   = BinExpr BinOp Expr Expr
@@ -87,6 +88,7 @@ data Expr
   | StringExpr String
   | ApplyExpr Expr [Expr]
   | CaseExpr Expr [PatternDef]
+  deriving (Eq, Show)
 
 data BinOp
   = Add
@@ -94,16 +96,20 @@ data BinOp
   | Mul
   | Div
   | Concat
+  deriving (Eq, Show)
 
-data PatternDef = PatternDef Pattern Expr
+data PatternDef = PatternDef Pattern Expr deriving (Eq, Show)
 
-data Pattern = WildcardPattern | VarPattern String | ConstructorPattern String [Pattern]
+data Pattern = WildcardPattern | VarPattern String | ConstructorPattern String [Pattern] deriving (Eq, Show)
+
+ast :: Parser AST
+ast = fmap AST (braced definition)
 
 definition :: Parser Definition
 definition = nameDefinition <|> typeDefinition
   where
     nameDefinition = liftA2 Definition (name <* token Equal) expr
-    typeDefinition = liftA2 TypeDefinition (typeName <* token Equal) typeExpr
+    typeDefinition = liftA2 TypeDefinition (name <* token DoubleColon) typeExpr
 
 typeExpr :: Parser TypeExpr
 typeExpr = typeName |> fmap extract
@@ -111,9 +117,6 @@ typeExpr = typeName |> fmap extract
     extract "Int" = IntType
     extract "String" = StringType
     extract other = CustomType other
-
-braced :: Parser a -> Parser [a]
-braced p = token OpenBrace *> sepBy p (token Semicolon) <* token CloseBrace
 
 expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr <|> caseExpr
@@ -137,19 +140,19 @@ onePattern = wildCardPattern <|> varPattern <|> constructorPattern
 binExpr :: Parser Expr
 binExpr = concatExpr
   where
-    concatExpr = ops RightAssociative makeConcat addSubExpr (token PlusPlus)
+    concatExpr = opsL makeConcat addSubExpr (token PlusPlus)
       where
         makeConcat PlusPlus a b = BinExpr Concat a b
         makeConcat t _ _ = error ("makeConcat: Unexpected Token " ++ show t)
-    addSubExpr = ops RightAssociative makeAddSub mulDivExpr (token Plus <|> token Dash)
+    addSubExpr = opsL makeAddSub mulDivExpr (token Plus <|> token Dash)
       where
         makeAddSub Plus a b = BinExpr Add a b
         makeAddSub Dash a b = BinExpr Sub a b
         makeAddSub t _ _ = error ("makeAddSub: Unexpected Token " ++ show t)
-    mulDivExpr = ops LeftAssociative makeMulDiv unaryExpr (token Asterisk <|> token FSlash)
+    mulDivExpr = opsL makeMulDiv unaryExpr (token Asterisk <|> token FSlash)
       where
         makeMulDiv Asterisk a b = BinExpr Mul a b
-        makeMulDiv FSlash a b = BinExpr Mul a b
+        makeMulDiv FSlash a b = BinExpr Div a b
         makeMulDiv t _ _ = error ("makeMulDiv: Unexpected Token " ++ show t)
 
 unaryExpr :: Parser Expr
@@ -177,3 +180,13 @@ factor = intLitt <|> stringLitt <|> nameExpr <|> parensExpr
         _ -> Nothing
     nameExpr = (name <|> typeName) |> fmap NameExpr
     parensExpr = token OpenParens *> expr <* token CloseParens
+
+data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)
+
+parse :: [Token] -> Either ParseError AST
+parse input =
+  let (Parser runParser) = ast
+   in case runParser input of
+        [] -> Left FailedParse
+        [(res, _)] -> Right res
+        tooMany -> Left (AmbiguousParse tooMany)
