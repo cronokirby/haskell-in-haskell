@@ -106,13 +106,14 @@ data Token
   | Dot -- `.`
   | Dollar -- `$`
   | IntLitt Int -- An integer litteral
+  | StringLitt String -- A String litteral
   | TypeName String -- A reference to some kind of type name
   | Name String -- A reference to some kind of name
   deriving (Eq, Show)
 
 -- Lex out one of the tokens in our language
 token :: Lexer (Token, String)
-token = keywords <|> operators <|> intLitt <|> typeName <|> name
+token = keywords <|> operators <|> intLitt <|> stringLitt <|> typeName <|> name
   where
     with :: Functor f => b -> f a -> f (b, a)
     with b = fmap (\a -> (b, a))
@@ -153,6 +154,8 @@ token = keywords <|> operators <|> intLitt <|> typeName <|> name
         ]
     intLitt :: Lexer (Token, String)
     intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
+    stringLitt :: Lexer (Token, String)
+    stringLitt = char '"' *> (const <$> many (satisfies (\c -> c /= '"')) <*> char '"') |> fmap (\x -> (StringLitt x, x))
     continuesName :: Lexer Char
     continuesName = satisfies isAlphaNum <|> char '\''
     typeName :: Lexer (Token, String)
