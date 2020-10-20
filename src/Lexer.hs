@@ -100,6 +100,7 @@ data Token
   | BSlash -- `\`
   | FSlash -- `/`
   | Plus -- `+`
+  | PlusPlus -- `++`
   | Dash -- `-`
   | Asterisk -- `*`
   | Equal -- `=`
@@ -146,6 +147,7 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> typeName <|> name
           BSlash `with` string "\\",
           FSlash `with` string "/",
           Plus `with` string "+",
+          PlusPlus `with` string "++",
           Dash `with` string "-",
           Asterisk `with` string "*",
           Equal `with` string "=",
