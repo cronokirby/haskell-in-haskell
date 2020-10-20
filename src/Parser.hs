@@ -78,7 +78,7 @@ newtype AST = AST [Definition] deriving (Eq, Show)
 
 data Definition
   = ValueDefinition ValueDefinition
-  | TypeDefinition TypeName [ConstructorDefinition]
+  | TypeDefinition TypeName [Name] [ConstructorDefinition]
   | TypeSynonym TypeName TypeExpr
   deriving (Eq, Show)
 
@@ -92,7 +92,8 @@ data ValueDefinition
 data TypeExpr
   = StringType
   | IntType
-  | CustomType TypeName
+  | CustomType TypeName [TypeExpr]
+  | TypeVar Name
   | FunctionType TypeExpr TypeExpr
   deriving (Eq, Show)
 
@@ -136,11 +137,17 @@ ast = fmap AST (braced definition)
 definition :: Parser Definition
 definition = (fmap ValueDefinition valueDefinition) <|> typeDefinition <|> typeSynonym
   where
-    typeDefinition = token Data *> liftA2 TypeDefinition (typeName <* token Equal) (sepBy1 constructorDefinition (token VBar))
+    typeDefinition =
+      token Data
+        *> ( TypeDefinition
+               <$> typeName
+               <*> many name
+               <*> (token Equal *> sepBy1 constructorDefinition (token VBar))
+           )
     typeSynonym = token Type *> liftA2 TypeSynonym (typeName <* token Equal) typeExpr
 
 constructorDefinition :: Parser ConstructorDefinition
-constructorDefinition = liftA2 ConstructorDefinition typeName (many baseType)
+constructorDefinition = liftA2 ConstructorDefinition typeName (many unspacedType)
 
 valueDefinition :: Parser ValueDefinition
 valueDefinition = nameDefinition <|> typeDefinition
@@ -150,15 +157,25 @@ valueDefinition = nameDefinition <|> typeDefinition
 
 typeExpr :: Parser TypeExpr
 typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
-
-baseType :: Parser TypeExpr
-baseType = namedType <|> parensed typeExpr
   where
-    namedType = typeName |> fmap extract
+    baseType = fmap TypeVar name <|> typeConstructor <|> parensed typeExpr
+    typeConstructor = liftA2 CustomType typeName (many unspacedType) |> fmap primitive
+      where
+        primitive (CustomType "Int" []) = IntType
+        primitive (CustomType "String" []) = StringType
+        primitive other = other
+
+unspacedType :: Parser TypeExpr
+unspacedType = singleName <|> singleType
+  where
+    singleName = typeName |> fmap extract
       where
         extract "Int" = IntType
         extract "String" = StringType
-        extract other = CustomType other
+        extract other = CustomType other []
+
+singleType :: Parser TypeExpr
+singleType = (fmap TypeVar name) <|> parensed typeExpr
 
 expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr

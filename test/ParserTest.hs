@@ -110,7 +110,7 @@ tests =
         "function types"
         ( shouldParse
             "x :: (Int -> String) -> A -> B"
-            ( AST [ValueDefinition (TypeAnnotation "x" (FunctionType (FunctionType IntType StringType) (FunctionType (CustomType "A") (CustomType "B"))))]
+            ( AST [ValueDefinition (TypeAnnotation "x" (FunctionType (FunctionType IntType StringType) (FunctionType (CustomType "A" []) (CustomType "B" []))))]
             )
         ),
       testCase
@@ -121,6 +121,7 @@ tests =
                 [ TypeSynonym "X" IntType,
                   TypeDefinition
                     "L"
+                    []
                     [ ConstructorDefinition "A" [IntType],
                       ConstructorDefinition "B" [StringType, FunctionType StringType StringType]
                     ]
@@ -129,8 +130,23 @@ tests =
         ),
       testCase
         "lambda expressions"
-          (
-            shouldParse "x = \\f a -> f"
-              (AST [ValueDefinition (NameDefinition "x" (LambdaExpr ["f", "a"] (NameExpr "f")))])
-          )
+        ( shouldParse
+            "x = \\f a -> f"
+            (AST [ValueDefinition (NameDefinition "x" (LambdaExpr ["f", "a"] (NameExpr "f")))])
+        ),
+      testCase
+        "polymorphism"
+        ( shouldParse
+            "foo :: a -> List a; data List a = Cons a (List a) | Nil"
+            ( AST
+                [ ValueDefinition (TypeAnnotation "foo" (FunctionType (TypeVar "a") (CustomType "List" [TypeVar "a"]))),
+                  TypeDefinition
+                    "List"
+                    ["a"]
+                    [ ConstructorDefinition "Cons" [TypeVar "a", (CustomType "List" [TypeVar "a"])],
+                      ConstructorDefinition "Nil" []
+                    ]
+                ]
+            )
+        )
     ]
