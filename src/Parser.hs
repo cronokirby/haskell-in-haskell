@@ -89,11 +89,15 @@ data Expr
   | LetExpr [Definition] Expr
   | WhereExpr Expr [Definition]
   | NameExpr String
-  | IntExpr Int
+  | LittExpr Litteral
   | NegateExpr Expr
-  | StringExpr String
   | ApplyExpr Expr [Expr]
   | CaseExpr Expr [PatternDef]
+  deriving (Eq, Show)
+
+data Litteral
+  = IntLitteral Int
+  | StringLitteral String
   deriving (Eq, Show)
 
 data BinOp
@@ -106,7 +110,12 @@ data BinOp
 
 data PatternDef = PatternDef Pattern Expr deriving (Eq, Show)
 
-data Pattern = WildcardPattern | VarPattern String | ConstructorPattern String [Pattern] deriving (Eq, Show)
+data Pattern
+  = WildcardPattern
+  | NamePattern String
+  | LitteralPattern Litteral
+  | ConstructorPattern String [Pattern]
+  deriving (Eq, Show)
 
 ast :: Parser AST
 ast = fmap AST (braced definition)
@@ -137,12 +146,14 @@ caseExpr = liftA2 CaseExpr (token Case *> expr <* token Of) (braced patternDef)
     patternDef = liftA2 PatternDef onePattern (token ThinArrow *> expr)
 
 onePattern :: Parser Pattern
-onePattern = wildCardPattern <|> varPattern <|> constructorPattern
+onePattern = notConstructorPattern <|> constructorPattern
   where
+    notConstructorPattern = wildCardPattern <|> varPattern <|> littPattern
     wildCardPattern = WildcardPattern <$ token Underscore
-    varPattern = fmap VarPattern name
+    varPattern = fmap NamePattern name
+    littPattern = fmap LitteralPattern litteral
     constructorPattern = liftA2 ConstructorPattern typeName (many insideConstructorPattern)
-    insideConstructorPattern = wildCardPattern <|> varPattern <|> parensed constructorPattern
+    insideConstructorPattern = notConstructorPattern <|> parensed onePattern
 
 binExpr :: Parser Expr
 binExpr = concatExpr
@@ -175,17 +186,23 @@ appExpr = some factor |> fmap extract
     extract _ = error "appExpr: No elements produced after some"
 
 factor :: Parser Expr
-factor = intLitt <|> stringLitt <|> nameExpr <|> parensed expr
+factor = littExpr <|> nameExpr <|> parensed expr
+  where
+    littExpr = fmap LittExpr litteral
+
+    nameExpr = (name <|> typeName) |> fmap NameExpr
+
+litteral :: Parser Litteral
+litteral = intLitt <|> stringLitt
   where
     intLitt =
       pluck <| \case
-        IntLitt i -> Just (IntExpr i)
+        IntLitt i -> Just (IntLitteral i)
         _ -> Nothing
     stringLitt =
       pluck <| \case
-        StringLitt s -> Just (StringExpr s)
+        StringLitt s -> Just (StringLitteral s)
         _ -> Nothing
-    nameExpr = (name <|> typeName) |> fmap NameExpr
 
 data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)
 

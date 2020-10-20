@@ -1,9 +1,8 @@
 module ParserTest (tests) where
 
-import Debug.Trace
 import Lexer (lexer)
 import Ourlude
-import Parser (AST (..), BinOp (..), Definition (..), Expr (..), Pattern (..), PatternDef (..), TypeExpr (..), parse)
+import Parser (AST (..), BinOp (..), Definition (..), Expr (..), Litteral (..), Pattern (..), PatternDef (..), TypeExpr (..), parse)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -25,19 +24,19 @@ tests =
         "parsing basic definitions"
         ( shouldParse
             "{ x :: Int; x = 3 }"
-            (AST [TypeDefinition "x" IntType, Definition "x" (IntExpr 3)])
+            (AST [TypeDefinition "x" IntType, Definition "x" (LittExpr (IntLitteral 3))])
         ),
       testCase
         "parsing let definitions"
         ( shouldParse
             "x = \n  let\n    y = 3\n  in y"
-            (AST [Definition "x" (LetExpr [Definition "y" (IntExpr 3)] (NameExpr "y"))])
+            (AST [Definition "x" (LetExpr [Definition "y" (LittExpr (IntLitteral 3))] (NameExpr "y"))])
         ),
       testCase
         "parsing where definitions"
         ( shouldParse
             "x = y where y = 3"
-            (AST [Definition "x" (WhereExpr (NameExpr "y") [Definition "y" (IntExpr 3)])])
+            (AST [Definition "x" (WhereExpr (NameExpr "y") [Definition "y" (LittExpr (IntLitteral 3))])])
         ),
       testCase
         "parsing binary expressions"
@@ -79,9 +78,9 @@ tests =
                     "x"
                     ( CaseExpr
                         (NameExpr "x")
-                        [ PatternDef WildcardPattern (IntExpr 3),
-                          PatternDef (ConstructorPattern "A" [ConstructorPattern "B" [VarPattern "y"], VarPattern "y"]) (IntExpr 3),
-                          PatternDef (VarPattern "y") (NameExpr "y")
+                        [ PatternDef WildcardPattern (LittExpr (IntLitteral 3)),
+                          PatternDef (ConstructorPattern "A" [ConstructorPattern "B" [NamePattern "y"], NamePattern "y"]) (LittExpr (IntLitteral 3)),
+                          PatternDef (NamePattern "y") (NameExpr "y")
                         ]
                     )
                 ]
@@ -89,5 +88,16 @@ tests =
         ),
       testCase
         "parsing negation"
-        (shouldParse "x = -3" (AST [Definition "x" (NegateExpr (IntExpr 3))]))
+        (shouldParse "x = -3" (AST [Definition "x" (NegateExpr (LittExpr (IntLitteral 3)))])),
+      testCase
+        "litteral patterns"
+        ( shouldParse
+            "x = case x of { \"foo\" -> x }"
+            ( AST
+                [ Definition
+                    "x"
+                    (CaseExpr (NameExpr "x") [PatternDef (LitteralPattern (StringLitteral "foo")) (NameExpr "x")])
+                ]
+            )
+        )
     ]
