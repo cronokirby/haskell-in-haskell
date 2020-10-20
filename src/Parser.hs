@@ -64,43 +64,43 @@ opsR combine p s = liftA2 squash p (many (liftA2 (,) s p))
               annotated
        in foldl' (\acc (sep, a) -> combine sep a acc) start' annotated'
 
-name :: Parser String
-name =
-  pluck <| \case
-    Name n -> Just n
-    _ -> Nothing
-
-typeName :: Parser String
-typeName =
-  pluck <| \case
-    TypeName n -> Just n
-    _ -> Nothing
-
 braced :: Parser a -> Parser [a]
 braced p = token OpenBrace *> sepBy1 p (token Semicolon) <* token CloseBrace
 
 parensed :: Parser a -> Parser a
 parensed p = token OpenParens *> p <* token CloseParens
 
+type Name = String
+
+type TypeName = String
+
 newtype AST = AST [Definition] deriving (Eq, Show)
 
 data Definition
-  = TypeDefinition String TypeExpr
-  | Definition String Expr
+  = ValueDefinition ValueDefinition
+  | TypeDefinition String [ConstructorDefinition]
+  | TypeSynonym String TypeExpr
+  deriving (Eq, Show)
+
+data ConstructorDefinition = ConstructorDefinition TypeName [TypeExpr] deriving (Eq, Show)
+
+data ValueDefinition
+  = TypeAnnotation String TypeExpr
+  | NameDefinition String Expr
   deriving (Eq, Show)
 
 data TypeExpr
   = StringType
   | IntType
-  | CustomType String
+  | CustomType TypeName
   | FunctionType TypeExpr TypeExpr
   deriving (Eq, Show)
 
 data Expr
   = BinExpr BinOp Expr Expr
-  | LetExpr [Definition] Expr
-  | WhereExpr Expr [Definition]
-  | NameExpr String
+  | LetExpr [ValueDefinition] Expr
+  | WhereExpr Expr [ValueDefinition]
+  | NameExpr Name
   | LittExpr Litteral
   | NegateExpr Expr
   | ApplyExpr Expr [Expr]
@@ -130,13 +130,13 @@ data Pattern
   deriving (Eq, Show)
 
 ast :: Parser AST
-ast = fmap AST (braced definition)
+ast = fmap AST (braced (ValueDefinition <$> valueDefinition))
 
-definition :: Parser Definition
-definition = nameDefinition <|> typeDefinition
+valueDefinition :: Parser ValueDefinition
+valueDefinition = nameDefinition <|> typeDefinition
   where
-    nameDefinition = liftA2 Definition (name <* token Equal) expr
-    typeDefinition = liftA2 TypeDefinition (name <* token DoubleColon) typeExpr
+    nameDefinition = liftA2 NameDefinition (name <* token Equal) expr
+    typeDefinition = liftA2 TypeAnnotation (name <* token DoubleColon) typeExpr
 
 typeExpr :: Parser TypeExpr
 typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
@@ -152,8 +152,8 @@ expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr
   where
     notWhereExpr = letExpr <|> binExpr <|> caseExpr
-    letExpr = liftA2 LetExpr (token Let *> braced definition) (token In *> expr)
-    whereExpr = liftA2 WhereExpr notWhereExpr (token Where *> braced definition)
+    letExpr = liftA2 LetExpr (token Let *> braced valueDefinition) (token In *> expr)
+    whereExpr = liftA2 WhereExpr notWhereExpr (token Where *> braced valueDefinition)
 
 caseExpr :: Parser Expr
 caseExpr = liftA2 CaseExpr (token Case *> expr <* token Of) (braced patternDef)
@@ -206,6 +206,18 @@ factor = littExpr <|> nameExpr <|> parensed expr
     littExpr = fmap LittExpr litteral
 
     nameExpr = (name <|> typeName) |> fmap NameExpr
+
+name :: Parser Name
+name =
+  pluck <| \case
+    Name n -> Just n
+    _ -> Nothing
+
+typeName :: Parser TypeName
+typeName =
+  pluck <| \case
+    TypeName n -> Just n
+    _ -> Nothing
 
 litteral :: Parser Litteral
 litteral = intLitt <|> stringLitt

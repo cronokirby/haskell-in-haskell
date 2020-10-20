@@ -2,7 +2,7 @@ module ParserTest (tests) where
 
 import Lexer (lexer)
 import Ourlude
-import Parser (AST (..), BinOp (..), Definition (..), Expr (..), Litteral (..), Pattern (..), PatternDef (..), TypeExpr (..), parse)
+import Parser
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -24,47 +24,49 @@ tests =
         "parsing basic definitions"
         ( shouldParse
             "{ x :: Int; x = 3 }"
-            (AST [TypeDefinition "x" IntType, Definition "x" (LittExpr (IntLitteral 3))])
+            (AST [ValueDefinition (TypeAnnotation "x" IntType), ValueDefinition (NameDefinition "x" (LittExpr (IntLitteral 3)))])
         ),
       testCase
         "parsing let definitions"
         ( shouldParse
             "x = \n  let\n    y = 3\n  in y"
-            (AST [Definition "x" (LetExpr [Definition "y" (LittExpr (IntLitteral 3))] (NameExpr "y"))])
+            (AST [ValueDefinition (NameDefinition "x" (LetExpr [NameDefinition "y" (LittExpr (IntLitteral 3))] (NameExpr "y")))])
         ),
       testCase
         "parsing where definitions"
         ( shouldParse
             "x = y where y = 3"
-            (AST [Definition "x" (WhereExpr (NameExpr "y") [Definition "y" (LittExpr (IntLitteral 3))])])
+            (AST [ValueDefinition (NameDefinition "x" (WhereExpr (NameExpr "y") [NameDefinition "y" (LittExpr (IntLitteral 3))]))])
         ),
       testCase
         "parsing binary expressions"
         ( shouldParse
             "x = a + f a * a / a - a ++ a"
             ( AST
-                [ Definition
-                    "x"
-                    ( BinExpr
-                        Concat
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
                         ( BinExpr
-                            Sub
+                            Concat
                             ( BinExpr
-                                Add
-                                (NameExpr "a")
+                                Sub
                                 ( BinExpr
-                                    Div
+                                    Add
+                                    (NameExpr "a")
                                     ( BinExpr
-                                        Mul
-                                        (ApplyExpr (NameExpr "f") [(NameExpr "a")])
+                                        Div
+                                        ( BinExpr
+                                            Mul
+                                            (ApplyExpr (NameExpr "f") [(NameExpr "a")])
+                                            (NameExpr "a")
+                                        )
                                         (NameExpr "a")
                                     )
-                                    (NameExpr "a")
                                 )
+                                (NameExpr "a")
                             )
                             (NameExpr "a")
                         )
-                        (NameExpr "a")
                     )
                 ]
             )
@@ -74,29 +76,33 @@ tests =
         ( shouldParse
             "x = case x of { _ -> 3; A (B y) y -> 3; y -> y }"
             ( AST
-                [ Definition
-                    "x"
-                    ( CaseExpr
-                        (NameExpr "x")
-                        [ PatternDef WildcardPattern (LittExpr (IntLitteral 3)),
-                          PatternDef (ConstructorPattern "A" [ConstructorPattern "B" [NamePattern "y"], NamePattern "y"]) (LittExpr (IntLitteral 3)),
-                          PatternDef (NamePattern "y") (NameExpr "y")
-                        ]
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        ( CaseExpr
+                            (NameExpr "x")
+                            [ PatternDef WildcardPattern (LittExpr (IntLitteral 3)),
+                              PatternDef (ConstructorPattern "A" [ConstructorPattern "B" [NamePattern "y"], NamePattern "y"]) (LittExpr (IntLitteral 3)),
+                              PatternDef (NamePattern "y") (NameExpr "y")
+                            ]
+                        )
                     )
                 ]
             )
         ),
       testCase
         "parsing negation"
-        (shouldParse "x = -3" (AST [Definition "x" (NegateExpr (LittExpr (IntLitteral 3)))])),
+        (shouldParse "x = -3" (AST [ValueDefinition (NameDefinition "x" (NegateExpr (LittExpr (IntLitteral 3))))])),
       testCase
         "litteral patterns"
         ( shouldParse
             "x = case x of { \"foo\" -> x }"
             ( AST
-                [ Definition
-                    "x"
-                    (CaseExpr (NameExpr "x") [PatternDef (LitteralPattern (StringLitteral "foo")) (NameExpr "x")])
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (CaseExpr (NameExpr "x") [PatternDef (LitteralPattern (StringLitteral "foo")) (NameExpr "x")])
+                    )
                 ]
             )
         ),
@@ -104,7 +110,7 @@ tests =
         "function types"
         ( shouldParse
             "x :: (Int -> String) -> A -> B"
-            ( AST [TypeDefinition "x" (FunctionType (FunctionType IntType StringType) (FunctionType (CustomType "A") (CustomType "B")))]
+            ( AST [ValueDefinition (TypeAnnotation "x" (FunctionType (FunctionType IntType StringType) (FunctionType (CustomType "A") (CustomType "B"))))]
             )
         )
     ]
