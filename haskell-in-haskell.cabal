@@ -15,6 +15,7 @@ library
   default-extensions:  NoImplicitPrelude
   exposed-modules:     Ourlude
                      , Lexer
+                     , Parser
   ghc-options:         -Wall
   hs-source-dirs:      src
 
