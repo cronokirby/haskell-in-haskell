@@ -86,5 +86,8 @@ tests =
                     )
                 ]
             )
-        )
+        ),
+      testCase
+        "parsing negation"
+        (shouldParse "x = -3" (AST [Definition "x" (NegateExpr (IntExpr 3))]))
     ]
