@@ -100,6 +100,7 @@ data Expr
   = BinExpr BinOp Expr Expr
   | LetExpr [ValueDefinition] Expr
   | WhereExpr Expr [ValueDefinition]
+  | LambdaExpr [Name] Expr
   | NameExpr Name
   | LittExpr Litteral
   | NegateExpr Expr
@@ -162,8 +163,9 @@ baseType = namedType <|> parensed typeExpr
 expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr
   where
-    notWhereExpr = letExpr <|> binExpr <|> caseExpr
-    letExpr = liftA2 LetExpr (token Let *> braced valueDefinition) (token In *> expr)
+    notWhereExpr = letExpr <|> lambdaExpr <|> binExpr <|> caseExpr
+    letExpr = token Let *> liftA2 LetExpr (braced valueDefinition) (token In *> expr)
+    lambdaExpr = token BSlash *> liftA2 LambdaExpr (some name) (token ThinArrow *> expr)
     whereExpr = liftA2 WhereExpr notWhereExpr (token Where *> braced valueDefinition)
 
 caseExpr :: Parser Expr

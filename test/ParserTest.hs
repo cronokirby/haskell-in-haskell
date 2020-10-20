@@ -126,5 +126,11 @@ tests =
                     ]
                 ]
             )
-        )
+        ),
+      testCase
+        "lambda expressions"
+          (
+            shouldParse "x = \\f a -> f"
+              (AST [ValueDefinition (NameDefinition "x" (LambdaExpr ["f", "a"] (NameExpr "f")))])
+          )
     ]
