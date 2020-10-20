@@ -158,24 +158,18 @@ valueDefinition = nameDefinition <|> typeDefinition
 typeExpr :: Parser TypeExpr
 typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
   where
-    baseType = fmap TypeVar name <|> typeConstructor <|> parensed typeExpr
-    typeConstructor = liftA2 CustomType typeName (many unspacedType) |> fmap primitive
-      where
-        primitive (CustomType "Int" []) = IntType
-        primitive (CustomType "String" []) = StringType
-        primitive other = other
+    baseType = singleType <|> typeConstructor
+    typeConstructor = liftA2 CustomType typeName (many unspacedType)
 
 unspacedType :: Parser TypeExpr
-unspacedType = singleName <|> singleType
+unspacedType = namedType <|> singleType
   where
-    singleName = typeName |> fmap extract
-      where
-        extract "Int" = IntType
-        extract "String" = StringType
-        extract other = CustomType other []
+    namedType = typeName |> fmap (\x -> CustomType x [])
 
 singleType :: Parser TypeExpr
-singleType = (fmap TypeVar name) <|> parensed typeExpr
+singleType = (fmap TypeVar name) <|> primType <|> parensed typeExpr
+  where
+    primType = (IntType <$ token IntTypeName) <|> (StringType <$ token StringTypeName)
 
 expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr
