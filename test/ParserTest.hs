@@ -3,7 +3,7 @@ module ParserTest (tests) where
 import Debug.Trace
 import Lexer (lexer)
 import Ourlude
-import Parser (AST (..), BinOp (..), Definition (..), Expr (..), TypeExpr (..), parse)
+import Parser (AST (..), BinOp (..), Definition (..), Expr (..), Pattern (..), PatternDef (..), TypeExpr (..), parse)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -14,8 +14,8 @@ shouldParse str ast =
       result =
         eitherToMaybe tokens >>= \toks ->
           let parsed = parse toks
-           in traceShow parsed <| eitherToMaybe parsed
-   in traceShow tokens <| Just ast @=? result
+           in eitherToMaybe parsed
+   in Just ast @=? result
 
 tests :: TestTree
 tests =
@@ -66,6 +66,23 @@ tests =
                             (NameExpr "a")
                         )
                         (NameExpr "a")
+                    )
+                ]
+            )
+        ),
+      testCase
+        "parsing patterns"
+        ( shouldParse
+            "x = case x of { _ -> 3; A (B y) y -> 3; y -> y }"
+            ( AST
+                [ Definition
+                    "x"
+                    ( CaseExpr
+                        (NameExpr "x")
+                        [ PatternDef WildcardPattern (IntExpr 3),
+                          PatternDef (ConstructorPattern "A" [ConstructorPattern "B" [VarPattern "y"], VarPattern "y"]) (IntExpr 3),
+                          PatternDef (VarPattern "y") (NameExpr "y")
+                        ]
                     )
                 ]
             )

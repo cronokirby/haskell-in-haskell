@@ -25,6 +25,9 @@ instance Alternative Parser where
   Parser lA <|> Parser lB =
     Parser <| \input -> lA input ++ lB input
 
+opt :: Parser a -> Parser (Maybe a)
+opt p = (Just <$> p) <|> pure Nothing
+
 satisifies :: (Token -> Bool) -> Parser Token
 satisifies p =
   Parser <| \case
@@ -42,8 +45,8 @@ pluck f =
 token :: Token -> Parser Token
 token = (==) >>> satisifies
 
-sepBy :: Parser a -> Parser sep -> Parser [a]
-sepBy p sep = pure [] <|> liftA2 (:) p (many (sep *> p))
+sepBy1 :: Parser a -> Parser sep -> Parser [a]
+sepBy1 p sep = liftA2 (:) p (many (sep *> p))
 
 opsL :: (sep -> a -> a -> a) -> Parser a -> Parser sep -> Parser a
 opsL combine p s = liftA2 squash p (many (liftA2 (,) s p))
@@ -63,7 +66,10 @@ typeName =
     _ -> Nothing
 
 braced :: Parser a -> Parser [a]
-braced p = token OpenBrace *> sepBy p (token Semicolon) <* token CloseBrace
+braced p = token OpenBrace *> sepBy1 p (token Semicolon) <* token CloseBrace
+
+parensed :: Parser a -> Parser a
+parensed p = token OpenParens *> p <* token CloseParens
 
 newtype AST = AST [Definition] deriving (Eq, Show)
 
@@ -119,7 +125,7 @@ typeExpr = typeName |> fmap extract
     extract other = CustomType other
 
 expr :: Parser Expr
-expr = notWhereExpr <|> whereExpr <|> caseExpr
+expr = notWhereExpr <|> whereExpr
   where
     notWhereExpr = letExpr <|> binExpr <|> caseExpr
     letExpr = liftA2 LetExpr (token Let *> braced definition) (token In *> expr)
@@ -128,14 +134,15 @@ expr = notWhereExpr <|> whereExpr <|> caseExpr
 caseExpr :: Parser Expr
 caseExpr = liftA2 CaseExpr (token Case *> expr <* token Of) (braced patternDef)
   where
-    patternDef = liftA2 PatternDef onePattern expr
+    patternDef = liftA2 PatternDef onePattern (token ThinArrow *> expr)
 
 onePattern :: Parser Pattern
 onePattern = wildCardPattern <|> varPattern <|> constructorPattern
   where
     wildCardPattern = WildcardPattern <$ token Underscore
     varPattern = fmap VarPattern name
-    constructorPattern = liftA2 ConstructorPattern typeName (many onePattern)
+    constructorPattern = liftA2 ConstructorPattern typeName (many insideConstructorPattern)
+    insideConstructorPattern = wildCardPattern <|> varPattern <|> parensed constructorPattern
 
 binExpr :: Parser Expr
 binExpr = concatExpr
@@ -168,7 +175,7 @@ appExpr = some factor |> fmap extract
     extract _ = error "appExpr: No elements produced after some"
 
 factor :: Parser Expr
-factor = intLitt <|> stringLitt <|> nameExpr <|> parensExpr
+factor = intLitt <|> stringLitt <|> nameExpr <|> parensed expr
   where
     intLitt =
       pluck <| \case
@@ -179,7 +186,6 @@ factor = intLitt <|> stringLitt <|> nameExpr <|> parensExpr
         StringLitt s -> Just (StringExpr s)
         _ -> Nothing
     nameExpr = (name <|> typeName) |> fmap NameExpr
-    parensExpr = token OpenParens *> expr <* token CloseParens
 
 data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)
 
