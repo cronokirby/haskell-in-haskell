@@ -99,5 +99,12 @@ tests =
                     (CaseExpr (NameExpr "x") [PatternDef (LitteralPattern (StringLitteral "foo")) (NameExpr "x")])
                 ]
             )
+        ),
+      testCase
+        "function types"
+        ( shouldParse
+            "x :: (Int -> String) -> A -> B"
+            ( AST [TypeDefinition "x" (FunctionType (FunctionType IntType StringType) (FunctionType (CustomType "A") (CustomType "B")))]
+            )
         )
     ]

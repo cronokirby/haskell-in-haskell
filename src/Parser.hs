@@ -53,6 +53,17 @@ opsL combine p s = liftA2 squash p (many (liftA2 (,) s p))
   where
     squash = foldl' (\acc (sep, a) -> combine sep acc a)
 
+opsR :: (sep -> a -> a -> a) -> Parser a -> Parser sep -> Parser a
+opsR combine p s = liftA2 squash p (many (liftA2 (,) s p))
+  where
+    squash start annotated =
+      let (start', annotated') =
+            foldl'
+              (\(oldStart, stack) (sep, a) -> (a, (sep, oldStart) : stack))
+              (start, [])
+              annotated
+       in foldl' (\acc (sep, a) -> combine sep a acc) start' annotated'
+
 name :: Parser String
 name =
   pluck <| \case
@@ -82,6 +93,7 @@ data TypeExpr
   = StringType
   | IntType
   | CustomType String
+  | FunctionType TypeExpr TypeExpr
   deriving (Eq, Show)
 
 data Expr
@@ -127,11 +139,14 @@ definition = nameDefinition <|> typeDefinition
     typeDefinition = liftA2 TypeDefinition (name <* token DoubleColon) typeExpr
 
 typeExpr :: Parser TypeExpr
-typeExpr = typeName |> fmap extract
+typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
   where
-    extract "Int" = IntType
-    extract "String" = StringType
-    extract other = CustomType other
+    baseType = namedType <|> parensed typeExpr
+    namedType = typeName |> fmap extract
+      where
+        extract "Int" = IntType
+        extract "String" = StringType
+        extract other = CustomType other
 
 expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr
