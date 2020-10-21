@@ -114,17 +114,19 @@ data Token
   | FSlashEqual -- `/=`
   | VBarVBar -- `||`
   | AmpersandAmpersand -- `&&`
-  | IntLitt Int -- An integer litteral
+  | IntLitt Int -- An Int litteral
   | StringLitt String -- A String litteral
+  | BoolLitt Bool -- A Bool litteral
   | IntTypeName -- The typename `Int`
   | StringTypeName -- The typename `String`
+  | BoolTypeName -- The typename `Bool`
   | TypeName String -- A reference to some kind of type name
   | Name String -- A reference to some kind of name
   deriving (Eq, Show)
 
 -- Lex out one of the tokens in our language
 token :: Lexer (Token, String)
-token = keywords <|> operators <|> intLitt <|> stringLitt <|> primName <|> typeName <|> name
+token = keywords <|> operators <|> intLitt <|> stringLitt <|> boolLitt <|> primName <|> typeName <|> name
   where
     with :: Functor f => b -> f a -> f (b, a)
     with b = fmap (\a -> (b, a))
@@ -176,10 +178,15 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> primName <|> typeN
     intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
     stringLitt :: Lexer (Token, String)
     stringLitt = char '"' *> (const <$> many (satisfies (\c -> c /= '"')) <*> char '"') |> fmap (\x -> (StringLitt x, x))
+    boolLitt :: Lexer (Token, String)
+    boolLitt = (BoolLitt True `with` string "True") <|> (BoolLitt False `with` string "False")
     continuesName :: Lexer Char
     continuesName = satisfies isAlphaNum <|> char '\''
     primName :: Lexer (Token, String)
-    primName = (IntTypeName `with` string "Int") <|> (StringTypeName `with` string "String")
+    primName =
+      (IntTypeName `with` string "Int")
+        <|> (StringTypeName `with` string "String")
+        <|> (BoolTypeName `with` string "Bool")
     typeName :: Lexer (Token, String)
     typeName = (liftA2 (:) (satisfies isUpper) (many continuesName)) |> fmap (\x -> (TypeName x, x))
     name :: Lexer (Token, String)

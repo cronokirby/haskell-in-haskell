@@ -92,6 +92,7 @@ data ValueDefinition
 data TypeExpr
   = StringType
   | IntType
+  | BoolType
   | CustomType TypeName [TypeExpr]
   | TypeVar Name
   | FunctionType TypeExpr TypeExpr
@@ -112,6 +113,7 @@ data Expr
 data Litteral
   = IntLitteral Int
   | StringLitteral String
+  | BoolLitteral Bool
   deriving (Eq, Show)
 
 data BinOp
@@ -179,7 +181,10 @@ unspacedType = namedType <|> singleType
 singleType :: Parser TypeExpr
 singleType = (fmap TypeVar name) <|> primType <|> parensed typeExpr
   where
-    primType = (IntType <$ token IntTypeName) <|> (StringType <$ token StringTypeName)
+    primType =
+      (IntType <$ token IntTypeName)
+        <|> (StringType <$ token StringTypeName)
+        <|> (BoolType <$ token BoolTypeName)
 
 expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr
@@ -271,7 +276,7 @@ typeName =
     _ -> Nothing
 
 litteral :: Parser Litteral
-litteral = intLitt <|> stringLitt
+litteral = intLitt <|> stringLitt <|> boolLitt
   where
     intLitt =
       pluck <| \case
@@ -280,6 +285,10 @@ litteral = intLitt <|> stringLitt
     stringLitt =
       pluck <| \case
         StringLitt s -> Just (StringLitteral s)
+        _ -> Nothing
+    boolLitt =
+      pluck <| \case
+        BoolLitt b -> Just (BoolLitteral b)
         _ -> Nothing
 
 data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)

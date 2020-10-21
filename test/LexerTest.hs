@@ -17,6 +17,7 @@ tests =
       testCase "lexing names" (shouldLex "foo32' A34'" [OpenBrace, Name "foo32'", TypeName "A34'", CloseBrace]),
       testCase "lexing integer litterals" (shouldLex "-42 32" [OpenBrace, Dash, IntLitt 42, IntLitt 32, CloseBrace]),
       testCase "lexing string litterals" (shouldLex "\"foo bar\"" [OpenBrace, StringLitt "foo bar", CloseBrace]),
+      testCase "lexing bool litterals" (shouldLex "True False" [OpenBrace, BoolLitt True, BoolLitt False, CloseBrace]),
       testCase "lexing comments" (shouldLex "if -- comment\n if" [OpenBrace, If, If, CloseBrace]),
       layoutTests
     ]
