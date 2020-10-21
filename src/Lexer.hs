@@ -109,6 +109,8 @@ data Token
   | LeftAngleEqual -- `<=`
   | RightAngle -- `>`
   | RightAngleEqual -- `>=`
+  | EqualEqual -- `==`
+  | FSlashEqual -- `/=`
   | VBarVBar -- `||`
   | AmpersandAmpersand -- `&&`
   | IntLitt Int -- An integer litteral
@@ -163,6 +165,8 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> primName <|> typeN
           LeftAngleEqual `with` string "<=",
           RightAngle `with` string ">",
           RightAngleEqual `with` string ">=",
+          FSlashEqual `with` string "/=",
+          EqualEqual `with` string "==",
           VBarVBar `with` string "||",
           AmpersandAmpersand `with` string "&&"
         ]
