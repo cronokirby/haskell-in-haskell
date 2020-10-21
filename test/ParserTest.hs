@@ -251,5 +251,16 @@ tests =
         ( shouldParse
             "x = f . g . x"
             (AST [ValueDefinition (NameDefinition "x" (BinExpr Compose (NameExpr "f") (BinExpr Compose (NameExpr "g") (NameExpr "x"))))])
+        ),
+      testCase
+        "if then else"
+        ( shouldParse
+            "x = if x then x else if x then x else x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition "x" (IfExpr (NameExpr "x") (NameExpr "x") (IfExpr (NameExpr "x") (NameExpr "x") (NameExpr "x")))
+                    )
+                ]
+            )
         )
     ]
