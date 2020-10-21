@@ -106,6 +106,7 @@ data Token
   | Equal -- `=`
   | Dollar -- `$`
   | LeftAngle -- `<`
+  | Dot -- `.`
   | LeftAngleEqual -- `<=`
   | RightAngle -- `>`
   | RightAngleEqual -- `>=`
@@ -160,6 +161,7 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> primName <|> typeN
           Dash `with` string "-",
           Asterisk `with` string "*",
           Equal `with` string "=",
+          Dot `with` string ".",
           Dollar `with` string "$",
           LeftAngle `with` string "<",
           LeftAngleEqual `with` string "<=",

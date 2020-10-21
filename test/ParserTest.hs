@@ -148,5 +148,108 @@ tests =
                     ]
                 ]
             )
+        ),
+      testCase
+        "boolean operators"
+        ( shouldParse
+            "x = x && x || x && x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (BinExpr Or (BinExpr And (NameExpr "x") (NameExpr "x")) (BinExpr And (NameExpr "x") (NameExpr "x")))
+                    )
+                ]
+            )
+        ),
+      testCase
+        "=="
+        ( shouldParse
+            "x = x == x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (BinExpr EqualTo (NameExpr "x") (NameExpr "x"))
+                    )
+                ]
+            )
+        ),
+      testCase
+        "/="
+        ( shouldParse
+            "x = x /= x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (BinExpr NotEqualTo (NameExpr "x") (NameExpr "x"))
+                    )
+                ]
+            )
+        ),
+      testCase
+        ">="
+        ( shouldParse
+            "x = x >= x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (BinExpr GreaterEqual (NameExpr "x") (NameExpr "x"))
+                    )
+                ]
+            )
+        ),
+      testCase
+        ">"
+        ( shouldParse
+            "x = x > x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (BinExpr Greater (NameExpr "x") (NameExpr "x"))
+                    )
+                ]
+            )
+        ),
+      testCase
+        "<"
+        ( shouldParse
+            "x = x < x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (BinExpr Less (NameExpr "x") (NameExpr "x"))
+                    )
+                ]
+            )
+        ),
+      testCase
+        "<="
+        ( shouldParse
+            "x = x <= x"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "x"
+                        (BinExpr LessEqual (NameExpr "x") (NameExpr "x"))
+                    )
+                ]
+            )
+        ),
+      testCase
+        "$"
+        ( shouldParse
+            "x = f $ g $ x"
+            (AST [ValueDefinition (NameDefinition "x" (BinExpr Cash (NameExpr "f") (BinExpr Cash (NameExpr "g") (NameExpr "x"))))])
+        ),
+      testCase
+        "."
+        ( shouldParse
+            "x = f . g . x"
+            (AST [ValueDefinition (NameDefinition "x" (BinExpr Compose (NameExpr "f") (BinExpr Compose (NameExpr "g") (NameExpr "x"))))])
         )
     ]

@@ -119,7 +119,17 @@ data BinOp
   | Sub
   | Mul
   | Div
+  | Compose
   | Concat
+  | Cash
+  | Less
+  | LessEqual
+  | Greater
+  | GreaterEqual
+  | EqualTo
+  | NotEqualTo
+  | And
+  | Or
   deriving (Eq, Show)
 
 data PatternDef = PatternDef Pattern Expr deriving (Eq, Show)
@@ -195,22 +205,39 @@ onePattern = notConstructorPattern <|> constructorPattern
     insideConstructorPattern = notConstructorPattern <|> parensed onePattern
 
 binExpr :: Parser Expr
-binExpr = concatExpr
+binExpr = cashExpr
   where
-    concatExpr = opsL makeConcat addSubExpr (token PlusPlus)
+    cashExpr = opsR (const (BinExpr Cash)) orExpr (token Dollar)
+    orExpr = opsR (const (BinExpr Or)) andExpr (token VBarVBar)
+    andExpr = opsR (const (BinExpr And)) comparisonExpr (token AmpersandAmpersand)
+    comparisonExpr = opsL makeComparison concatExpr tokens
       where
-        makeConcat PlusPlus a b = BinExpr Concat a b
-        makeConcat t _ _ = error ("makeConcat: Unexpected Token " ++ show t)
+        makeComparison LeftAngle = BinExpr Less
+        makeComparison LeftAngleEqual = BinExpr LessEqual
+        makeComparison RightAngle = BinExpr Greater
+        makeComparison RightAngleEqual = BinExpr GreaterEqual
+        makeComparison EqualEqual = BinExpr EqualTo
+        makeComparison FSlashEqual = BinExpr NotEqualTo
+        makeComparison t = error ("makeComparison: Unexpected Token " ++ show t)
+        tokens =
+          token LeftAngle
+            <|> token LeftAngleEqual
+            <|> token RightAngle
+            <|> token RightAngleEqual
+            <|> token EqualEqual
+            <|> token FSlashEqual
+    concatExpr = opsL (const (BinExpr Concat)) addSubExpr (token PlusPlus)
     addSubExpr = opsL makeAddSub mulDivExpr (token Plus <|> token Dash)
       where
-        makeAddSub Plus a b = BinExpr Add a b
-        makeAddSub Dash a b = BinExpr Sub a b
-        makeAddSub t _ _ = error ("makeAddSub: Unexpected Token " ++ show t)
-    mulDivExpr = opsL makeMulDiv unaryExpr (token Asterisk <|> token FSlash)
+        makeAddSub Plus = BinExpr Add
+        makeAddSub Dash = BinExpr Sub
+        makeAddSub t = error ("makeAddSub: Unexpected Token " ++ show t)
+    mulDivExpr = opsL makeMulDiv composeExpr (token Asterisk <|> token FSlash)
       where
-        makeMulDiv Asterisk a b = BinExpr Mul a b
-        makeMulDiv FSlash a b = BinExpr Div a b
-        makeMulDiv t _ _ = error ("makeMulDiv: Unexpected Token " ++ show t)
+        makeMulDiv Asterisk = BinExpr Mul
+        makeMulDiv FSlash = BinExpr Div
+        makeMulDiv t = error ("makeMulDiv: Unexpected Token " ++ show t)
+    composeExpr = opsR (const (BinExpr Compose)) unaryExpr (token Dot)
 
 unaryExpr :: Parser Expr
 unaryExpr = negateExpr <|> appExpr
