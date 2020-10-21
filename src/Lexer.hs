@@ -104,8 +104,13 @@ data Token
   | Dash -- `-`
   | Asterisk -- `*`
   | Equal -- `=`
-  | Dot -- `.`
   | Dollar -- `$`
+  | LeftAngle -- `<`
+  | LeftAngleEqual -- `<=`
+  | RightAngle -- `>`
+  | RightAngleEqual -- `>=`
+  | VBarVBar -- `||`
+  | AmpersandAmpersand -- `&&`
   | IntLitt Int -- An integer litteral
   | StringLitt String -- A String litteral
   | IntTypeName -- The typename `Int`
@@ -153,8 +158,13 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> primName <|> typeN
           Dash `with` string "-",
           Asterisk `with` string "*",
           Equal `with` string "=",
-          Dot `with` string ".",
-          Dollar `with` string "$"
+          Dollar `with` string "$",
+          LeftAngle `with` string "<",
+          LeftAngleEqual `with` string "<=",
+          RightAngle `with` string ">",
+          RightAngleEqual `with` string ">=",
+          VBarVBar `with` string "||",
+          AmpersandAmpersand `with` string "&&"
         ]
     intLitt :: Lexer (Token, String)
     intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
