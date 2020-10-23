@@ -86,7 +86,7 @@ data ConstructorDefinition = ConstructorDefinition TypeName [TypeExpr] deriving 
 
 data ValueDefinition
   = TypeAnnotation String TypeExpr
-  | NameDefinition String Expr
+  | NameDefinition String [Pattern] Expr
   deriving (Eq, Show)
 
 data TypeExpr
@@ -165,7 +165,7 @@ constructorDefinition = liftA2 ConstructorDefinition typeName (many unspacedType
 valueDefinition :: Parser ValueDefinition
 valueDefinition = nameDefinition <|> typeDefinition
   where
-    nameDefinition = liftA2 NameDefinition (name <* token Equal) expr
+    nameDefinition = NameDefinition <$> name <*> many unspacedPattern <*> (token Equal *> expr)
     typeDefinition = liftA2 TypeAnnotation (name <* token DoubleColon) typeExpr
 
 typeExpr :: Parser TypeExpr
@@ -202,14 +202,17 @@ caseExpr = liftA2 CaseExpr (token Case *> expr <* token Of) (braced patternDef)
     patternDef = liftA2 PatternDef onePattern (token ThinArrow *> expr)
 
 onePattern :: Parser Pattern
-onePattern = notConstructorPattern <|> constructorPattern
+onePattern = unspacedPattern <|> constructorPattern
+  where
+    constructorPattern = liftA2 ConstructorPattern typeName (many unspacedPattern)
+
+unspacedPattern :: Parser Pattern
+unspacedPattern = notConstructorPattern <|> parensed onePattern
   where
     notConstructorPattern = wildCardPattern <|> varPattern <|> littPattern
     wildCardPattern = WildcardPattern <$ token Underscore
     varPattern = fmap NamePattern name
     littPattern = fmap LitteralPattern litteral
-    constructorPattern = liftA2 ConstructorPattern typeName (many insideConstructorPattern)
-    insideConstructorPattern = notConstructorPattern <|> parensed onePattern
 
 binExpr :: Parser Expr
 binExpr = cashExpr
