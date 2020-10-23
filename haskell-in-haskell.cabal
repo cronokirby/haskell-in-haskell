@@ -16,6 +16,7 @@ library
   exposed-modules:     Ourlude
                      , Lexer
                      , Parser
+                     , Simplifier
   ghc-options:         -Wall
   hs-source-dirs:      src
 
