@@ -66,5 +66,32 @@ tests =
                     )
                 ]
             )
+        ),
+      testCase
+        "singular multi argument definition"
+        ( shouldSimplify
+            "f _ _ = 3"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "f"
+                        Nothing
+                        ( LambdaExpr
+                            "$0"
+                            ( LambdaExpr
+                                "$1"
+                                ( CaseExpr
+                                    (NameExpr "$0")
+                                    [ PatternDef
+                                        WildcardPattern
+                                        ( CaseExpr (NameExpr "$1") [PatternDef WildcardPattern (LittExpr (IntLitteral 3))]
+                                        )
+                                    ]
+                                )
+                            )
+                        )
+                    )
+                ]
+            )
         )
     ]

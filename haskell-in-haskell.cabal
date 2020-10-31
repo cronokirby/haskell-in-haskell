@@ -40,4 +40,5 @@ test-suite haskell-in-haskell-test
   main-is:             Suite.hs
   other-modules:       LexerTest
                      , ParserTest
+                     , SimplifierTest
   type:                exitcode-stdio-1.0
