@@ -4,32 +4,35 @@ module Simplifier
   ( Pattern (..),
     Litteral (..),
     TypeExpr (..),
+    SchemeExpr (..),
+    ConstructorDefinition (..),
+    SimplifierError (..),
+    simplify,
   )
 where
 
 import Data.Function (on)
-import Data.List (foldl', foldr1, groupBy)
+import Data.List (foldl', groupBy)
 import Data.Maybe (catMaybes)
 import Ourlude
-import Parser (Litteral (..), Pattern (..), TypeExpr (..))
+import Parser (ConstructorDefinition (..), Litteral (..), Pattern (..), TypeExpr (..))
 import qualified Parser as Parser
 
 type Name = String
 
 type TypeName = String
 
-type BinOp = Parser.BinOp
+newtype AST = AST [Definition] deriving (Eq, Show)
 
 data Definition
   = ValueDefinition ValueDefinition
   | TypeDefinition TypeName [Name] [ConstructorDefinition]
   | TypeSynonym TypeName TypeExpr
+  deriving (Eq, Show)
 
-data ValueDefinition = NameDefinition String (Maybe SchemeExpr) Expr
+data ValueDefinition = NameDefinition String (Maybe SchemeExpr) Expr deriving (Eq, Show)
 
-data ConstructorDefinition = ConstructorDefinition TypeName [TypeExpr]
-
-data SchemeExpr = SchemeExpr [Name] TypeExpr
+data SchemeExpr = SchemeExpr [Name] TypeExpr deriving (Eq, Show)
 
 closeTypeExpr :: TypeExpr -> SchemeExpr
 closeTypeExpr t = SchemeExpr (names t) t
@@ -49,6 +52,7 @@ data Expr
   | NameExpr Name
   | ApplyExpr Expr Expr
   | LambdaExpr Name Expr
+  deriving (Eq, Show)
 
 data Builtin
   = Add
@@ -67,12 +71,19 @@ data Builtin
   | And
   | Or
   | Negate
+  deriving (Eq, Show)
 
-data PatternDef = PatternDef Pattern Expr
+data PatternDef = PatternDef Pattern Expr deriving (Eq, Show)
 
-convertExpr :: Parser.Expr -> Expr
+data SimplifierError
+  = MultipleTypeAnnotations String [SchemeExpr]
+  | DifferentPatternLengths String [Int]
+  | UnimplementedAnnotation String
+  deriving (Eq, Show)
+
+convertExpr :: Parser.Expr -> Either SimplifierError Expr
 -- We replace binary expressions with the corresponding bultin functions
-convertExpr (Parser.BinExpr op e1 e2) =
+convertExpr (Parser.BinExpr op e1 e2) = do
   let b = case op of
         Parser.Add -> Add
         Parser.Sub -> Sub
@@ -89,34 +100,44 @@ convertExpr (Parser.BinExpr op e1 e2) =
         Parser.NotEqualTo -> NotEqualTo
         Parser.And -> And
         Parser.Or -> Or
-   in ApplyExpr (ApplyExpr (Builtin b) (convertExpr e1)) (convertExpr e2)
+  e1' <- convertExpr e1
+  e2' <- convertExpr e2
+  return (ApplyExpr (ApplyExpr (Builtin b) e1') e2')
 -- Negation is replaced by a built in function as well
-convertExpr (Parser.NegateExpr e) = ApplyExpr (Builtin Negate) (convertExpr e)
+convertExpr (Parser.NegateExpr e) = ApplyExpr (Builtin Negate) <$> (convertExpr e)
 convertExpr (Parser.WhereExpr e defs) =
   convertExpr (Parser.LetExpr defs e)
-convertExpr (Parser.IfExpr cond thenn elsse) =
-  CaseExpr
-    (convertExpr cond)
-    [ PatternDef (LitteralPattern (BoolLitteral True)) (convertExpr thenn),
-      PatternDef (LitteralPattern (BoolLitteral False)) (convertExpr elsse)
-    ]
-convertExpr (Parser.NameExpr name) = NameExpr name
-convertExpr (Parser.LittExpr litt) = LittExpr litt
-convertExpr (Parser.LambdaExpr names body) =
-  foldr LambdaExpr (convertExpr body) names
-convertExpr (Parser.ApplyExpr f exprs) =
-  foldl' (\acc x -> ApplyExpr acc (convertExpr x)) (convertExpr f) exprs
-convertExpr (Parser.CaseExpr expr patterns) =
-  let patterns' = map transformPat patterns
-      transformPat (Parser.PatternDef p e) = PatternDef p (convertExpr e)
-   in CaseExpr (convertExpr expr) patterns'
-convertExpr (Parser.NameExpr name) = NameExpr name
-convertExpr (Parser.LittExpr litt) = LittExpr litt
-
-data SimplifierError
-  = MultipleTypeAnnotations String [SchemeExpr]
-  | DifferentPatternLengths String [Int]
-  | UnimplementedAnnotation String
+convertExpr (Parser.IfExpr cond thenn elsse) = do
+  cond' <- convertExpr cond
+  thenn' <- convertExpr thenn
+  elsse' <- convertExpr elsse
+  return
+    ( CaseExpr
+        cond'
+        [ PatternDef (LitteralPattern (BoolLitteral True)) thenn',
+          PatternDef (LitteralPattern (BoolLitteral False)) elsse'
+        ]
+    )
+convertExpr (Parser.NameExpr name) = Right (NameExpr name)
+convertExpr (Parser.LittExpr litt) = Right (LittExpr litt)
+convertExpr (Parser.LambdaExpr names body) = do
+  body' <- convertExpr body
+  return (foldr LambdaExpr body' names)
+convertExpr (Parser.ApplyExpr f exprs) = do
+  f' <- convertExpr f
+  exprs' <- traverse convertExpr exprs
+  return (foldl' (\acc x -> ApplyExpr acc x) f' exprs')
+convertExpr (Parser.CaseExpr expr patterns) = do
+  let transformPat (Parser.PatternDef p e) = PatternDef p <$> (convertExpr e)
+  patterns' <- traverse transformPat patterns
+  expr' <- convertExpr expr
+  return (CaseExpr expr' patterns')
+convertExpr (Parser.NameExpr name) = Right (NameExpr name)
+convertExpr (Parser.LittExpr litt) = Right (LittExpr litt)
+convertExpr (Parser.LetExpr defs e) = do
+  defs' <- convertValueDefinitions defs
+  e' <- convertExpr e
+  return (LetExpr defs' e')
 
 data PatternTree = Leaf Expr | Branch [(Pattern, PatternTree)] | Empty
 
@@ -183,11 +204,14 @@ convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
       (catMaybes <<< (`map` ls)) <| \case
         Parser.TypeAnnotation _ typ -> Just typ
         _ -> Nothing
-    squashPatterns :: [Parser.ValueDefinition] -> [([Pattern], Expr)]
-    squashPatterns ls =
-      (catMaybes <<< (`map` ls)) <| \case
-        Parser.NameDefinition _ pats body -> Just (pats, convertExpr body)
-        _ -> Nothing
+    squashPatterns :: [Parser.ValueDefinition] -> Either SimplifierError [([Pattern], Expr)]
+    squashPatterns ls = do
+      let strip (Parser.NameDefinition _ pats body) = do
+            body' <- convertExpr body
+            return (Just (pats, body'))
+          strip _ = return Nothing
+      stripped <- traverse strip ls
+      return (catMaybes stripped)
     getName :: Parser.ValueDefinition -> Name
     getName (Parser.TypeAnnotation name _) = name
     getName (Parser.NameDefinition name _ _) = name
@@ -200,12 +224,28 @@ convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
         [] -> Right Nothing
         [single] -> Right (Just single)
         tooMany -> Left (MultipleTypeAnnotations name tooMany)
-      let pats = squashPatterns information
-          patLengths = map (fst >>> length) pats
-      patLength <- case patLengths of
+      pats <- squashPatterns information
+      let patLengths = map (fst >>> length) pats
+      case patLengths of
         [] -> Left (UnimplementedAnnotation name)
-        (l : ls) | all (== l) ls -> Right l
+        (l : ls) | all (== l) ls -> Right ()
         ls -> Left (DifferentPatternLengths name ls)
       let tree = foldl' (\acc x -> addBranches x acc) Empty pats
           expr = convertTree tree
       return (NameDefinition name schemeExpr expr)
+
+convertDefinitions :: [Parser.Definition] -> Either SimplifierError [Definition]
+convertDefinitions defs =
+  let split = foldr go ([], [])
+        where
+          go (Parser.TypeDefinition name args cstr) (ts, vs) =
+            (TypeDefinition name args cstr : ts, vs)
+          go (Parser.TypeSynonym name typ) (ts, vs) = (TypeSynonym name typ : ts, vs)
+          go (Parser.ValueDefinition v) (ts, vs) = (ts, v : vs)
+      (typedefs, valuedefs) = split defs
+   in do
+        valuedefs' <- convertValueDefinitions valuedefs
+        return (typedefs ++ map ValueDefinition valuedefs')
+
+simplify :: Parser.AST -> Either SimplifierError AST
+simplify (Parser.AST defs) = AST <$> (convertDefinitions defs)
