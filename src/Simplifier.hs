@@ -127,29 +127,57 @@ treeDepth :: PatternTree -> Int
 treeDepth (Leaf _) = 0
 treeDepth (Branch bs) = map (snd >>> treeDepth) bs |> maximum
 
--- True if a given pattern completely encompases another
-subsumes :: Pattern -> Pattern -> Bool
-subsumes WildcardPattern WildcardPattern = True
-subsumes WildcardPattern (NamePattern _) = True
-subsumes WildcardPattern _ = True
-subsumes (NamePattern _) (NamePattern _) = True
-subsumes (NamePattern _) WildcardPattern = True
-subsumes (NamePattern _) _ = True
-subsumes (LitteralPattern l1) (LitteralPattern l2) | l1 == l2 = True
-subsumes (ConstructorPattern c1 pats1) (ConstructorPattern c2 pats2) =
-  c1 == c2 && length pats1 == length pats2 && (all (uncurry subsumes) (zip pats1 pats2))
-subsumes _ _ = False
+-- True if a given pattern is equivalent, or captures more values than another
+covers :: Pattern -> Pattern -> Bool
+covers WildcardPattern WildcardPattern = True
+covers WildcardPattern (NamePattern _) = True
+covers WildcardPattern _ = True
+covers (NamePattern _) (NamePattern _) = True
+covers (NamePattern _) WildcardPattern = True
+covers (NamePattern _) _ = True
+covers (LitteralPattern l1) (LitteralPattern l2) | l1 == l2 = True
+covers (ConstructorPattern c1 pats1) (ConstructorPattern c2 pats2) =
+  c1 == c2 && length pats1 == length pats2 && (all (uncurry covers) (zip pats1 pats2))
+covers _ _ = False
 
+-- This adds a full block pattern to the pattern tree
 addBranches :: ([Pattern], Expr) -> PatternTree -> PatternTree
 addBranches ([], expr) Empty = Leaf expr
 addBranches (p : ps, expr) Empty = Branch [(p, addBranches (ps, expr) Empty)]
 addBranches (p : ps, expr) (Branch bs) =
-  if any (\(pat, _) -> subsumes pat p) bs
-    then Branch bs
-    else Branch ((p, addBranches (ps, expr) Empty) : bs)
+  -- We trickle down the case generation when we cover that pattern,
+  -- but we only need to create a new branch if no pattern completely covers us
+  let trickle (pat, tree) =
+        if covers p pat
+          then (pat, addBranches (ps, expr) tree)
+          else (pat, tree)
+      trickled = map trickle bs
+      extra = (p, addBranches (ps, expr) Empty)
+      bs' =
+        if any (\(pat, _) -> covers pat p) bs
+          then trickled
+          else extra : trickled
+   in Branch bs'
 
-convertValueDefinition :: [Parser.ValueDefinition] -> Either SimplifierError [ValueDefinition]
-convertValueDefinition = groupBy ((==) `on` getName) >>> traverse gather
+lambdaNames :: [Name]
+lambdaNames = map (\x -> "$" ++ show x) [(0 :: Integer) ..]
+
+-- Convert a pattern tree into a correct expression.
+--
+-- This creates a lambda expression, and then creates the necessary
+-- nested cases.
+convertTree :: PatternTree -> Expr
+convertTree tree =
+  foldr LambdaExpr (fold lambdaNames tree) (take (treeDepth tree) lambdaNames)
+  where
+    fold :: [Name] -> PatternTree -> Expr
+    fold _ (Leaf expr) = expr
+    fold (n : ns) (Branch bs) =
+      let makeCase (pat, tree') = PatternDef pat (fold ns tree')
+       in CaseExpr (NameExpr n) (map makeCase bs)
+
+convertValueDefinitions :: [Parser.ValueDefinition] -> Either SimplifierError [ValueDefinition]
+convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
   where
     getTypeAnnotations ls =
       (catMaybes <<< (`map` ls)) <| \case
@@ -178,4 +206,6 @@ convertValueDefinition = groupBy ((==) `on` getName) >>> traverse gather
         [] -> Left (UnimplementedAnnotation name)
         (l : ls) | all (== l) ls -> Right l
         ls -> Left (DifferentPatternLengths name ls)
-      return undefined
+      let tree = foldl' (\acc x -> addBranches x acc) Empty pats
+          expr = convertTree tree
+      return (NameDefinition name schemeExpr expr)
