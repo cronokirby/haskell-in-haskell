@@ -144,7 +144,7 @@ convertExpr (Parser.LetExpr defs e) = do
   e' <- convertExpr e
   return (LetExpr defs' e')
 
-data PatternTree = Leaf Expr | Branch [(Pattern, PatternTree)] | Empty
+data PatternTree = Leaf Expr | Branch [(Pattern, PatternTree)] | Empty deriving (Eq, Show)
 
 -- Calculate the depth of a given tree of patterns
 --
@@ -168,6 +168,7 @@ covers _ _ = False
 
 -- This adds a full block pattern to the pattern tree
 addBranches :: ([Pattern], Expr) -> PatternTree -> PatternTree
+addBranches _ (Leaf expr) = Leaf expr
 addBranches ([], expr) Empty = Leaf expr
 addBranches (p : ps, expr) Empty = Branch [(p, addBranches (ps, expr) Empty)]
 addBranches (p : ps, expr) (Branch bs) =

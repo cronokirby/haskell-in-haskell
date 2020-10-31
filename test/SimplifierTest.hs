@@ -115,5 +115,27 @@ tests =
                     )
                 ]
             )
+        ),
+      testCase
+        "catch all definitions"
+        ( shouldSimplify
+            "{ f 3 = 3; f _ = 3 }"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "f"
+                        Nothing
+                        ( LambdaExpr
+                            "$0"
+                            ( CaseExpr
+                                (NameExpr "$0")
+                                [ PatternDef (LitteralPattern (IntLitteral 3)) (LittExpr (IntLitteral 3)),
+                                  PatternDef WildcardPattern (LittExpr (IntLitteral 3))
+                                ]
+                            )
+                        )
+                    )
+                ]
+            )
         )
     ]
