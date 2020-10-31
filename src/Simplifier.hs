@@ -203,6 +203,9 @@ convertTree tree =
       let makeCase (pat, tree') = PatternDef pat (fold ns tree')
        in CaseExpr (NameExpr n) (map makeCase (reverse bs))
 
+-- This converts value definitions by gathering the different patterns into a single lambda expression,
+-- and adding the optional type annotation if it exists.
+-- This will emit errors if any discrepencies are encountered.
 convertValueDefinitions :: [Parser.ValueDefinition] -> Either SimplifierError [ValueDefinition]
 convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
   where
