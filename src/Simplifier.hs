@@ -200,7 +200,7 @@ convertTree tree =
     fold _ (Leaf expr) = expr
     fold (n : ns) (Branch bs) =
       let makeCase (pat, tree') = PatternDef pat (fold ns tree')
-       in CaseExpr (NameExpr n) (map makeCase bs)
+       in CaseExpr (NameExpr n) (map makeCase (reverse bs))
 
 convertValueDefinitions :: [Parser.ValueDefinition] -> Either SimplifierError [ValueDefinition]
 convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather

@@ -93,5 +93,27 @@ tests =
                     )
                 ]
             )
+        ),
+      testCase
+        "disjoint definitions"
+        ( shouldSimplify
+            "{ f 3 = 3; f 4 = 4 }"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "f"
+                        Nothing
+                        ( LambdaExpr
+                            "$0"
+                            ( CaseExpr
+                                (NameExpr "$0")
+                                [ PatternDef (LitteralPattern (IntLitteral 3)) (LittExpr (IntLitteral 3)),
+                                  PatternDef (LitteralPattern (IntLitteral 4)) (LittExpr (IntLitteral 4))
+                                ]
+                            )
+                        )
+                    )
+                ]
+            )
         )
     ]
