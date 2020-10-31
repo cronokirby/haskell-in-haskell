@@ -146,7 +146,7 @@ data PatternTree = Leaf Expr | Branch [(Pattern, PatternTree)] | Empty
 -- This is useful to know the number of lambda arguments we might need
 treeDepth :: PatternTree -> Int
 treeDepth (Leaf _) = 0
-treeDepth (Branch bs) = map (snd >>> treeDepth) bs |> maximum
+treeDepth (Branch bs) = map (snd >>> treeDepth) bs |> maximum |> (+1)
 
 -- True if a given pattern is equivalent, or captures more values than another
 covers :: Pattern -> Pattern -> Bool
