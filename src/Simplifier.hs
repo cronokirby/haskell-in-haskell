@@ -9,6 +9,7 @@ module Simplifier
     SimplifierError (..),
     AST (..),
     Expr (..),
+    PatternDef (..),
     Definition (..),
     ValueDefinition (..),
     simplifier,

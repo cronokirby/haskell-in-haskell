@@ -26,5 +26,25 @@ tests =
             "x = 2"
             ( AST [ValueDefinition (NameDefinition "x" Nothing (LittExpr (IntLitteral 2)))]
             )
+        ),
+      testCase
+        "single argument functions"
+        ( shouldSimplify
+            "f x = 3"
+            ( AST
+                [ ValueDefinition
+                    ( NameDefinition
+                        "f"
+                        Nothing
+                        ( LambdaExpr
+                            "$0"
+                            ( CaseExpr
+                                (NameExpr "$0")
+                                [PatternDef (NamePattern "x") (LittExpr (IntLitteral 3))]
+                            )
+                        )
+                    )
+                ]
+            )
         )
     ]
