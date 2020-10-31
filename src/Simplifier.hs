@@ -7,7 +7,7 @@ module Simplifier
     SchemeExpr (..),
     ConstructorDefinition (..),
     SimplifierError (..),
-    simplify,
+    simplifier,
   )
 where
 
@@ -247,5 +247,5 @@ convertDefinitions defs =
         valuedefs' <- convertValueDefinitions valuedefs
         return (typedefs ++ map ValueDefinition valuedefs')
 
-simplify :: Parser.AST -> Either SimplifierError AST
-simplify (Parser.AST defs) = AST <$> (convertDefinitions defs)
+simplifier :: Parser.AST -> Either SimplifierError AST
+simplifier (Parser.AST defs) = AST <$> (convertDefinitions defs)

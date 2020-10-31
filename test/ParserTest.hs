@@ -12,7 +12,7 @@ shouldParse str ast =
       tokens = lexer str
       result =
         eitherToMaybe tokens >>= \toks ->
-          let parsed = parse toks
+          let parsed = parser toks
            in eitherToMaybe parsed
    in Just ast @=? result
 

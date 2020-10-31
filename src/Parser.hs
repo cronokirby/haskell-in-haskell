@@ -298,8 +298,8 @@ litteral = intLitt <|> stringLitt <|> boolLitt
 
 data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)
 
-parse :: [Token] -> Either ParseError AST
-parse input =
+parser :: [Token] -> Either ParseError AST
+parser input =
   let (Parser runParser) = ast
    in case runParser input of
         [] -> Left FailedParse
