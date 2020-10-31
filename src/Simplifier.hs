@@ -118,11 +118,39 @@ data SimplifierError
   | DifferentPatternLengths String [Int]
   | UnimplementedAnnotation String
 
+data PatternTree = Leaf Expr | Branch [(Pattern, PatternTree)] | Empty
+
+-- Calculate the depth of a given tree of patterns
+--
+-- This is useful to know the number of lambda arguments we might need
+treeDepth :: PatternTree -> Int
+treeDepth (Leaf _) = 0
+treeDepth (Branch bs) = map (snd >>> treeDepth) bs |> maximum
+
+-- True if a given pattern completely encompases another
+subsumes :: Pattern -> Pattern -> Bool
+subsumes WildcardPattern WildcardPattern = True
+subsumes WildcardPattern (NamePattern _) = True
+subsumes WildcardPattern _ = True
+subsumes (NamePattern _) (NamePattern _) = True
+subsumes (NamePattern _) WildcardPattern = True
+subsumes (NamePattern _) _ = True
+subsumes (LitteralPattern l1) (LitteralPattern l2) | l1 == l2 = True
+subsumes (ConstructorPattern c1 pats1) (ConstructorPattern c2 pats2) =
+  c1 == c2 && length pats1 == length pats2 && (all (uncurry subsumes) (zip pats1 pats2))
+subsumes _ _ = False
+
+addBranches :: ([Pattern], Expr) -> PatternTree -> PatternTree
+addBranches ([], expr) Empty = Leaf expr
+addBranches (p : ps, expr) Empty = Branch [(p, addBranches (ps, expr) Empty)]
+addBranches (p : ps, expr) (Branch bs) =
+  if any (\(pat, _) -> subsumes pat p) bs
+    then Branch bs
+    else Branch ((p, addBranches (ps, expr) Empty) : bs)
+
 convertValueDefinition :: [Parser.ValueDefinition] -> Either SimplifierError [ValueDefinition]
-convertValueDefinition = groupBy ((==) `on` appliesTo) >>> traverse gather
+convertValueDefinition = groupBy ((==) `on` getName) >>> traverse gather
   where
-    appliesTo (Parser.TypeAnnotation name _) = name
-    appliesTo (Parser.NameDefinition name _ _) = name
     getTypeAnnotations ls =
       (catMaybes <<< (`map` ls)) <| \case
         Parser.TypeAnnotation _ typ -> Just typ
