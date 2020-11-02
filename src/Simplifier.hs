@@ -27,15 +27,15 @@ type Name = String
 
 type TypeName = String
 
-newtype AST = AST [Definition] deriving (Eq, Show)
+newtype AST t = AST [Definition t] deriving (Eq, Show)
 
-data Definition
-  = ValueDefinition ValueDefinition
+data Definition t
+  = ValueDefinition (ValueDefinition t)
   | TypeDefinition TypeName [Name] [ConstructorDefinition]
   | TypeSynonym TypeName TypeExpr
   deriving (Eq, Show)
 
-data ValueDefinition = NameDefinition String (Maybe SchemeExpr) Expr deriving (Eq, Show)
+data ValueDefinition t = NameDefinition String (Maybe SchemeExpr) t (Expr t) deriving (Eq, Show)
 
 data SchemeExpr = SchemeExpr [Name] TypeExpr deriving (Eq, Show)
 
@@ -49,14 +49,14 @@ closeTypeExpr t = SchemeExpr (names t) t
     names (TypeVar n) = [n]
     names (FunctionType t1 t2) = names t1 ++ names t2
 
-data Expr
-  = LetExpr [ValueDefinition] Expr
-  | CaseExpr Expr [PatternDef]
+data Expr t
+  = LetExpr [ValueDefinition t] (Expr t)
+  | CaseExpr (Expr t) [PatternDef t]
   | LittExpr Litteral
   | Builtin Builtin
   | NameExpr Name
-  | ApplyExpr Expr Expr
-  | LambdaExpr Name Expr
+  | ApplyExpr (Expr t) (Expr t)
+  | LambdaExpr Name t (Expr t)
   deriving (Eq, Show)
 
 data Builtin
@@ -78,7 +78,7 @@ data Builtin
   | Negate
   deriving (Eq, Show)
 
-data PatternDef = PatternDef Pattern Expr deriving (Eq, Show)
+data PatternDef t = PatternDef Pattern (Expr t) deriving (Eq, Show)
 
 data SimplifierError
   = MultipleTypeAnnotations String [SchemeExpr]
@@ -86,7 +86,7 @@ data SimplifierError
   | UnimplementedAnnotation String
   deriving (Eq, Show)
 
-convertExpr :: Parser.Expr -> Either SimplifierError Expr
+convertExpr :: Parser.Expr -> Either SimplifierError (Expr ())
 -- We replace binary expressions with the corresponding bultin functions
 convertExpr (Parser.BinExpr op e1 e2) = do
   let b = case op of
@@ -127,7 +127,7 @@ convertExpr (Parser.NameExpr name) = Right (NameExpr name)
 convertExpr (Parser.LittExpr litt) = Right (LittExpr litt)
 convertExpr (Parser.LambdaExpr names body) = do
   body' <- convertExpr body
-  return (foldr LambdaExpr body' names)
+  return (foldr (\x acc -> LambdaExpr x () acc) body' names)
 convertExpr (Parser.ApplyExpr f exprs) = do
   f' <- convertExpr f
   exprs' <- traverse convertExpr exprs
@@ -144,7 +144,7 @@ convertExpr (Parser.LetExpr defs e) = do
   e' <- convertExpr e
   return (LetExpr defs' e')
 
-data PatternTree = Leaf Expr | Branch [(Pattern, PatternTree)] | Empty deriving (Eq, Show)
+data PatternTree = Leaf (Expr ()) | Branch [(Pattern, PatternTree)] | Empty deriving (Eq, Show)
 
 -- Calculate the depth of a given tree of patterns
 --
@@ -167,7 +167,7 @@ covers (ConstructorPattern c1 pats1) (ConstructorPattern c2 pats2) =
 covers _ _ = False
 
 -- This adds a full block pattern to the pattern tree
-addBranches :: ([Pattern], Expr) -> PatternTree -> PatternTree
+addBranches :: ([Pattern], Expr ()) -> PatternTree -> PatternTree
 addBranches _ (Leaf expr) = Leaf expr
 addBranches ([], expr) Empty = Leaf expr
 addBranches (p : ps, expr) Empty = Branch [(p, addBranches (ps, expr) Empty)]
@@ -193,11 +193,14 @@ lambdaNames = map (\x -> "$" ++ show x) [(0 :: Integer) ..]
 --
 -- This creates a lambda expression, and then creates the necessary
 -- nested cases.
-convertTree :: PatternTree -> Expr
+convertTree :: PatternTree -> Expr ()
 convertTree tree =
-  foldr LambdaExpr (fold lambdaNames tree) (take (treeDepth tree) lambdaNames)
+  foldr
+    (\x acc -> LambdaExpr x () acc)
+    (fold lambdaNames tree)
+    (take (treeDepth tree) lambdaNames)
   where
-    fold :: [Name] -> PatternTree -> Expr
+    fold :: [Name] -> PatternTree -> Expr ()
     fold _ (Leaf expr) = expr
     fold (n : ns) (Branch bs) =
       let makeCase (pat, tree') = PatternDef pat (fold ns tree')
@@ -206,14 +209,14 @@ convertTree tree =
 -- This converts value definitions by gathering the different patterns into a single lambda expression,
 -- and adding the optional type annotation if it exists.
 -- This will emit errors if any discrepencies are encountered.
-convertValueDefinitions :: [Parser.ValueDefinition] -> Either SimplifierError [ValueDefinition]
+convertValueDefinitions :: [Parser.ValueDefinition] -> Either SimplifierError [ValueDefinition ()]
 convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
   where
     getTypeAnnotations ls =
       (catMaybes <<< (`map` ls)) <| \case
         Parser.TypeAnnotation _ typ -> Just typ
         _ -> Nothing
-    squashPatterns :: [Parser.ValueDefinition] -> Either SimplifierError [([Pattern], Expr)]
+    squashPatterns :: [Parser.ValueDefinition] -> Either SimplifierError [([Pattern], Expr ())]
     squashPatterns ls = do
       let strip (Parser.NameDefinition _ pats body) = do
             body' <- convertExpr body
@@ -224,7 +227,7 @@ convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
     getName :: Parser.ValueDefinition -> Name
     getName (Parser.TypeAnnotation name _) = name
     getName (Parser.NameDefinition name _ _) = name
-    gather :: [Parser.ValueDefinition] -> Either SimplifierError ValueDefinition
+    gather :: [Parser.ValueDefinition] -> Either SimplifierError (ValueDefinition ())
     gather [] = error "groupBy returned empty list"
     gather information = do
       let name = getName (head information)
@@ -241,9 +244,9 @@ convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
         ls -> Left (DifferentPatternLengths name ls)
       let tree = foldl' (\acc x -> addBranches x acc) Empty pats
           expr = convertTree tree
-      return (NameDefinition name schemeExpr expr)
+      return (NameDefinition name schemeExpr () expr)
 
-convertDefinitions :: [Parser.Definition] -> Either SimplifierError [Definition]
+convertDefinitions :: [Parser.Definition] -> Either SimplifierError [Definition ()]
 convertDefinitions defs =
   let split = foldr go ([], [])
         where
@@ -256,5 +259,5 @@ convertDefinitions defs =
         valuedefs' <- convertValueDefinitions valuedefs
         return (typedefs ++ map ValueDefinition valuedefs')
 
-simplifier :: Parser.AST -> Either SimplifierError AST
+simplifier :: Parser.AST -> Either SimplifierError (AST ())
 simplifier (Parser.AST defs) = AST <$> (convertDefinitions defs)
