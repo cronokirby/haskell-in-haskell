@@ -1,13 +1,17 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 
 module Typer where
 
+import Control.Monad.Except
+import Control.Monad.Reader
+import Control.Monad.State
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Ourlude
-import Simplifier (Name, SchemeExpr (..), TypeExpr (..), TypeName)
+import Simplifier (Definition (..), Name, SchemeExpr (..), TypeExpr (..), TypeName)
 
 -- Represents some kind of constraint we generate during our gathering pharse.
 --
@@ -104,3 +108,63 @@ data TypeError
     UnknownType TypeName
   | -- A mismatch of a type constructor with expected vs actual args
     MismatchedTypeArgs TypeName Int Int
+  | -- A type has been defined multiple times
+    MultipleTypeDefinitions TypeName
+  | -- A type synonym ends up being cyclical
+    CyclicalTypeSynonym TypeName [TypeName]
+
+gatherTypeSynonyms :: [Definition t] -> Map.Map TypeName TypeExpr
+gatherTypeSynonyms =
+  foldMap <| \case
+    TypeSynonym name expr -> Map.singleton name expr
+    _ -> Map.empty
+
+typeDependencies :: TypeExpr -> [TypeName]
+typeDependencies StringType = []
+typeDependencies IntType = []
+typeDependencies BoolType = []
+typeDependencies (TypeVar _) = []
+typeDependencies (FunctionType t1 t2) = typeDependencies t1 ++ typeDependencies t2
+typeDependencies (CustomType name exprs) = name : concatMap typeDependencies exprs
+
+data SorterState = SorterState {unseen :: Set.Set TypeName, output :: [TypeName]}
+
+type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except TypeError)) a
+
+sortTypeSynonyms :: Map.Map TypeName TypeExpr -> Either TypeError [TypeName]
+sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) [])
+  where
+    deps :: TypeName -> [TypeName]
+    deps k = Map.findWithDefault [] k (Map.map typeDependencies mp)
+    runSorter :: SorterM a -> SorterState -> Either TypeError a
+    runSorter m st =
+      runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
+    pick :: Set.Set a -> Maybe a
+    pick s | Set.null s = Nothing
+    pick s = Just (Set.elemAt 0 s)
+    see :: TypeName -> SorterM Bool
+    see name = do
+      unseen' <- gets unseen
+      modify' (\s -> s {unseen = Set.delete name unseen'})
+      return (Set.member name unseen')
+    out :: TypeName -> SorterM ()
+    out name = modify' (\s -> s {output = name : output s})
+    withAncestor :: TypeName -> SorterM a -> SorterM a
+    withAncestor = local <<< Set.insert
+    sort :: SorterM [TypeName]
+    sort = do
+      unseen' <- gets unseen
+      case pick unseen' of
+        Nothing -> gets output
+        Just n -> do
+          dfs n
+          sort
+    dfs :: TypeName -> SorterM ()
+    dfs name = do
+      ancestors <- ask
+      when (Set.member name ancestors) <| do
+        throwError (CyclicalTypeSynonym name (Set.toList ancestors))
+      new <- see name
+      when new <| do
+        withAncestor name (forM_ (deps name) dfs)
+        out name
