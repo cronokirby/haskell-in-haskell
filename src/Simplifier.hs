@@ -12,6 +12,8 @@ module Simplifier
     PatternDef (..),
     Definition (..),
     ValueDefinition (..),
+    Name,
+    TypeName,
     simplifier,
   )
 where
