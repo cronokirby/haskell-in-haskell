@@ -77,3 +77,17 @@ instance FreeTypeVars SchemeExpr where
 
 instance (Ord a, FreeTypeVars a) => FreeTypeVars (Set.Set a) where
   ftv = foldMap ftv
+
+-- A class for types where we can detect which variables are important
+-- in a constraint
+class ActiveTypeVars a where
+  atv :: a -> Set.Set TypeName
+
+instance ActiveTypeVars Constraint where
+  atv (SameType t1 t2) = Set.union (ftv t1) (ftv t2)
+  atv (ExplicitlyInstantiates t sc) = Set.union (ftv t) (ftv sc)
+  atv (ImplicitlyInstantations t1 vars t2) =
+    Set.union (ftv t1) (Set.intersection (ftv vars) (ftv t2))
+
+instance ActiveTypeVars a => ActiveTypeVars [a] where
+  atv = foldMap atv
