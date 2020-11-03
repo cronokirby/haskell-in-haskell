@@ -136,21 +136,27 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) [])
   where
     deps :: TypeName -> [TypeName]
     deps k = Map.findWithDefault [] k (Map.map typeDependencies mp)
+
     runSorter :: SorterM a -> SorterState -> Either TypeError a
     runSorter m st =
       runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
+
     pick :: Set.Set a -> Maybe a
     pick s | Set.null s = Nothing
     pick s = Just (Set.elemAt 0 s)
+
     see :: TypeName -> SorterM Bool
     see name = do
       unseen' <- gets unseen
       modify' (\s -> s {unseen = Set.delete name unseen'})
       return (Set.member name unseen')
+
     out :: TypeName -> SorterM ()
     out name = modify' (\s -> s {output = name : output s})
+
     withAncestor :: TypeName -> SorterM a -> SorterM a
     withAncestor = local <<< Set.insert
+
     sort :: SorterM [TypeName]
     sort = do
       unseen' <- gets unseen
@@ -159,6 +165,7 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) [])
         Just n -> do
           dfs n
           sort
+
     dfs :: TypeName -> SorterM ()
     dfs name = do
       ancestors <- ask
