@@ -7,7 +7,7 @@ module Typer where
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Ourlude
-import Simplifier (SchemeExpr (..), TypeExpr (..), TypeName)
+import Simplifier (Name, SchemeExpr (..), TypeExpr (..), TypeName)
 
 -- Represents some kind of constraint we generate during our gathering pharse.
 --
@@ -91,3 +91,16 @@ instance ActiveTypeVars Constraint where
 
 instance ActiveTypeVars a => ActiveTypeVars [a] where
   atv = foldMap atv
+
+-- Represents a kind of error that can happen while type checking
+data TypeError
+  = -- There's a mismatch between two different types
+    TypeMismatch TypeExpr TypeExpr
+  | -- Some type name references itself recursively
+    InfiniteType TypeName TypeExpr
+  | -- An undefined name was used
+    UnboundName Name
+  | -- A reference to some type that doesn't exist
+    UnknownType TypeName
+  | -- A mismatch of a type constructor with expected vs actual args
+    MismatchedTypeArgs TypeName Int Int
