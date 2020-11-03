@@ -57,3 +57,23 @@ instance Substitutable Constraint where
     ExplicitlyInstantiates (subst s t) (subst s sc)
   subst s (ImplicitlyInstantations t1 vars t2) =
     ImplicitlyInstantations (subst s t1) (subst s vars) (subst s t2)
+
+-- A class of types where we can find the free type names inside
+class FreeTypeVars a where
+  ftv :: a -> Set.Set TypeName
+
+instance FreeTypeVars TypeExpr where
+  ftv IntType = Set.empty
+  ftv StringType = Set.empty
+  ftv (TypeVar a) = Set.singleton a
+  ftv (FunctionType t1 t2) = Set.union (ftv t1) (ftv t2)
+  ftv (CustomType _ ts) = foldMap ftv ts
+
+instance FreeTypeVars TypeName where
+  ftv = Set.singleton
+
+instance FreeTypeVars SchemeExpr where
+  ftv (SchemeExpr vars t) = Set.difference (ftv t) (Set.fromList vars)
+
+instance (Ord a, FreeTypeVars a) => FreeTypeVars (Set.Set a) where
+  ftv = foldMap ftv
