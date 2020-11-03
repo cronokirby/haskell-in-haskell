@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -191,24 +192,42 @@ data ResolvingInformation
 
 type ResolutionMap = Map.Map TypeName ResolvingInformation
 
-class Resolvable a where
-  resolve :: ResolutionMap -> a -> Either TypeError a
+resolve :: MonadError TypeError m => ResolutionMap -> TypeExpr -> m TypeExpr
+resolve _ IntType = return IntType
+resolve _ StringType = return StringType
+resolve _ BoolType = return BoolType
+resolve _ (TypeVar a) = return (TypeVar a)
+resolve mp (FunctionType t1 t2) = do
+  t1' <- resolve mp t1
+  t2' <- resolve mp t2
+  return (FunctionType t1' t2')
+resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
+  Nothing -> throwError (UnknownType name)
+  Just (Synonym t) | null ts -> return t
+  Just (Synonym _) -> throwError (MismatchedTypeArgs name 0 (length ts))
+  Just (Custom arity) | arity == length ts -> return ct
+  Just (Custom arity) -> throwError (MismatchedTypeArgs name arity (length ts))
 
-instance Resolvable TypeExpr where
-  resolve _ IntType = Right IntType
-  resolve _ StringType = Right StringType
-  resolve _ BoolType = Right BoolType
-  resolve _ (TypeVar a) = Right (TypeVar a)
-  resolve mp (FunctionType t1 t2) = do
-    t1' <- resolve mp t1
-    t2' <- resolve mp t2
-    return (FunctionType t1' t2')
-  resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
-    Nothing -> Left (UnknownType name)
-    Just (Synonym t) | null ts -> Right t
-    Just (Synonym _) -> Left (MismatchedTypeArgs name 0 (length ts))
-    Just (Custom arity) | arity == length ts -> Right ct
-    Just (Custom arity) -> Left (MismatchedTypeArgs name arity (length ts))
+type ResolutionM a = ReaderT (Map.Map TypeName TypeExpr) (StateT ResolutionMap (Except TypeError)) a
 
-instance Resolvable SchemeExpr where
-  resolve mp (SchemeExpr names t) = SchemeExpr names <$> (resolve mp t)
+createResolutions :: [Definition t] -> Either TypeError ResolutionMap
+createResolutions defs = do
+  let customInfo = gatherCustomTypes defs
+      typeSynMap = gatherTypeSynonyms defs
+  names <- sortTypeSynonyms typeSynMap
+  runResolutionM (resolveAll names) typeSynMap (Map.map Custom customInfo)
+  where
+    runResolutionM :: ResolutionM a -> Map.Map TypeName TypeExpr -> ResolutionMap -> Either TypeError ResolutionMap
+    runResolutionM m typeSynMap st =
+      runReaderT m typeSynMap |> (`execStateT` st) |> runExcept
+    resolveAll :: [TypeName] -> ReaderT (Map.Map TypeName TypeExpr) (StateT ResolutionMap (Except TypeError)) ()
+    resolveAll [] = return ()
+    resolveAll (n : ns) = do
+      lookup' <- asks (Map.lookup n)
+      case lookup' of
+        Nothing -> throwError (UnknownType n)
+        Just unresolved -> do
+          resolutions <- get
+          resolved <- resolve resolutions unresolved
+          modify' (Map.insert n (Synonym resolved))
+      resolveAll ns
