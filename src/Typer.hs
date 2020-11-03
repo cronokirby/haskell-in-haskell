@@ -113,6 +113,12 @@ data TypeError
   | -- A type synonym ends up being cyclical
     CyclicalTypeSynonym TypeName [TypeName]
 
+gatherCustomTypes :: [Definition t] -> Map.Map TypeName Int
+gatherCustomTypes =
+  foldMap <| \case
+    TypeDefinition name vars _ -> Map.singleton name (length vars)
+    _ -> Map.empty
+
 gatherTypeSynonyms :: [Definition t] -> Map.Map TypeName TypeExpr
 gatherTypeSynonyms =
   foldMap <| \case
@@ -175,3 +181,34 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) [])
       when new <| do
         withAncestor name (forM_ (deps name) dfs)
         out name
+
+-- Represents the information we might have when resolving a type name
+data ResolvingInformation
+  = -- The name is a synonym for a fully resolved expression
+    Synonym TypeExpr
+  | -- The name is a custom type with a certain arity
+    Custom Int
+
+type ResolutionMap = Map.Map TypeName ResolvingInformation
+
+class Resolvable a where
+  resolve :: ResolutionMap -> a -> Either TypeError a
+
+instance Resolvable TypeExpr where
+  resolve _ IntType = Right IntType
+  resolve _ StringType = Right StringType
+  resolve _ BoolType = Right BoolType
+  resolve _ (TypeVar a) = Right (TypeVar a)
+  resolve mp (FunctionType t1 t2) = do
+    t1' <- resolve mp t1
+    t2' <- resolve mp t2
+    return (FunctionType t1' t2')
+  resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
+    Nothing -> Left (UnknownType name)
+    Just (Synonym t) | null ts -> Right t
+    Just (Synonym _) -> Left (MismatchedTypeArgs name 0 (length ts))
+    Just (Custom arity) | arity == length ts -> Right ct
+    Just (Custom arity) -> Left (MismatchedTypeArgs name arity (length ts))
+
+instance Resolvable SchemeExpr where
+  resolve mp (SchemeExpr names t) = SchemeExpr names <$> (resolve mp t)
