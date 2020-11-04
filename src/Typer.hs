@@ -6,10 +6,32 @@
 
 module Typer where
 
-import Control.Monad (foldM)
+import Control.Monad
+  ( foldM,
+    forM,
+    forM_,
+    unless,
+    when,
+  )
 import Control.Monad.Except
+  ( Except,
+    MonadError (throwError),
+    runExcept,
+  )
 import Control.Monad.Reader
+  ( MonadReader (ask, local),
+    Reader,
+    ReaderT (..),
+    asks,
+    runReader,
+  )
 import Control.Monad.State
+  ( MonadState (get, put),
+    StateT (runStateT),
+    execStateT,
+    gets,
+    modify',
+  )
 import Data.List (delete, find)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
@@ -458,18 +480,18 @@ bind a t
   | otherwise = return (singleSubst a t)
 
 -- An environment mapping variables to schemes
-newtype Env = Env (Map.Map TypeName SchemeExpr)
+newtype Env = Env (Map.Map Name SchemeExpr)
 
 -- An empty environment containing no bindings
 emptyEnv :: Env
 emptyEnv = Env (Map.empty)
 
 -- Return all of the bindings making up the environment
-envBindings :: Env -> [(TypeName, SchemeExpr)]
+envBindings :: Env -> [(Name, SchemeExpr)]
 envBindings (Env mp) = Map.toList mp
 
 -- Get all of the variables bound in an environment
-envVars :: Env -> Set.Set TypeName
+envVars :: Env -> Set.Set Name
 envVars = envBindings >>> map fst >>> Set.fromList
 
 data TyperInfo = TyperInfo {typerNames :: Set.Set Name, typerSub :: Subst}
@@ -510,8 +532,8 @@ typeDefinitions defs =
     e' <- typeExpr e
     return (NameDefinition name ann sc e')
 
-constructorAssumptions :: [Definition t] -> Infer Assumptions
-constructorAssumptions = undefined
+constructorEnv :: [Definition t] -> Env
+constructorEnv _ = emptyEnv
 
 pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
 pickValueDefinitions = map pick >>> catMaybes
@@ -523,10 +545,14 @@ inferTypes :: Env -> [Definition ()] -> Infer [ValueDefinition SchemeExpr]
 inferTypes env defs = do
   let valDefs = pickValueDefinitions defs
   (as, cs, defs') <- inferDefs mempty valDefs
-  constructors <- constructorAssumptions defs
-  let as' = as <> constructors
   let unbound = Set.difference (assumptionNames as) (envVars env)
   unless (Set.null unbound) (throwError (UnboundName (Set.elemAt 0 unbound)))
-  let cs' = [ExplicitlyInstantiates t s | (x, s) <- envBindings env, t <- lookupAssumptions x as']
+  let cs' = [ExplicitlyInstantiates t s | (x, s) <- envBindings env, t <- lookupAssumptions x as]
   sub <- solve (cs' <> cs)
   return (runTyper (typeDefinitions defs') sub)
+
+typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
+typer (AST defs) = do
+  resolutions' <- createResolutions defs
+  let env = constructorEnv defs
+  runInfer (inferTypes env defs) resolutions'
