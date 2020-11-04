@@ -6,9 +6,11 @@
 
 module Typer where
 
+import Control.Monad (foldM)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
+import Data.List (delete, find)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Ourlude
@@ -401,3 +403,55 @@ inferDefs usageAs defs = do
         (removeAssumption n as', [ImplicitlyInstantations t' bound' t | t' <- lookupAssumptions n as'] <> cs')
   let (as', cs') = foldr process (as, cs) usages
   return (as', cs', defs')
+
+solve :: [Constraint] -> Infer Subst
+solve [] = return mempty
+solve constraints = solve' (nextSolvable constraints)
+  where
+    chooseOne :: Eq a => [a] -> [(a, [a])]
+    chooseOne as = [(a, bs) | a <- as, let bs = delete a as]
+
+    nextSolvable :: [Constraint] -> (Constraint, [Constraint])
+    nextSolvable xs = case find solvable (chooseOne xs) of
+      Just c -> c
+      _ -> error "Couldn't find solvable constraint"
+      where
+        solvable (SameType _ _, _) = True
+        solvable (ExplicitlyInstantiates _ _, _) = True
+        solvable (ImplicitlyInstantations _ bound' t2, cs) =
+          Set.null (Set.intersection (atv cs) (Set.difference (ftv t2) bound'))
+
+    solve' :: (Constraint, [Constraint]) -> Infer Subst
+    solve' (c, cs) = case c of
+      SameType t1 t2 -> do
+        su1 <- unify t1 t2
+        su2 <- solve (map (subst su1) cs)
+        return (su2 <> su1)
+      ImplicitlyInstantations _ bound' t2 ->
+        solve (ExplicitlyInstantiates t2 (generalize bound' t2) : cs)
+      ExplicitlyInstantiates t sc -> do
+        sc' <- instantiate sc
+        solve (SameType t sc' : cs)
+
+unify :: TypeExpr -> TypeExpr -> Infer Subst
+unify t1 t2 | t1 == t2 = return mempty
+unify (TypeVar n) t = bind n t
+unify t (TypeVar n) = bind n t
+unify (FunctionType t1 t2) (FunctionType t3 t4) = do
+  su1 <- unify t1 t3
+  su2 <- unify (subst su1 t2) (subst su1 t4)
+  return (su2 <> su1)
+unify (CustomType name1 ts1) (CustomType name2 ts2)
+  | name1 == name2 && length ts1 == length ts2 =
+    let together = zip ts1 ts2
+        go acc (t1, t2) = do
+          su <- unify (subst acc t1) (subst acc t2)
+          return (su <> acc)
+     in foldM go mempty together
+unify t1 t2 = throwError (TypeMismatch t1 t2)
+
+bind :: TypeName -> TypeExpr -> Infer Subst
+bind a t
+  | t == TypeVar a = return mempty
+  | Set.member a (ftv t) = throwError (InfiniteType a t)
+  | otherwise = return (singleSubst a t)
