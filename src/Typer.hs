@@ -290,3 +290,28 @@ generalize free t =
 -- Modify inference with access to a bound type variable
 withBound :: TypeName -> Infer a -> Infer a
 withBound a = local (\r -> r {bound = Set.insert a (bound r)})
+
+-- Represents an ordered collection about assumptions we've gathered so far
+newtype Assumptions = Assumptions {assumptions :: [(Name, TypeExpr)]}
+  deriving (Semigroup, Monoid)
+
+-- Remove an assumption about a given name
+removeAssumption :: Name -> Assumptions -> Assumptions
+removeAssumption v (Assumptions as) = Assumptions (filter ((/= v) . fst) as)
+
+-- An assumption about a single type
+singleAssumption :: Name -> TypeExpr -> Assumptions
+singleAssumption v t = Assumptions [(v, t)]
+
+-- Extend our assumptions witha single extra binding
+extendAssumptions :: Name -> TypeExpr -> Assumptions -> Assumptions
+extendAssumptions v t as = singleAssumption v t <> as
+
+-- Lookup all of the assumptions we have about a given name
+lookupAssumptions :: Name -> Assumptions -> [TypeExpr]
+lookupAssumptions target (Assumptions as) =
+  [t | (v, t) <- as, v == target]
+
+-- Get the set of all names used inside our assumptions
+assumptionNames :: Assumptions -> Set.Set Name
+assumptionNames (Assumptions as) = Set.fromList (map fst as)
