@@ -12,7 +12,7 @@ import Control.Monad.State
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Ourlude
-import Simplifier (Definition (..), Name, SchemeExpr (..), TypeExpr (..), TypeName)
+import Simplifier (AST (..), Builtin (..), Definition (..), Expr (..), Litteral (..), Name, SchemeExpr (..), TypeExpr (..), TypeName, ValueDefinition (..))
 
 -- Represents a kind of error that can happen while type checking
 data TypeError
@@ -315,3 +315,89 @@ lookupAssumptions target (Assumptions as) =
 -- Get the set of all names used inside our assumptions
 assumptionNames :: Assumptions -> Set.Set Name
 assumptionNames (Assumptions as) = Set.fromList (map fst as)
+
+builtinScheme :: Builtin -> SchemeExpr
+builtinScheme Compose =
+  SchemeExpr
+    ["a", "b", "c"]
+    ( FunctionType
+        (FunctionType (TypeVar "b") (TypeVar "c"))
+        ( FunctionType
+            (FunctionType (TypeVar "a") (TypeVar "b"))
+            (FunctionType (TypeVar "a") (FunctionType (TypeVar "b") (TypeVar "c")))
+        )
+    )
+builtinScheme Cash =
+  SchemeExpr
+    ["a", "b"]
+    ( FunctionType
+        (FunctionType (TypeVar "a") (TypeVar "b"))
+        (FunctionType (TypeVar "a") (TypeVar "b"))
+    )
+builtinScheme b =
+  SchemeExpr [] <| case b of
+    Add -> FunctionType IntType (FunctionType IntType IntType)
+    Sub -> FunctionType IntType (FunctionType IntType IntType)
+    Mul -> FunctionType IntType (FunctionType IntType IntType)
+    Div -> FunctionType IntType (FunctionType IntType IntType)
+    Concat -> FunctionType StringType (FunctionType StringType StringType)
+    Less -> FunctionType IntType (FunctionType IntType BoolType)
+    LessEqual -> FunctionType IntType (FunctionType IntType BoolType)
+    Greater -> FunctionType IntType (FunctionType IntType BoolType)
+    GreaterEqual -> FunctionType IntType (FunctionType IntType BoolType)
+    EqualTo -> FunctionType IntType (FunctionType IntType BoolType)
+    NotEqualTo -> FunctionType IntType (FunctionType IntType BoolType)
+    And -> FunctionType BoolType (FunctionType BoolType BoolType)
+    Or -> FunctionType BoolType (FunctionType BoolType BoolType)
+    Negate -> FunctionType IntType IntType
+
+inferExpr :: Expr () -> Infer (Assumptions, [Constraint], TypeExpr, Expr TypeExpr)
+inferExpr expr = case expr of
+  LittExpr (litt) ->
+    let t = case litt of
+          IntLitteral _ -> IntType
+          StringLitteral _ -> StringType
+          BoolLitteral _ -> BoolType
+     in return (mempty, [], t, LittExpr litt)
+  ApplyExpr e1 e2 -> do
+    (as1, cs1, t1, e1') <- inferExpr e1
+    (as2, cs2, t2, e2') <- inferExpr e2
+    tv <- TypeVar <$> fresh
+    let cs' = [SameType t1 (FunctionType t2 tv)] <> cs1 <> cs2
+    return (as1 <> as2, cs', tv, ApplyExpr e1' e2')
+  Builtin b -> do
+    t <- instantiate (builtinScheme b)
+    return (mempty, [], t, Builtin b)
+  NameExpr n -> do
+    tv <- TypeVar <$> fresh
+    return (singleAssumption n tv, [], tv, NameExpr n)
+  CaseExpr _ _ -> error "Can't handle case expressions yet"
+  LambdaExpr n _ e -> do
+    a <- fresh
+    let tv = TypeVar a
+    (as, cs, t, e') <- withBound a (inferExpr e)
+    let inferred = FunctionType tv t
+    return (removeAssumption n as, [SameType t' tv | t' <- lookupAssumptions n as] <> cs, inferred, LambdaExpr n t e')
+  LetExpr defs e -> do
+    (as1, cs1, t, e') <- inferExpr e
+    (as2, cs2, defs') <- inferDefs as1 defs
+    return (as2, cs1 <> cs2, t, LetExpr defs' e')
+
+inferDefs :: Assumptions -> [ValueDefinition ()] -> Infer (Assumptions, [Constraint], [ValueDefinition TypeExpr])
+inferDefs usageAs defs = do
+  together <-
+    forM defs <| \(NameDefinition n declared _ e) -> do
+      (as, cs, t, e') <- inferExpr e
+      let extra = case declared of
+            Nothing -> []
+            Just d -> [ExplicitlyInstantiates t d]
+      return (as, extra ++ cs, (n, t), NameDefinition n Nothing t e')
+  bound' <- asks bound
+  let as = usageAs <> foldMap (\(x, _, _, _) -> x) together
+      cs = foldMap (\(_, x, _, _) -> x) together
+      defs' = map (\(_, _, _, def) -> def) together
+      usages = map (\(_, _, usage, _) -> usage) together
+      process (n, t) (as', cs') =
+        (removeAssumption n as', [ImplicitlyInstantations t' bound' t | t' <- lookupAssumptions n as'] <> cs')
+  let (as', cs') = foldr process (as, cs) usages
+  return (as', cs', defs')
