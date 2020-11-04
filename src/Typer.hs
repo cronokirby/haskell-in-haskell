@@ -455,3 +455,56 @@ bind a t
   | t == TypeVar a = return mempty
   | Set.member a (ftv t) = throwError (InfiniteType a t)
   | otherwise = return (singleSubst a t)
+
+-- An environment mapping variables to schemes
+newtype Env = Env (Map.Map TypeName SchemeExpr)
+
+-- An empty environment containing no bindings
+emptyEnv :: Env
+emptyEnv = Env (Map.empty)
+
+-- Return all of the bindings making up the environment
+envBindings :: Env -> [(TypeName, SchemeExpr)]
+envBindings (Env mp) = Map.toList mp
+
+-- Get all of the variables bound in an environment
+envVars :: Env -> Set.Set TypeName
+envVars = envBindings >>> map fst >>> Set.fromList
+
+data TyperInfo = TyperInfo {typerNames :: Set.Set Name, typerSub :: Subst}
+
+newtype Typer a = Typer (Reader TyperInfo a)
+  deriving (Functor, Applicative, Monad, MonadReader TyperInfo)
+
+runTyper :: Typer a -> Subst -> a
+runTyper (Typer r) sub = runReader r (TyperInfo Set.empty sub)
+
+withTyperNames :: [Name] -> Typer a -> Typer a
+withTyperNames names =
+  let addTo = Set.union (Set.fromList names)
+   in local (\r -> r {typerNames = addTo (typerNames r)})
+
+schemeFor :: TypeExpr -> Typer SchemeExpr
+schemeFor t = do
+  (TyperInfo typerNames' typerSub') <- ask
+  return (generalize typerNames' (subst typerSub' t))
+
+typeExpr :: Expr TypeExpr -> Typer (Expr SchemeExpr)
+typeExpr expr = case expr of
+  LittExpr litt -> return (LittExpr litt)
+  NameExpr n -> return (NameExpr n)
+  Builtin b -> return (Builtin b)
+  ApplyExpr e1 e2 -> ApplyExpr <$> (typeExpr e1) <*> (typeExpr e2)
+  LambdaExpr n t e -> do
+    sc@(SchemeExpr names _) <- schemeFor t
+    e' <- withTyperNames names (typeExpr e)
+    return (LambdaExpr n sc e')
+  CaseExpr _ _ -> error "Can't handle cases yet"
+  LetExpr defs e -> LetExpr <$> typeDefinitions defs <*> typeExpr e
+
+typeDefinitions :: [ValueDefinition TypeExpr] -> Typer [ValueDefinition SchemeExpr]
+typeDefinitions defs =
+  forM defs <| \(NameDefinition name ann t e) -> do
+    sc <- schemeFor t
+    e' <- typeExpr e
+    return (NameDefinition name ann sc e')
