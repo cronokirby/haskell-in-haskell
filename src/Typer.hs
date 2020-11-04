@@ -144,8 +144,8 @@ createResolutions defs = do
       case lookup' of
         Nothing -> throwError (UnknownType n)
         Just unresolved -> do
-          resolutions <- get
-          resolved <- resolve resolutions unresolved
+          resolutions' <- get
+          resolved <- resolve resolutions' unresolved
           modify' (Map.insert n (Synonym resolved))
       resolveAll ns
 
