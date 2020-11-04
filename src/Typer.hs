@@ -163,7 +163,17 @@ data Constraint
   deriving (Eq, Show)
 
 -- Represents a substitution of types for type names
-data Subst = Subst (Map.Map TypeName TypeExpr) deriving (Eq, Show)
+newtype Subst = Subst (Map.Map TypeName TypeExpr) deriving (Eq, Show)
+
+instance Semigroup Subst where
+  (Subst s1) <> (Subst s2) = Subst (Map.map (subst (Subst s1)) s2 <> s1)
+
+instance Monoid Subst where
+  mempty = Subst mempty
+
+-- Create a substitution from a single mapping
+singleSubst :: TypeName -> TypeExpr -> Subst
+singleSubst v t = Subst (Map.singleton v t)
 
 -- A class for types where substitutions can be applied
 class Substitutable a where
@@ -231,3 +241,52 @@ instance ActiveTypeVars Constraint where
 
 instance ActiveTypeVars a => ActiveTypeVars [a] where
   atv = foldMap atv
+
+-- The environment we use when doing type inference.
+--
+-- We keep a local environment of bound type names, as well
+-- as the information about type synonym resolutions.
+data InferEnv = InferEnv
+  { bound :: Set.Set TypeName,
+    resolutions :: ResolutionMap
+  }
+
+-- The context in which we perform type inference.
+--
+-- We have access to an environment, which we modify locally,
+-- as well as a source of fresh type variables, and we can throw errors.
+newtype Infer a = Infer (ReaderT InferEnv (StateT Int (Except TypeError)) a)
+  deriving (Functor, Applicative, Monad, MonadReader InferEnv, MonadState Int, MonadError TypeError)
+
+-- Run the inference context, provided we have a resolution map
+runInfer :: Infer a -> ResolutionMap -> Either TypeError a
+runInfer (Infer m) resolutions' =
+  runReaderT m (InferEnv Set.empty resolutions')
+    |> (`runStateT` 0)
+    |> runExcept
+    |> fmap fst
+
+-- Generate a fresh type name during inference
+fresh :: Infer TypeName
+fresh =
+  Infer <| do
+    count <- get
+    put (count + 1)
+    return ("#" <> show count)
+
+-- Instantiate a scheme by providing a fresh tyep variable for each parameter
+instantiate :: SchemeExpr -> Infer TypeExpr
+instantiate (SchemeExpr vars t) = do
+  newVars <- forM vars (const fresh)
+  let sub = foldMap (uncurry singleSubst) (zip vars (map TypeVar newVars))
+  return (subst sub t)
+
+-- Generalize a type into a scheme by closing over all unbound variables
+generalize :: Set.Set TypeName -> TypeExpr -> SchemeExpr
+generalize free t =
+  let as = Set.toList (Set.difference (ftv t) free)
+   in SchemeExpr as t
+
+-- Modify inference with access to a bound type variable
+withBound :: TypeName -> Infer a -> Infer a
+withBound a = local (\r -> r {bound = Set.insert a (bound r)})
