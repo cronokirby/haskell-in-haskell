@@ -12,6 +12,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Data.List (delete, find)
 import qualified Data.Map as Map
+import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Ourlude
 import Simplifier (AST (..), Builtin (..), Definition (..), Expr (..), Litteral (..), Name, SchemeExpr (..), TypeExpr (..), TypeName, ValueDefinition (..))
@@ -508,3 +509,24 @@ typeDefinitions defs =
     sc <- schemeFor t
     e' <- typeExpr e
     return (NameDefinition name ann sc e')
+
+constructorAssumptions :: [Definition t] -> Infer Assumptions
+constructorAssumptions = undefined
+
+pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
+pickValueDefinitions = map pick >>> catMaybes
+  where
+    pick (ValueDefinition v) = Just v
+    pick _ = Nothing
+
+inferTypes :: Env -> [Definition ()] -> Infer [ValueDefinition SchemeExpr]
+inferTypes env defs = do
+  let valDefs = pickValueDefinitions defs
+  (as, cs, defs') <- inferDefs mempty valDefs
+  constructors <- constructorAssumptions defs
+  let as' = as <> constructors
+  let unbound = Set.difference (assumptionNames as) (envVars env)
+  unless (Set.null unbound) (throwError (UnboundName (Set.elemAt 0 unbound)))
+  let cs' = [ExplicitlyInstantiates t s | (x, s) <- envBindings env, t <- lookupAssumptions x as']
+  sub <- solve (cs' <> cs)
+  return (runTyper (typeDefinitions defs') sub)
