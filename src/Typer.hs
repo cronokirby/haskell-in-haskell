@@ -4,7 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 
-module Typer where
+module Typer (typer, TypeError) where
 
 import Control.Monad
   ( foldM,
@@ -51,10 +51,9 @@ data TypeError
     UnknownType TypeName
   | -- A mismatch of a type constructor with expected vs actual args
     MismatchedTypeArgs TypeName Int Int
-  | -- A type has been defined multiple times
-    MultipleTypeDefinitions TypeName
   | -- A type synonym ends up being cyclical
     CyclicalTypeSynonym TypeName [TypeName]
+  deriving (Eq, Show)
 
 gatherCustomTypes :: [Definition t] -> Map.Map TypeName Int
 gatherCustomTypes =
@@ -317,7 +316,7 @@ withBound :: TypeName -> Infer a -> Infer a
 withBound a = local (\r -> r {bound = Set.insert a (bound r)})
 
 -- Represents an ordered collection about assumptions we've gathered so far
-newtype Assumptions = Assumptions {assumptions :: [(Name, TypeExpr)]}
+newtype Assumptions = Assumptions [(Name, TypeExpr)]
   deriving (Semigroup, Monoid)
 
 -- Remove an assumption about a given name
@@ -327,10 +326,6 @@ removeAssumption v (Assumptions as) = Assumptions (filter ((/= v) . fst) as)
 -- An assumption about a single type
 singleAssumption :: Name -> TypeExpr -> Assumptions
 singleAssumption v t = Assumptions [(v, t)]
-
--- Extend our assumptions witha single extra binding
-extendAssumptions :: Name -> TypeExpr -> Assumptions -> Assumptions
-extendAssumptions v t as = singleAssumption v t <> as
 
 -- Lookup all of the assumptions we have about a given name
 lookupAssumptions :: Name -> Assumptions -> [TypeExpr]

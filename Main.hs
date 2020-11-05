@@ -6,14 +6,16 @@ import Ourlude
 import Parser (parser)
 import Simplifier (simplifier)
 import System.Environment (getArgs)
+import Typer (typer)
 
 -- How far does the user want us to go
-data Stage = Lex | Parse | Simplify deriving (Eq)
+data Stage = Lex | Parse | Simplify | TypeCheck deriving (Eq)
 
 readStage :: String -> Maybe Stage
 readStage "lex" = Just Lex
 readStage "parse" = Just Parse
 readStage "simplify" = Just Simplify
+readStage "type" = Just TypeCheck
 readStage _ = Nothing
 
 -- The arguments we'll need for our program
@@ -59,6 +61,16 @@ process (Args path stage) = do
           then do
             putStrLn "Simplified:"
             print simplified
+          else typeCheck simplified
+    typeCheck simplified = case typer simplified of
+      Left err -> do
+        putStrLn "Type Error:"
+        print err
+      Right typed ->
+        if stage == TypeCheck
+          then do
+            putStrLn "Typed:"
+            print typed
           else return ()
 
 main :: IO ()
