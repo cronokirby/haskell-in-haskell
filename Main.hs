@@ -6,6 +6,7 @@ import Ourlude
 import Parser (parser)
 import Simplifier (simplifier)
 import System.Environment (getArgs)
+import Text.Pretty.Simple (pPrint)
 import Typer (typer)
 
 -- How far does the user want us to go
@@ -40,7 +41,7 @@ process (Args path stage) = do
         if stage == Lex
           then do
             putStrLn "Tokens:"
-            print tokens
+            pPrint tokens
           else parse tokens
     parse tokens = case parser tokens of
       Left err -> do
@@ -50,7 +51,7 @@ process (Args path stage) = do
         if stage == Parse
           then do
             putStrLn "Parsed:"
-            print parsed
+            pPrint parsed
           else simplify parsed
     simplify ast = case simplifier ast of
       Left err -> do
@@ -60,7 +61,7 @@ process (Args path stage) = do
         if stage == Simplify
           then do
             putStrLn "Simplified:"
-            print simplified
+            pPrint simplified
           else typeCheck simplified
     typeCheck simplified = case typer simplified of
       Left err -> do
@@ -70,7 +71,7 @@ process (Args path stage) = do
         if stage == TypeCheck
           then do
             putStrLn "Typed:"
-            print typed
+            pPrint typed
           else return ()
 
 main :: IO ()

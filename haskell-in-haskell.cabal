@@ -25,6 +25,7 @@ library
 executable haskell-in-haskell
   build-depends:       base >=4.13 && <5
                      , haskell-in-haskell
+                     , pretty-simple >=4.0 && <4.1
   default-language:    Haskell2010
   default-extensions:  NoImplicitPrelude
   ghc-options:         -threaded -rtsopts
