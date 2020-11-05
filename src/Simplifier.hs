@@ -110,7 +110,7 @@ convertExpr (Parser.BinExpr op e1 e2) = do
         Parser.Or -> Or
   e1' <- convertExpr e1
   e2' <- convertExpr e2
-  return (ApplyExpr (ApplyExpr (NameExpr b) e1') e2')
+  return (ApplyExpr (ApplyExpr (Builtin b) e1') e2')
 -- Negation is replaced by a built in function as well
 convertExpr (Parser.NegateExpr e) = ApplyExpr (Builtin Negate) <$> (convertExpr e)
 convertExpr (Parser.WhereExpr e defs) =
