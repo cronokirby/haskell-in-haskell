@@ -38,5 +38,6 @@ tests =
       testCase "comparisons 4" (shouldNotType "{ x = 2 /= True }"),
       testCase "comparisons 5" (shouldNotType "{ x = 2 <= True }"),
       testCase "comparisons 6" (shouldNotType "{ x = 2 < True }"),
-      testCase "boolean operators" (shouldType "{ x = 2 == 2 || 3 == 4 && 5 == 5 }")
+      testCase "boolean operators" (shouldType "{ x = 2 == 2 || 3 == 4 && 5 == 5 }"),
+      testCase "$ and ." (shouldType "{ inc = \\x -> x + 1; x = (inc . inc) $ 1 }")
     ]
