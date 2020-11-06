@@ -20,15 +20,16 @@ doesType str =
    in isJust result
 
 shouldType :: String -> Assertion
-shouldType s = doesType s @=? True
+shouldType s = True @=? doesType s
 
 shouldNotType :: String -> Assertion
-shouldNotType s = doesType s @=? False
+shouldNotType s = False @=? doesType s
 
 tests :: TestTree
 tests =
   testGroup
     "Typer Tests"
     [ testCase "arithmetic assignments" (shouldType "{ x = 3; y = x + x }"),
-      testCase "string + int fails" (shouldNotType "{ x = 3 + \"foo\" }")
+      testCase "string + int fails" (shouldNotType "{ x = 3 + \"foo\" }"),
+      testCase "let propagates types" (shouldNotType "{ x = let { y = 3 } in y; x1 = x ++ \"foo\" }")
     ]

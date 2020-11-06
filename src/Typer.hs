@@ -445,8 +445,8 @@ solve constraints = solve' (nextSolvable constraints)
         su1 <- unify t1 t2
         su2 <- solve (map (subst su1) cs)
         return (su2 <> su1)
-      ImplicitlyInstantations _ bound' t2 ->
-        solve (ExplicitlyInstantiates t2 (generalize bound' t2) : cs)
+      ImplicitlyInstantations t1 bound' t2 ->
+        solve (ExplicitlyInstantiates t1 (generalize bound' t2) : cs)
       ExplicitlyInstantiates t sc -> do
         sc' <- instantiate sc
         solve (SameType t sc' : cs)
