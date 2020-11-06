@@ -239,6 +239,7 @@ class FreeTypeVars a where
 instance FreeTypeVars TypeExpr where
   ftv IntType = Set.empty
   ftv StringType = Set.empty
+  ftv BoolType = Set.empty
   ftv (TypeVar a) = Set.singleton a
   ftv (FunctionType t1 t2) = Set.union (ftv t1) (ftv t2)
   ftv (CustomType _ ts) = foldMap ftv ts
