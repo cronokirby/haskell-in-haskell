@@ -370,6 +370,7 @@ builtinScheme b =
     And -> FunctionType BoolType (FunctionType BoolType BoolType)
     Or -> FunctionType BoolType (FunctionType BoolType BoolType)
     Negate -> FunctionType IntType IntType
+    _ -> error "Already handled"
 
 inferExpr :: Expr () -> Infer (Assumptions, [Constraint], TypeExpr, Expr TypeExpr)
 inferExpr expr = case expr of
