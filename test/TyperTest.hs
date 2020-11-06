@@ -1,6 +1,5 @@
 module TyperTest (tests) where
 
-import Data.Maybe (isJust)
 import Lexer (lexer)
 import Ourlude
 import Parser (parser)
@@ -9,21 +8,21 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Typer (typer)
 
-doesType :: String -> Bool
-doesType str =
+doesType :: String -> Maybe Bool
+doesType str = do
   let eitherToMaybe = either (const Nothing) Just
-      result = do
-        tokens <- eitherToMaybe (lexer str)
-        raw <- eitherToMaybe (parser tokens)
-        simple <- eitherToMaybe (simplifier raw)
-        eitherToMaybe (typer simple)
-   in isJust result
+  tokens <- eitherToMaybe (lexer str)
+  raw <- eitherToMaybe (parser tokens)
+  simple <- eitherToMaybe (simplifier raw)
+  return <| case typer simple of
+    Left _ -> False
+    Right _ -> True
 
 shouldType :: String -> Assertion
-shouldType s = True @=? doesType s
+shouldType s = Just True @=? doesType s
 
 shouldNotType :: String -> Assertion
-shouldNotType s = False @=? doesType s
+shouldNotType s = Just False @=? doesType s
 
 tests :: TestTree
 tests =
@@ -39,5 +38,7 @@ tests =
       testCase "comparisons 5" (shouldNotType "{ x = 2 <= True }"),
       testCase "comparisons 6" (shouldNotType "{ x = 2 < True }"),
       testCase "boolean operators" (shouldType "{ x = 2 == 2 || 3 == 4 && 5 == 5 }"),
-      testCase "$ and ." (shouldType "{ inc = \\x -> x + 1; x = (inc . inc) $ 1 }")
+      testCase "$ and ." (shouldType "{ inc = \\x -> x + 1; x = (inc . inc) $ 1 }"),
+      testCase "declared types" (shouldNotType "{ x :: String; x = 3 }"),
+      testCase "type synonyms" (shouldType "{ type X = Int; x :: X; x = 3 }")
     ]

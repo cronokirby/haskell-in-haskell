@@ -410,9 +410,12 @@ inferDefs usageAs defs = do
   together <-
     forM defs <| \(NameDefinition n declared _ e) -> do
       (as, cs, t, e') <- inferExpr e
-      let extra = case declared of
-            Nothing -> []
-            Just d -> [ExplicitlyInstantiates t d]
+      extra <- case declared of
+        Nothing -> return []
+        Just (SchemeExpr names d) -> do
+          resolutionMap <- asks resolutions
+          resolved <- resolve resolutionMap d
+          return [ExplicitlyInstantiates t (SchemeExpr names resolved)]
       return (as, extra ++ cs, (n, t), NameDefinition n Nothing t e')
   bound' <- asks bound
   let as = usageAs <> foldMap (\(x, _, _, _) -> x) together
