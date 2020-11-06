@@ -36,8 +36,21 @@ import Data.List (delete, find)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
+import Debug.Trace
 import Ourlude
-import Simplifier (AST (..), Builtin (..), Definition (..), Expr (..), Litteral (..), Name, SchemeExpr (..), TypeExpr (..), TypeName, ValueDefinition (..))
+import Simplifier
+  ( AST (..),
+    Builtin (..),
+    ConstructorDefinition (..),
+    Definition (..),
+    Expr (..),
+    Litteral (..),
+    Name,
+    SchemeExpr (..),
+    TypeExpr (..),
+    TypeName,
+    ValueDefinition (..),
+  )
 
 -- Represents a kind of error that can happen while type checking
 data TypeError
@@ -130,6 +143,7 @@ data ResolvingInformation
     Synonym TypeExpr
   | -- The name is a custom type with a certain arity
     Custom Int
+  deriving (Show)
 
 type ResolutionMap = Map.Map TypeName ResolvingInformation
 
@@ -156,7 +170,8 @@ createResolutions defs = do
   let customInfo = gatherCustomTypes defs
       typeSynMap = gatherTypeSynonyms defs
   names <- sortTypeSynonyms typeSynMap
-  runResolutionM (resolveAll names) typeSynMap (Map.map Custom customInfo)
+  traceShow names (return ())
+  runResolutionM (resolveAll (reverse names)) typeSynMap (Map.map Custom customInfo)
   where
     runResolutionM :: ResolutionM a -> Map.Map TypeName TypeExpr -> ResolutionMap -> Either TypeError ResolutionMap
     runResolutionM m typeSynMap st =
@@ -480,11 +495,10 @@ bind a t
   | otherwise = return (singleSubst a t)
 
 -- An environment mapping variables to schemes
-newtype Env = Env (Map.Map Name SchemeExpr)
+newtype Env = Env (Map.Map Name SchemeExpr) deriving (Show, Semigroup, Monoid)
 
--- An empty environment containing no bindings
-emptyEnv :: Env
-emptyEnv = Env (Map.empty)
+singleEnv :: Name -> SchemeExpr -> Env
+singleEnv name sc = Env (Map.singleton name sc)
 
 -- Return all of the bindings making up the environment
 envBindings :: Env -> [(Name, SchemeExpr)]
@@ -533,7 +547,19 @@ typeDefinitions defs =
     return (NameDefinition name ann sc e')
 
 constructorEnv :: [Definition t] -> Env
-constructorEnv _ = emptyEnv
+constructorEnv = foldMap extractEnv
+  where
+    extractEnv :: Definition t -> Env
+    extractEnv (TypeSynonym _ _) = mempty
+    extractEnv (ValueDefinition _) = mempty
+    extractEnv (TypeDefinition tn names constructors) =
+      foldMap constructorType constructors
+      where
+        constructorType :: ConstructorDefinition -> Env
+        constructorType (ConstructorDefinition n ts) =
+          let t = foldr FunctionType (CustomType tn (map TypeVar names)) ts
+              sc = SchemeExpr names t
+           in singleEnv n sc
 
 pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
 pickValueDefinitions = map pick >>> catMaybes
@@ -554,5 +580,7 @@ inferTypes env defs = do
 typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
 typer (AST defs) = do
   resolutions' <- createResolutions defs
+  traceShow resolutions' (return ())
   let env = constructorEnv defs
+  traceShow env (return ())
   runInfer (inferTypes env defs) resolutions'

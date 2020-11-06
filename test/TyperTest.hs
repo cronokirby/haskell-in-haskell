@@ -40,5 +40,8 @@ tests =
       testCase "boolean operators" (shouldType "{ x = 2 == 2 || 3 == 4 && 5 == 5 }"),
       testCase "$ and ." (shouldType "{ inc = \\x -> x + 1; x = (inc . inc) $ 1 }"),
       testCase "declared types" (shouldNotType "{ x :: String; x = 3 }"),
-      testCase "type synonyms" (shouldType "{ type X = Int; x :: X; x = 3 }")
+      testCase "type synonyms" (shouldType "{ type X = Int; x :: X; x = 3 }"),
+      testCase "ordered type synonyms" (shouldType "{ type Y = Z; type X = Y; type Z = Int; x :: X; x = 3}"),
+      testCase "basic constructors" (shouldType "{ data X = A | B; x :: X; x = A; y :: X; y = B }"),
+      testCase "polymorphic constructors" (shouldType "{ data List a = Cons a (List a) | Nil; x :: List Int; x = Cons 1 Nil; y :: List a; y = Nil }")
     ]
