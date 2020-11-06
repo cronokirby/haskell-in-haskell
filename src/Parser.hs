@@ -202,14 +202,15 @@ caseExpr = liftA2 CaseExpr (token Case *> expr <* token Of) (braced patternDef)
     patternDef = liftA2 PatternDef onePattern (token ThinArrow *> expr)
 
 onePattern :: Parser Pattern
-onePattern = unspacedPattern <|> constructorPattern
+onePattern = unspacedPattern <|> argfulPattern
   where
-    constructorPattern = liftA2 ConstructorPattern typeName (many unspacedPattern)
+    argfulPattern = liftA2 ConstructorPattern typeName (some unspacedPattern)
 
 unspacedPattern :: Parser Pattern
-unspacedPattern = notConstructorPattern <|> parensed onePattern
+unspacedPattern = simplePattern <|> parensed onePattern
   where
-    notConstructorPattern = wildCardPattern <|> varPattern <|> littPattern
+    simplePattern = wildCardPattern <|> varPattern <|> littPattern <|> singleConstructor
+    singleConstructor = fmap (`ConstructorPattern` []) typeName
     wildCardPattern = WildcardPattern <$ token Underscore
     varPattern = fmap NamePattern name
     littPattern = fmap LitteralPattern litteral
