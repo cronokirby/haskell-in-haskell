@@ -6,9 +6,11 @@
 
 module Typer (typer, TypeError) where
 
+import Data.Monoid (mconcat)
 import Control.Monad
   ( foldM,
     forM,
+    mapM,
     forM_,
     unless,
     when,
@@ -331,6 +333,11 @@ generalize free t =
 withBound :: TypeName -> Infer a -> Infer a
 withBound a = local (\r -> r {bound = Set.insert a (bound r)})
 
+resolveInfer :: TypeExpr -> Infer TypeExpr
+resolveInfer t = do
+  resolutions' <- asks resolutions
+  resolve resolutions' t
+
 -- Represents an ordered collection about assumptions we've gathered so far
 newtype Assumptions = Assumptions [(Name, TypeExpr)]
   deriving (Semigroup, Monoid)
@@ -428,8 +435,7 @@ inferDefs usageAs defs = do
       extra <- case declared of
         Nothing -> return []
         Just (SchemeExpr names d) -> do
-          resolutionMap <- asks resolutions
-          resolved <- resolve resolutionMap d
+          resolved <- resolveInfer d
           return [ExplicitlyInstantiates t (SchemeExpr names resolved)]
       return (as, extra ++ cs, (n, t), NameDefinition n Nothing t e')
   bound' <- asks bound
@@ -546,20 +552,21 @@ typeDefinitions defs =
     e' <- typeExpr e
     return (NameDefinition name ann sc e')
 
-constructorEnv :: [Definition t] -> Env
-constructorEnv = foldMap extractEnv
+constructorEnv :: [Definition t] -> Infer Env
+constructorEnv = mapM extractEnv >>> fmap mconcat
   where
-    extractEnv :: Definition t -> Env
-    extractEnv (TypeSynonym _ _) = mempty
-    extractEnv (ValueDefinition _) = mempty
+    extractEnv :: Definition t -> Infer Env
+    extractEnv (TypeSynonym _ _) = return mempty
+    extractEnv (ValueDefinition _) = return mempty
     extractEnv (TypeDefinition tn names constructors) =
-      foldMap constructorType constructors
+      mconcat <$> mapM constructorType constructors
       where
-        constructorType :: ConstructorDefinition -> Env
-        constructorType (ConstructorDefinition n ts) =
-          let t = foldr FunctionType (CustomType tn (map TypeVar names)) ts
+        constructorType :: ConstructorDefinition -> Infer Env
+        constructorType (ConstructorDefinition n ts) = do
+          resolved <- mapM resolveInfer ts
+          let t = foldr FunctionType (CustomType tn (map TypeVar names)) resolved
               sc = SchemeExpr names t
-           in singleEnv n sc
+          return (singleEnv n sc)
 
 pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
 pickValueDefinitions = map pick >>> catMaybes
@@ -567,8 +574,10 @@ pickValueDefinitions = map pick >>> catMaybes
     pick (ValueDefinition v) = Just v
     pick _ = Nothing
 
-inferTypes :: Env -> [Definition ()] -> Infer [ValueDefinition SchemeExpr]
-inferTypes env defs = do
+inferTypes :: [Definition ()] -> Infer [ValueDefinition SchemeExpr]
+inferTypes defs = do
+  env <- constructorEnv defs
+  traceShow env (return ())
   let valDefs = pickValueDefinitions defs
   (as, cs, defs') <- inferDefs mempty valDefs
   let unbound = Set.difference (assumptionNames as) (envVars env)
@@ -577,10 +586,9 @@ inferTypes env defs = do
   sub <- solve (cs' <> cs)
   return (runTyper (typeDefinitions defs') sub)
 
+
 typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
 typer (AST defs) = do
   resolutions' <- createResolutions defs
   traceShow resolutions' (return ())
-  let env = constructorEnv defs
-  traceShow env (return ())
-  runInfer (inferTypes env defs) resolutions'
+  runInfer (inferTypes defs) resolutions'
