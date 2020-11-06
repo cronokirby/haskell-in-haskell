@@ -7,7 +7,7 @@ import Simplifier
 import Test.Tasty
 import Test.Tasty.HUnit
 
-shouldSimplify :: String -> AST -> Assertion
+shouldSimplify :: String -> AST () -> Assertion
 shouldSimplify str ast =
   let eitherToMaybe = either (const Nothing) Just
       result = do
@@ -24,7 +24,7 @@ tests =
         "simple definitions"
         ( shouldSimplify
             "x = 2"
-            ( AST [ValueDefinition (NameDefinition "x" Nothing (LittExpr (IntLitteral 2)))]
+            ( AST [ValueDefinition (NameDefinition "x" Nothing () (LittExpr (IntLitteral 2)))]
             )
         ),
       testCase
@@ -36,8 +36,10 @@ tests =
                     ( NameDefinition
                         "f"
                         Nothing
+                        ()
                         ( LambdaExpr
                             "$0"
+                            ()
                             ( CaseExpr
                                 (NameExpr "$0")
                                 [PatternDef (NamePattern "x") (LittExpr (IntLitteral 3))]
@@ -56,8 +58,10 @@ tests =
                     ( NameDefinition
                         "f"
                         Nothing
+                        ()
                         ( LambdaExpr
                             "$0"
+                            ()
                             ( CaseExpr
                                 (NameExpr "$0")
                                 [PatternDef WildcardPattern (LittExpr (IntLitteral 3))]
@@ -76,10 +80,13 @@ tests =
                     ( NameDefinition
                         "f"
                         Nothing
+                        ()
                         ( LambdaExpr
                             "$0"
+                            ()
                             ( LambdaExpr
                                 "$1"
+                                ()
                                 ( CaseExpr
                                     (NameExpr "$0")
                                     [ PatternDef
@@ -103,8 +110,10 @@ tests =
                     ( NameDefinition
                         "f"
                         Nothing
+                        ()
                         ( LambdaExpr
                             "$0"
+                            ()
                             ( CaseExpr
                                 (NameExpr "$0")
                                 [ PatternDef (LitteralPattern (IntLitteral 3)) (LittExpr (IntLitteral 3)),
@@ -125,8 +134,10 @@ tests =
                     ( NameDefinition
                         "f"
                         Nothing
+                        ()
                         ( LambdaExpr
                             "$0"
+                            ()
                             ( CaseExpr
                                 (NameExpr "$0")
                                 [ PatternDef (LitteralPattern (IntLitteral 3)) (LittExpr (IntLitteral 3)),

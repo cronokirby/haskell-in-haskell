@@ -3,6 +3,7 @@ import Ourlude
 import qualified ParserTest
 import qualified SimplifierTest
 import Test.Tasty
+import qualified TyperTest
 
 main :: IO ()
 main = defaultMain tests
@@ -13,5 +14,6 @@ tests =
     "All Tests"
     [ LexerTest.tests,
       ParserTest.tests,
-      SimplifierTest.tests
+      SimplifierTest.tests,
+      TyperTest.tests
     ]

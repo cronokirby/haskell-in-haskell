@@ -44,4 +44,5 @@ test-suite haskell-in-haskell-test
   other-modules:       LexerTest
                      , ParserTest
                      , SimplifierTest
+                     , TyperTest
   type:                exitcode-stdio-1.0
