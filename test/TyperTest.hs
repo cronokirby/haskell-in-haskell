@@ -45,5 +45,6 @@ tests =
       testCase "basic constructors" (shouldType "{ data X = A | B; x :: X; x = A; y :: X; y = B }"),
       testCase "polymorphic constructors" (shouldType "{ data List a = Cons a (List a) | Nil; x :: List Int; x = Cons 1 Nil; y :: List a; y = Nil }"),
       testCase "basic constructor matching" (shouldType "{ data A = A Int; inc (A x) = x }"),
-      testCase "basic constructor matching 2" (shouldType "{ data A = A Int; inc (A x) = x + 1 }")
+      testCase "basic constructor matching 2" (shouldType "{ data A = A Int; inc (A x) = x + 1 }"),
+      testCase "weakening declarations" (shouldNotType "{ f :: a -> Int; f x = x }")
     ]

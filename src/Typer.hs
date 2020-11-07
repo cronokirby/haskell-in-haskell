@@ -17,14 +17,13 @@ import Control.Monad
 import Control.Monad.Except
   ( Except,
     MonadError (throwError),
+    liftEither,
     runExcept,
   )
 import Control.Monad.Reader
   ( MonadReader (ask, local),
-    Reader,
     ReaderT (..),
     asks,
-    runReader,
   )
 import Control.Monad.State
   ( MonadState (get, put),
@@ -71,7 +70,12 @@ data TypeError
     MismatchedTypeArgs TypeName Int Int
   | -- A type synonym ends up being cyclical
     CyclicalTypeSynonym TypeName [TypeName]
+  | -- An inferred scheme is not as general as the declared one
+    NotGeneralEnough SchemeExpr SchemeExpr
   deriving (Eq, Show)
+
+asGeneral :: SchemeExpr -> SchemeExpr -> Bool
+asGeneral (SchemeExpr vars1 _) (SchemeExpr vars2 _) = length vars1 >= length vars2
 
 gatherCustomTypes :: [Definition t] -> Map.Map TypeName Int
 gatherCustomTypes =
@@ -517,7 +521,7 @@ inferDefs usageAs defs = do
         Just (SchemeExpr names d) -> do
           resolved <- resolveInfer d
           return [ExplicitlyInstantiates t (SchemeExpr names resolved)]
-      return (as, extra ++ cs, (n, t), NameDefinition n Nothing t e')
+      return (as, extra ++ cs, (n, t), NameDefinition n declared t e')
   bound' <- asks bound
   let as = usageAs <> foldMap (\(x, _, _, _) -> x) together
       cs = foldMap (\(_, x, _, _) -> x) together
@@ -582,11 +586,11 @@ bind a t
 
 data TyperInfo = TyperInfo {typerNames :: Set.Set Name, typerSub :: Subst}
 
-newtype Typer a = Typer (Reader TyperInfo a)
-  deriving (Functor, Applicative, Monad, MonadReader TyperInfo)
+newtype Typer a = Typer (ReaderT TyperInfo (Except TypeError) a)
+  deriving (Functor, Applicative, Monad, MonadReader TyperInfo, MonadError TypeError)
 
-runTyper :: Typer a -> Subst -> a
-runTyper (Typer r) sub = runReader r (TyperInfo Set.empty sub)
+runTyper :: Typer a -> Subst -> Either TypeError a
+runTyper (Typer r) sub = runReaderT r (TyperInfo Set.empty sub) |> runExcept
 
 withTyperNames :: [Name] -> Typer a -> Typer a
 withTyperNames names =
@@ -620,6 +624,9 @@ typeDefinitions defs =
   forM defs <| \(NameDefinition name ann t e) -> do
     sc <- schemeFor t
     e' <- typeExpr e
+    case ann of
+      Just d | not (asGeneral sc d) -> throwError (NotGeneralEnough sc d)
+      _ -> return ()
     return (NameDefinition name ann sc e')
 
 pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
@@ -637,7 +644,7 @@ inferTypes defs = do
   unless (Set.null unbound) (throwError (UnboundName (Set.elemAt 0 unbound)))
   let cs' = [ExplicitlyInstantiates t s | (x, s) <- Map.toList constructors, t <- lookupAssumptions x as]
   sub <- solve (cs' <> cs)
-  return (runTyper (typeDefinitions defs') sub)
+  liftEither <| runTyper (typeDefinitions defs') sub
 
 typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
 typer (AST defs) = do
