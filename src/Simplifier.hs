@@ -33,7 +33,7 @@ newtype AST t = AST [Definition t] deriving (Eq, Show)
 
 data Definition t
   = ValueDefinition (ValueDefinition t)
-  | TypeDefinition TypeName [Name] [ConstructorDefinition]
+  | TypeDefinition TypeName [TypeVar] [ConstructorDefinition]
   | TypeSynonym TypeName TypeExpr
   deriving (Eq, Show)
 

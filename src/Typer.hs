@@ -49,6 +49,7 @@ import Simplifier
     SchemeExpr (..),
     TypeExpr (..),
     TypeName,
+    TypeVar,
     ValueDefinition (..),
   )
 
@@ -57,7 +58,7 @@ data TypeError
   = -- There's a mismatch between two different types
     TypeMismatch TypeExpr TypeExpr
   | -- Some type name references itself recursively
-    InfiniteType TypeName TypeExpr
+    InfiniteType TypeVar TypeExpr
   | -- An undefined name was used
     UnboundName Name
   | -- A reference to some type that doesn't exist
@@ -198,11 +199,11 @@ data Constraint
   | -- An assertation that some type explicitly instantiates some scheme
     ExplicitlyInstantiates TypeExpr SchemeExpr
   | -- An assertion that some type implicitly insntatiates some type, generalized over some names
-    ImplicitlyInstantations TypeExpr (Set.Set TypeName) TypeExpr
+    ImplicitlyInstantations TypeExpr (Set.Set TypeVar) TypeExpr
   deriving (Eq, Show)
 
 -- Represents a substitution of types for type names
-newtype Subst = Subst (Map.Map TypeName TypeExpr) deriving (Eq, Show)
+newtype Subst = Subst (Map.Map TypeVar TypeExpr) deriving (Eq, Show)
 
 instance Semigroup Subst where
   (Subst s1) <> (Subst s2) = Subst (Map.map (subst (Subst s1)) s2 <> s1)
@@ -307,7 +308,7 @@ runInfer (Infer m) resolutions' =
     |> fmap fst
 
 -- Generate a fresh type name during inference
-fresh :: Infer TypeName
+fresh :: Infer TypeVar
 fresh =
   Infer <| do
     count <- get
@@ -322,13 +323,13 @@ instantiate (SchemeExpr vars t) = do
   return (subst sub t)
 
 -- Generalize a type into a scheme by closing over all unbound variables
-generalize :: Set.Set TypeName -> TypeExpr -> SchemeExpr
+generalize :: Set.Set TypeVar -> TypeExpr -> SchemeExpr
 generalize free t =
   let as = Set.toList (Set.difference (ftv t) free)
    in SchemeExpr as t
 
 -- Modify inference with access to a bound type variable
-withBound :: TypeName -> Infer a -> Infer a
+withBound :: TypeVar -> Infer a -> Infer a
 withBound a = local (\r -> r {bound = Set.insert a (bound r)})
 
 resolveInfer :: TypeExpr -> Infer TypeExpr
@@ -492,7 +493,7 @@ unify (CustomType name1 ts1) (CustomType name2 ts2)
      in foldM go mempty together
 unify t1 t2 = throwError (TypeMismatch t1 t2)
 
-bind :: TypeName -> TypeExpr -> Infer Subst
+bind :: TypeVar -> TypeExpr -> Infer Subst
 bind a t
   | t == TypeVar a = return mempty
   | Set.member a (ftv t) = throwError (InfiniteType a t)
