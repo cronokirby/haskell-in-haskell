@@ -37,7 +37,6 @@ import Data.List (delete, find)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
-import Debug.Trace
 import Ourlude
 import Simplifier
   ( AST (..),
@@ -176,7 +175,6 @@ createResolutions defs = do
   let customInfo = gatherCustomTypes defs
       typeSynMap = gatherTypeSynonyms defs
   names <- sortTypeSynonyms typeSynMap
-  traceShow names (return ())
   runResolutionM (resolveAll (reverse names)) typeSynMap (Map.map Custom customInfo)
   where
     runResolutionM :: ResolutionM a -> Map.Map TypeName TypeExpr -> ResolutionMap -> Either TypeError ResolutionMap
@@ -376,7 +374,7 @@ lookupConstructor name = do
 
 -- Represents an ordered collection about assumptions we've gathered so far
 newtype Assumptions = Assumptions [(Name, TypeExpr)]
-  deriving (Semigroup, Monoid)
+  deriving (Show, Semigroup, Monoid)
 
 -- Remove an assumption about a given name
 removeAssumption :: Name -> Assumptions -> Assumptions
@@ -471,7 +469,7 @@ inferExpr expr = case expr of
     let tv = TypeVar a
     (as, cs, t, e') <- withBound a (inferExpr e)
     let inferred = FunctionType tv t
-    return (removeAssumption n as, [SameType t' tv | t' <- lookupAssumptions n as] <> cs, inferred, LambdaExpr n t e')
+    return (removeAssumption n as, [SameType t' tv | t' <- lookupAssumptions n as] <> cs, inferred, LambdaExpr n tv e')
   LetExpr defs e -> do
     (as1, cs1, t, e') <- inferExpr e
     (as2, cs2, defs') <- inferDefs as1 defs
@@ -484,7 +482,7 @@ inferPatternDef scrutinee (PatternDef pat e) = do
   (as, cs2, t, e') <- withManyBound boundSet (inferExpr e)
   return
     ( adjustValAssumptions valMap as,
-      SameType tv t : cs1 <> cs2 <> valConstraints valMap as,
+      SameType tv scrutinee : cs1 <> cs2 <> valConstraints valMap as,
       t,
       PatternDef pat e'
     )
@@ -492,7 +490,7 @@ inferPatternDef scrutinee (PatternDef pat e) = do
     inspectPattern :: TypeExpr -> Pattern -> Infer ([Constraint], Map.Map ValName TypeExpr, Set.Set TypeVar)
     inspectPattern scrutinee' pat' = case pat' of
       WildcardPattern -> return ([], Map.empty, Set.empty)
-      NamePattern n -> return ([], Map.singleton n scrutinee, Set.empty)
+      NamePattern n -> return ([], Map.singleton n scrutinee', Set.empty)
       LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty, Set.empty)
       ConstructorPattern name pats -> do
         patVars <- forM pats (const fresh)
@@ -645,5 +643,4 @@ typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
 typer (AST defs) = do
   resolutions' <- createResolutions defs
   constructorInfo' <- gatherConstructorInfo resolutions' defs
-  traceShow resolutions' (return ())
   runInfer (inferTypes defs) resolutions' constructorInfo'

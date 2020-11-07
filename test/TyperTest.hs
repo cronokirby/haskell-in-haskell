@@ -43,5 +43,6 @@ tests =
       testCase "type synonyms" (shouldType "{ type X = Int; x :: X; x = 3 }"),
       testCase "ordered type synonyms" (shouldType "{ type Y = Z; type X = Y; type Z = Int; x :: X; x = 3}"),
       testCase "basic constructors" (shouldType "{ data X = A | B; x :: X; x = A; y :: X; y = B }"),
-      testCase "polymorphic constructors" (shouldType "{ data List a = Cons a (List a) | Nil; x :: List Int; x = Cons 1 Nil; y :: List a; y = Nil }")
+      testCase "polymorphic constructors" (shouldType "{ data List a = Cons a (List a) | Nil; x :: List Int; x = Cons 1 Nil; y :: List a; y = Nil }"),
+      testCase "basic constructor matching" (shouldType "{ data A = A Int; inc (A x) = x + 1; }")
     ]
