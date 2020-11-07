@@ -197,7 +197,7 @@ token = keyword <|> operator <|> litteral <|> name
         boolLitt = (BoolLitt True `with` string "True") <|> (BoolLitt False `with` string "False")
 
     name :: Lexer (Token, String)
-    name = upperName <|> lowerName <|> primName
+    name = primName <|> upperName <|> lowerName
       where
         continuesName :: Lexer Char
         continuesName = satisfies isAlphaNum <|> char '\''
