@@ -120,13 +120,13 @@ data Token
   | IntTypeName -- The typename `Int`
   | StringTypeName -- The typename `String`
   | BoolTypeName -- The typename `Bool`
-  | TypeName String -- A reference to some kind of type name
-  | Name String -- A reference to some kind of name
+  | UpperName String -- A reference to a name beginning with an upper case
+  | LowerName String -- A reference to a name beginning with a lower case
   deriving (Eq, Show)
 
 -- Lex out one of the tokens in our language
 token :: Lexer (Token, String)
-token = keywords <|> operators <|> intLitt <|> stringLitt <|> boolLitt <|> primName <|> typeName <|> name
+token = keywords <|> operators <|> intLitt <|> stringLitt <|> boolLitt <|> primName <|> lowerName <|> upperName
   where
     with :: Functor f => b -> f a -> f (b, a)
     with b = fmap (\a -> (b, a))
@@ -187,10 +187,10 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> boolLitt <|> primN
       (IntTypeName `with` string "Int")
         <|> (StringTypeName `with` string "String")
         <|> (BoolTypeName `with` string "Bool")
-    typeName :: Lexer (Token, String)
-    typeName = (liftA2 (:) (satisfies isUpper) (many continuesName)) |> fmap (\x -> (TypeName x, x))
-    name :: Lexer (Token, String)
-    name = (liftA2 (:) (satisfies isLower) (many continuesName)) |> fmap (\x -> (Name x, x))
+    upperName :: Lexer (Token, String)
+    upperName = (liftA2 (:) (satisfies isUpper) (many continuesName)) |> fmap (\x -> (UpperName x, x))
+    lowerName :: Lexer (Token, String)
+    lowerName = (liftA2 (:) (satisfies isLower) (many continuesName)) |> fmap (\x -> (LowerName x, x))
 
 -- A raw token is either a "real" token, or some whitespace that we actually want to ignore
 data RawToken = Blankspace String | Comment String | Newline | RawToken Token String

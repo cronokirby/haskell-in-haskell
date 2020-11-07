@@ -70,9 +70,15 @@ braced p = token OpenBrace *> sepBy1 p (token Semicolon) <* token CloseBrace
 parensed :: Parser a -> Parser a
 parensed p = token OpenParens *> p <* token CloseParens
 
-type Name = String
+type TypeVar = String
 
 type TypeName = String
+
+type ValName = String
+
+type ConstructorName = String
+
+type Name = String
 
 newtype AST = AST [Definition] deriving (Eq, Show)
 
@@ -82,11 +88,11 @@ data Definition
   | TypeSynonym TypeName TypeExpr
   deriving (Eq, Show)
 
-data ConstructorDefinition = ConstructorDefinition TypeName [TypeExpr] deriving (Eq, Show)
+data ConstructorDefinition = ConstructorDefinition ConstructorName [TypeExpr] deriving (Eq, Show)
 
 data ValueDefinition
-  = TypeAnnotation String TypeExpr
-  | NameDefinition String [Pattern] Expr
+  = TypeAnnotation ValName TypeExpr
+  | NameDefinition ValName [Pattern] Expr
   deriving (Eq, Show)
 
 data TypeExpr
@@ -94,7 +100,7 @@ data TypeExpr
   | IntType
   | BoolType
   | CustomType TypeName [TypeExpr]
-  | TypeVar Name
+  | TypeVar TypeVar
   | FunctionType TypeExpr TypeExpr
   deriving (Eq, Show)
 
@@ -103,7 +109,7 @@ data Expr
   | LetExpr [ValueDefinition] Expr
   | WhereExpr Expr [ValueDefinition]
   | IfExpr Expr Expr Expr
-  | LambdaExpr [Name] Expr
+  | LambdaExpr [ValName] Expr
   | NameExpr Name
   | LittExpr Litteral
   | NegateExpr Expr
@@ -139,9 +145,9 @@ data PatternDef = PatternDef Pattern Expr deriving (Eq, Show)
 
 data Pattern
   = WildcardPattern
-  | NamePattern String
+  | NamePattern ValName
   | LitteralPattern Litteral
-  | ConstructorPattern String [Pattern]
+  | ConstructorPattern ConstructorName [Pattern]
   deriving (Eq, Show)
 
 ast :: Parser AST
@@ -160,13 +166,13 @@ definition = (fmap ValueDefinition valueDefinition) <|> typeDefinition <|> typeS
     typeSynonym = token Type *> liftA2 TypeSynonym (typeName <* token Equal) typeExpr
 
 constructorDefinition :: Parser ConstructorDefinition
-constructorDefinition = liftA2 ConstructorDefinition typeName (many unspacedType)
+constructorDefinition = liftA2 ConstructorDefinition constructorName (many unspacedType)
 
 valueDefinition :: Parser ValueDefinition
 valueDefinition = nameDefinition <|> typeDefinition
   where
-    nameDefinition = NameDefinition <$> name <*> many unspacedPattern <*> (token Equal *> expr)
-    typeDefinition = liftA2 TypeAnnotation (name <* token DoubleColon) typeExpr
+    nameDefinition = NameDefinition <$> valName <*> many unspacedPattern <*> (token Equal *> expr)
+    typeDefinition = liftA2 TypeAnnotation (valName <* token DoubleColon) typeExpr
 
 typeExpr :: Parser TypeExpr
 typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
@@ -180,7 +186,7 @@ unspacedType = namedType <|> singleType
     namedType = typeName |> fmap (\x -> CustomType x [])
 
 singleType :: Parser TypeExpr
-singleType = (fmap TypeVar name) <|> primType <|> parensed typeExpr
+singleType = (fmap TypeVar typeVar) <|> primType <|> parensed typeExpr
   where
     primType =
       (IntType <$ token IntTypeName)
@@ -193,7 +199,7 @@ expr = notWhereExpr <|> whereExpr
     notWhereExpr = letExpr <|> ifExpr <|> lambdaExpr <|> binExpr <|> caseExpr
     letExpr = token Let *> liftA2 LetExpr (braced valueDefinition) (token In *> expr)
     ifExpr = token If *> (IfExpr <$> expr <*> (token Then *> expr) <*> (token Else *> expr))
-    lambdaExpr = token BSlash *> liftA2 LambdaExpr (some name) (token ThinArrow *> expr)
+    lambdaExpr = token BSlash *> liftA2 LambdaExpr (some valName) (token ThinArrow *> expr)
     whereExpr = liftA2 WhereExpr notWhereExpr (token Where *> braced valueDefinition)
 
 caseExpr :: Parser Expr
@@ -204,15 +210,15 @@ caseExpr = liftA2 CaseExpr (token Case *> expr <* token Of) (braced patternDef)
 onePattern :: Parser Pattern
 onePattern = unspacedPattern <|> argfulPattern
   where
-    argfulPattern = liftA2 ConstructorPattern typeName (some unspacedPattern)
+    argfulPattern = liftA2 ConstructorPattern constructorName (some unspacedPattern)
 
 unspacedPattern :: Parser Pattern
 unspacedPattern = simplePattern <|> parensed onePattern
   where
     simplePattern = wildCardPattern <|> varPattern <|> littPattern <|> singleConstructor
-    singleConstructor = fmap (`ConstructorPattern` []) typeName
+    singleConstructor = fmap (`ConstructorPattern` []) constructorName
     wildCardPattern = WildcardPattern <$ token Underscore
-    varPattern = fmap NamePattern name
+    varPattern = fmap NamePattern valName
     littPattern = fmap LitteralPattern litteral
 
 binExpr :: Parser Expr
@@ -266,20 +272,34 @@ factor :: Parser Expr
 factor = littExpr <|> nameExpr <|> parensed expr
   where
     littExpr = fmap LittExpr litteral
+    nameExpr = name |> fmap NameExpr
 
-    nameExpr = (name <|> typeName) |> fmap NameExpr
-
-name :: Parser Name
-name =
+lowerName :: Parser Name
+lowerName =
   pluck <| \case
-    Name n -> Just n
+    LowerName n -> Just n
     _ -> Nothing
+
+upperName :: Parser TypeName
+upperName =
+  pluck <| \case
+    UpperName n -> Just n
+    _ -> Nothing
+
+typeVar :: Parser TypeVar
+typeVar = lowerName
 
 typeName :: Parser TypeName
-typeName =
-  pluck <| \case
-    TypeName n -> Just n
-    _ -> Nothing
+typeName = upperName
+
+valName :: Parser ValName
+valName = lowerName
+
+constructorName :: Parser ConstructorName
+constructorName = upperName
+
+name :: Parser Name
+name = valName <|> constructorName
 
 litteral :: Parser Litteral
 litteral = intLitt <|> stringLitt <|> boolLitt

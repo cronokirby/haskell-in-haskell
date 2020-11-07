@@ -6,11 +6,9 @@
 
 module Typer (typer, TypeError) where
 
-import Data.Monoid (mconcat)
 import Control.Monad
   ( foldM,
     forM,
-    mapM,
     forM_,
     unless,
     when,
@@ -529,7 +527,8 @@ withTyperNames names =
 
 schemeFor :: TypeExpr -> Typer SchemeExpr
 schemeFor t = do
-  (TyperInfo typerNames' typerSub') <- ask
+  typerNames' <- asks typerNames
+  typerSub' <- asks typerSub
   return (generalize typerNames' (subst typerSub' t))
 
 typeExpr :: Expr TypeExpr -> Typer (Expr SchemeExpr)
@@ -585,7 +584,6 @@ inferTypes defs = do
   let cs' = [ExplicitlyInstantiates t s | (x, s) <- envBindings env, t <- lookupAssumptions x as]
   sub <- solve (cs' <> cs)
   return (runTyper (typeDefinitions defs') sub)
-
 
 typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
 typer (AST defs) = do

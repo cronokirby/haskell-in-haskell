@@ -13,8 +13,11 @@ module Simplifier
     Definition (..),
     ValueDefinition (..),
     Name,
-    Builtin (..),
+    ValName,
+    TypeVar,
+    ConstructorName,
     TypeName,
+    Builtin (..),
     simplifier,
   )
 where
@@ -23,12 +26,8 @@ import Data.Function (on)
 import Data.List (foldl', groupBy)
 import Data.Maybe (catMaybes)
 import Ourlude
-import Parser (ConstructorDefinition (..), Litteral (..), Pattern (..), TypeExpr (..))
+import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, Pattern (..), TypeExpr (..), TypeName, TypeVar, ValName)
 import qualified Parser as Parser
-
-type Name = String
-
-type TypeName = String
 
 newtype AST t = AST [Definition t] deriving (Eq, Show)
 
@@ -38,9 +37,9 @@ data Definition t
   | TypeSynonym TypeName TypeExpr
   deriving (Eq, Show)
 
-data ValueDefinition t = NameDefinition String (Maybe SchemeExpr) t (Expr t) deriving (Eq, Show)
+data ValueDefinition t = NameDefinition ValName (Maybe SchemeExpr) t (Expr t) deriving (Eq, Show)
 
-data SchemeExpr = SchemeExpr [Name] TypeExpr deriving (Eq, Show)
+data SchemeExpr = SchemeExpr [TypeVar] TypeExpr deriving (Eq, Show)
 
 closeTypeExpr :: TypeExpr -> SchemeExpr
 closeTypeExpr t = SchemeExpr (names t) t
@@ -59,7 +58,7 @@ data Expr t
   | Builtin Builtin
   | NameExpr Name
   | ApplyExpr (Expr t) (Expr t)
-  | LambdaExpr Name t (Expr t)
+  | LambdaExpr ValName t (Expr t)
   deriving (Eq, Show)
 
 data Builtin
@@ -84,9 +83,9 @@ data Builtin
 data PatternDef t = PatternDef Pattern (Expr t) deriving (Eq, Show)
 
 data SimplifierError
-  = MultipleTypeAnnotations String [SchemeExpr]
-  | DifferentPatternLengths String [Int]
-  | UnimplementedAnnotation String
+  = MultipleTypeAnnotations ValName [SchemeExpr]
+  | DifferentPatternLengths ValName [Int]
+  | UnimplementedAnnotation ValName
   deriving (Eq, Show)
 
 convertExpr :: Parser.Expr -> Either SimplifierError (Expr ())
