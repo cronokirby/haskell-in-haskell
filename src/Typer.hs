@@ -42,14 +42,18 @@ import Simplifier
   ( AST (..),
     Builtin (..),
     ConstructorDefinition (..),
+    ConstructorName,
     Definition (..),
     Expr (..),
     Litteral (..),
     Name,
+    Pattern (..),
+    PatternDef (..),
     SchemeExpr (..),
     TypeExpr (..),
     TypeName,
     TypeVar,
+    ValName,
     ValueDefinition (..),
   )
 
@@ -283,13 +287,45 @@ instance ActiveTypeVars Constraint where
 instance ActiveTypeVars a => ActiveTypeVars [a] where
   atv = foldMap atv
 
+-- Represents the information we have about a constructor
+data ConstructorInfo = ConstructorInfo
+  { -- The type variables that this constructor closes over
+    constructorVars :: [TypeVar],
+    -- The type arguments that this constructor takes
+    constructorArgs :: [TypeExpr],
+    -- The return type for this constructor, after accepting those arguments
+    constructorReturn :: TypeExpr
+  }
+
+-- A map from constructor names to information about that constructor
+type ConstructorInfoMap = Map.Map ConstructorName ConstructorInfo
+
+-- Looking at the definitions, gather information about what constructors are present
+gatherConstructorInfo :: MonadError TypeError m => ResolutionMap -> [Definition t] -> m ConstructorInfoMap
+gatherConstructorInfo resolutions' defs =
+  forM defs (extractEnv resolutions') |> fmap mconcat
+  where
+    extractEnv :: (MonadError TypeError m) => ResolutionMap -> Definition t -> m ConstructorInfoMap
+    extractEnv _ (TypeSynonym _ _) = return mempty
+    extractEnv _ (ValueDefinition _) = return mempty
+    extractEnv mp (TypeDefinition tn names constructors) =
+      mconcat <$> mapM constructorType constructors
+      where
+        constructorType :: (MonadError TypeError m) => ConstructorDefinition -> m ConstructorInfoMap
+        constructorType (ConstructorDefinition n ts) = do
+          resolved <- mapM (resolve mp) ts
+          let retType = CustomType tn (map TypeVar names)
+              info = ConstructorInfo names resolved retType
+          return (Map.singleton n info)
+
 -- The environment we use when doing type inference.
 --
 -- We keep a local environment of bound type names, as well
 -- as the information about type synonym resolutions.
 data InferEnv = InferEnv
   { bound :: Set.Set TypeName,
-    resolutions :: ResolutionMap
+    resolutions :: ResolutionMap,
+    constructorInfo :: ConstructorInfoMap
   }
 
 -- The context in which we perform type inference.
@@ -300,9 +336,9 @@ newtype Infer a = Infer (ReaderT InferEnv (StateT Int (Except TypeError)) a)
   deriving (Functor, Applicative, Monad, MonadReader InferEnv, MonadState Int, MonadError TypeError)
 
 -- Run the inference context, provided we have a resolution map
-runInfer :: Infer a -> ResolutionMap -> Either TypeError a
-runInfer (Infer m) resolutions' =
-  runReaderT m (InferEnv Set.empty resolutions')
+runInfer :: Infer a -> ResolutionMap -> ConstructorInfoMap -> Either TypeError a
+runInfer (Infer m) resolutions' constructorInfo' =
+  runReaderT m (InferEnv Set.empty resolutions' constructorInfo')
     |> (`runStateT` 0)
     |> runExcept
     |> fmap fst
@@ -414,7 +450,19 @@ inferExpr expr = case expr of
   NameExpr n -> do
     tv <- TypeVar <$> fresh
     return (singleAssumption n tv, [], tv, NameExpr n)
-  CaseExpr _ _ -> error "Can't handle case expressions yet"
+  CaseExpr e pats -> do
+    (as1, cs1, t, e') <- inferExpr e
+    -- We infer assumptions and constraints for each case branch, knowing the scrutinee's type
+    -- We have to push down, because certain branches impose no constraints on the scrutinee,
+    -- like wildcard patterns, for example
+    inferred <- forM pats (inferPatternDef t)
+    let pats' = map (\(_, _, _, p) -> p) inferred
+        (as2, cs2) = foldMap (\(a, c, _, _) -> (a, c)) inferred
+    -- We generate constraints making sure each branch has the same return type,
+    -- and the same scrutinee type
+    ret <- TypeVar <$> fresh
+    let cs3 = map (\(_, _, branchRet, _) -> SameType ret branchRet) inferred
+    return (as2 <> as1, cs3 <> cs2 <> cs1, ret, CaseExpr e' pats')
   LambdaExpr n _ e -> do
     a <- fresh
     let tv = TypeVar a
@@ -425,6 +473,19 @@ inferExpr expr = case expr of
     (as1, cs1, t, e') <- inferExpr e
     (as2, cs2, defs') <- inferDefs as1 defs
     return (as2, cs1 <> cs2, t, LetExpr defs' e')
+
+inferPatternDef :: TypeExpr -> PatternDef () -> Infer (Assumptions, [Constraint], TypeExpr, PatternDef TypeExpr)
+inferPatternDef scrutinee (PatternDef pat e) = do
+  (as, cs, t, e') <- inferExpr e
+  return (as, cs, t, PatternDef pat e')
+  where
+    inferPattern :: TypeExpr -> Assumptions -> Pattern -> Infer (Assumptions, [Constraint])
+    inferPattern scrutinee as pat = undefined
+
+    inspectPattern :: TypeExpr -> Pattern -> Infer ([Constraint], Map.Map ValName TypeExpr)
+    inspectPattern scrutinee pat = case pat of
+      WildcardPattern -> return ([], Map.empty)
+      NamePattern n -> return ([], Map.singleton n scrutinee)
 
 inferDefs :: Assumptions -> [ValueDefinition ()] -> Infer (Assumptions, [Constraint], [ValueDefinition TypeExpr])
 inferDefs usageAs defs = do
@@ -552,21 +613,16 @@ typeDefinitions defs =
     e' <- typeExpr e
     return (NameDefinition name ann sc e')
 
-constructorEnv :: [Definition t] -> Infer Env
-constructorEnv = mapM extractEnv >>> fmap mconcat
+constructorEnv :: Infer Env
+constructorEnv = convert <$> asks constructorInfo
   where
-    extractEnv :: Definition t -> Infer Env
-    extractEnv (TypeSynonym _ _) = return mempty
-    extractEnv (ValueDefinition _) = return mempty
-    extractEnv (TypeDefinition tn names constructors) =
-      mconcat <$> mapM constructorType constructors
-      where
-        constructorType :: ConstructorDefinition -> Infer Env
-        constructorType (ConstructorDefinition n ts) = do
-          resolved <- mapM resolveInfer ts
-          let t = foldr FunctionType (CustomType tn (map TypeVar names)) resolved
-              sc = SchemeExpr names t
-          return (singleEnv n sc)
+    convert :: ConstructorInfoMap -> Env
+    convert = Map.toList >>> foldMap convertSingle
+    convertSingle :: (ConstructorName, ConstructorInfo) -> Env
+    convertSingle (name, info) =
+      let t = foldr FunctionType (constructorReturn info) (constructorArgs info)
+          sc = SchemeExpr (constructorVars info) t
+       in singleEnv name sc
 
 pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
 pickValueDefinitions = map pick >>> catMaybes
@@ -576,7 +632,7 @@ pickValueDefinitions = map pick >>> catMaybes
 
 inferTypes :: [Definition ()] -> Infer [ValueDefinition SchemeExpr]
 inferTypes defs = do
-  env <- constructorEnv defs
+  env <- constructorEnv
   traceShow env (return ())
   let valDefs = pickValueDefinitions defs
   (as, cs, defs') <- inferDefs mempty valDefs
@@ -589,5 +645,6 @@ inferTypes defs = do
 typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
 typer (AST defs) = do
   resolutions' <- createResolutions defs
+  constructorInfo' <- gatherConstructorInfo resolutions' defs
   traceShow resolutions' (return ())
-  runInfer (inferTypes defs) resolutions'
+  runInfer (inferTypes defs) resolutions' constructorInfo'
