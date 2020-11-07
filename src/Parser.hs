@@ -7,7 +7,7 @@ import Data.List (foldl')
 import Lexer (Token (..))
 import Ourlude
 
-newtype Parser a = Parser ([Token] -> [(a, [Token])])
+newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
 instance Functor Parser where
   fmap f (Parser p) = Parser (p >>> fmap (\(a, s) -> (f a, s)))
@@ -26,7 +26,7 @@ instance Alternative Parser where
     Parser <| \input -> lA input ++ lB input
 
 opt :: Parser a -> Parser (Maybe a)
-opt p = (Just <$> p) <|> pure Nothing
+opt p = (fmap Just p) <|> pure Nothing
 
 satisifies :: (Token -> Bool) -> Parser Token
 satisifies p =
@@ -183,7 +183,7 @@ typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
 unspacedType :: Parser TypeExpr
 unspacedType = namedType <|> singleType
   where
-    namedType = typeName |> fmap (\x -> CustomType x [])
+    namedType = fmap (`CustomType` []) typeName
 
 singleType :: Parser TypeExpr
 singleType = (fmap TypeVar typeVar) <|> primType <|> parensed typeExpr
@@ -264,15 +264,15 @@ unaryExpr = negateExpr <|> appExpr
 appExpr :: Parser Expr
 appExpr = some factor |> fmap extract
   where
+    extract [] = error "appExpr: No elements produced after some"
     extract [e] = e
     extract (e : es) = ApplyExpr e es
-    extract _ = error "appExpr: No elements produced after some"
 
 factor :: Parser Expr
 factor = littExpr <|> nameExpr <|> parensed expr
   where
     littExpr = fmap LittExpr litteral
-    nameExpr = name |> fmap NameExpr
+    nameExpr = fmap NameExpr name
 
 lowerName :: Parser Name
 lowerName =
@@ -320,9 +320,7 @@ litteral = intLitt <|> stringLitt <|> boolLitt
 data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)
 
 parser :: [Token] -> Either ParseError AST
-parser input =
-  let (Parser runParser) = ast
-   in case runParser input of
-        [] -> Left FailedParse
-        [(res, _)] -> Right res
-        tooMany -> Left (AmbiguousParse tooMany)
+parser input = case runParser ast input of
+  [] -> Left FailedParse
+  [(res, _)] -> Right res
+  tooMany -> Left (AmbiguousParse tooMany)
