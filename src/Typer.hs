@@ -289,36 +289,26 @@ instance ActiveTypeVars Constraint where
 instance ActiveTypeVars a => ActiveTypeVars [a] where
   atv = foldMap atv
 
--- Represents the information we have about a constructor
-data ConstructorInfo = ConstructorInfo
-  { -- The type variables that this constructor closes over
-    constructorVars :: [TypeVar],
-    -- The type arguments that this constructor takes
-    constructorArgs :: [TypeExpr],
-    -- The return type for this constructor, after accepting those arguments
-    constructorReturn :: TypeExpr
-  }
-
 -- A map from constructor names to information about that constructor
-type ConstructorInfoMap = Map.Map ConstructorName ConstructorInfo
+type ConstructorInfo = Map.Map ConstructorName SchemeExpr
 
 -- Looking at the definitions, gather information about what constructors are present
-gatherConstructorInfo :: MonadError TypeError m => ResolutionMap -> [Definition t] -> m ConstructorInfoMap
+gatherConstructorInfo :: MonadError TypeError m => ResolutionMap -> [Definition t] -> m ConstructorInfo
 gatherConstructorInfo resolutions' defs =
   forM defs (extractEnv resolutions') |> fmap mconcat
   where
-    extractEnv :: (MonadError TypeError m) => ResolutionMap -> Definition t -> m ConstructorInfoMap
+    extractEnv :: (MonadError TypeError m) => ResolutionMap -> Definition t -> m ConstructorInfo
     extractEnv _ (TypeSynonym _ _) = return mempty
     extractEnv _ (ValueDefinition _) = return mempty
     extractEnv mp (TypeDefinition tn names constructors) =
       mconcat <$> mapM constructorType constructors
       where
-        constructorType :: (MonadError TypeError m) => ConstructorDefinition -> m ConstructorInfoMap
+        constructorType :: (MonadError TypeError m) => ConstructorDefinition -> m ConstructorInfo
         constructorType (ConstructorDefinition n ts) = do
           resolved <- mapM (resolve mp) ts
-          let retType = CustomType tn (map TypeVar names)
-              info = ConstructorInfo names resolved retType
-          return (Map.singleton n info)
+          let t = CustomType tn (map TypeVar names)
+              sc = SchemeExpr names <| foldr FunctionType t resolved
+          return (Map.singleton n sc)
 
 -- The environment we use when doing type inference.
 --
@@ -327,7 +317,7 @@ gatherConstructorInfo resolutions' defs =
 data InferEnv = InferEnv
   { bound :: Set.Set TypeName,
     resolutions :: ResolutionMap,
-    constructorInfo :: ConstructorInfoMap
+    constructorInfo :: ConstructorInfo
   }
 
 -- The context in which we perform type inference.
@@ -338,7 +328,7 @@ newtype Infer a = Infer (ReaderT InferEnv (StateT Int (Except TypeError)) a)
   deriving (Functor, Applicative, Monad, MonadReader InferEnv, MonadState Int, MonadError TypeError)
 
 -- Run the inference context, provided we have a resolution map
-runInfer :: Infer a -> ResolutionMap -> ConstructorInfoMap -> Either TypeError a
+runInfer :: Infer a -> ResolutionMap -> ConstructorInfo -> Either TypeError a
 runInfer (Infer m) resolutions' constructorInfo' =
   runReaderT m (InferEnv Set.empty resolutions' constructorInfo')
     |> (`runStateT` 0)
@@ -375,7 +365,7 @@ resolveInfer t = do
   resolutions' <- asks resolutions
   resolve resolutions' t
 
-lookupConstructor :: ConstructorName -> Infer ConstructorInfo
+lookupConstructor :: ConstructorName -> Infer SchemeExpr
 lookupConstructor name = do
   result <- Map.lookup name <$> asks constructorInfo
   case result of
@@ -499,7 +489,7 @@ inferPatternDef scrutinee (PatternDef pat e) = do
       NamePattern n -> return ([], Map.singleton n scrutinee)
       LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty)
       ConstructorPattern name pats -> do
-        (ConstructorInfo vars args ret) <- lookupConstructor name
+        sc <- lookupConstructor name
         when
           (length args /= length pats)
           (throwError (MismatchedPatternArgs name (length args) (length pats)))
@@ -580,20 +570,6 @@ bind a t
   | Set.member a (ftv t) = throwError (InfiniteType a t)
   | otherwise = return (singleSubst a t)
 
--- An environment mapping variables to schemes
-newtype Env = Env (Map.Map Name SchemeExpr) deriving (Show, Semigroup, Monoid)
-
-singleEnv :: Name -> SchemeExpr -> Env
-singleEnv name sc = Env (Map.singleton name sc)
-
--- Return all of the bindings making up the environment
-envBindings :: Env -> [(Name, SchemeExpr)]
-envBindings (Env mp) = Map.toList mp
-
--- Get all of the variables bound in an environment
-envVars :: Env -> Set.Set Name
-envVars = envBindings >>> map fst >>> Set.fromList
-
 data TyperInfo = TyperInfo {typerNames :: Set.Set Name, typerSub :: Subst}
 
 newtype Typer a = Typer (Reader TyperInfo a)
@@ -633,17 +609,6 @@ typeDefinitions defs =
     e' <- typeExpr e
     return (NameDefinition name ann sc e')
 
-constructorEnv :: Infer Env
-constructorEnv = convert <$> asks constructorInfo
-  where
-    convert :: ConstructorInfoMap -> Env
-    convert = Map.toList >>> foldMap convertSingle
-    convertSingle :: (ConstructorName, ConstructorInfo) -> Env
-    convertSingle (name, info) =
-      let t = foldr FunctionType (constructorReturn info) (constructorArgs info)
-          sc = SchemeExpr (constructorVars info) t
-       in singleEnv name sc
-
 pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
 pickValueDefinitions = map pick >>> catMaybes
   where
@@ -652,13 +617,12 @@ pickValueDefinitions = map pick >>> catMaybes
 
 inferTypes :: [Definition ()] -> Infer [ValueDefinition SchemeExpr]
 inferTypes defs = do
-  env <- constructorEnv
-  traceShow env (return ())
+  constructors <- asks constructorInfo
   let valDefs = pickValueDefinitions defs
   (as, cs, defs') <- inferDefs mempty valDefs
-  let unbound = Set.difference (assumptionNames as) (envVars env)
+  let unbound = Set.difference (assumptionNames as) (Map.keysSet constructors)
   unless (Set.null unbound) (throwError (UnboundName (Set.elemAt 0 unbound)))
-  let cs' = [ExplicitlyInstantiates t s | (x, s) <- envBindings env, t <- lookupAssumptions x as]
+  let cs' = [ExplicitlyInstantiates t s | (x, s) <- Map.toList constructors, t <- lookupAssumptions x as]
   sub <- solve (cs' <> cs)
   return (runTyper (typeDefinitions defs') sub)
 
