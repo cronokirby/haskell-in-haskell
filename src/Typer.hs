@@ -69,6 +69,8 @@ data TypeError
     UnknownType TypeName
   | -- A mismatch of a type constructor with expected vs actual args
     MismatchedTypeArgs TypeName Int Int
+  | -- A mismatch between a pattern's expected vs actual arguments
+    MismatchedPatternArgs Name Int Int
   | -- A type synonym ends up being cyclical
     CyclicalTypeSynonym TypeName [TypeName]
   deriving (Eq, Show)
@@ -373,6 +375,13 @@ resolveInfer t = do
   resolutions' <- asks resolutions
   resolve resolutions' t
 
+lookupConstructor :: ConstructorName -> Infer ConstructorInfo
+lookupConstructor name = do
+  result <- Map.lookup name <$> asks constructorInfo
+  case result of
+    Nothing -> throwError (UnboundName name)
+    Just res -> return res
+
 -- Represents an ordered collection about assumptions we've gathered so far
 newtype Assumptions = Assumptions [(Name, TypeExpr)]
   deriving (Semigroup, Monoid)
@@ -430,13 +439,15 @@ builtinScheme b =
     Negate -> FunctionType IntType IntType
     _ -> error "Already handled"
 
+littType :: Litteral -> TypeExpr
+littType (IntLitteral _) = IntType
+littType (StringLitteral _) = StringType
+littType (BoolLitteral _) = BoolType
+
 inferExpr :: Expr () -> Infer (Assumptions, [Constraint], TypeExpr, Expr TypeExpr)
 inferExpr expr = case expr of
   LittExpr (litt) ->
-    let t = case litt of
-          IntLitteral _ -> IntType
-          StringLitteral _ -> StringType
-          BoolLitteral _ -> BoolType
+    let t = littType litt
      in return (mempty, [], t, LittExpr litt)
   ApplyExpr e1 e2 -> do
     (as1, cs1, t1, e1') <- inferExpr e1
@@ -486,6 +497,15 @@ inferPatternDef scrutinee (PatternDef pat e) = do
     inspectPattern scrutinee pat = case pat of
       WildcardPattern -> return ([], Map.empty)
       NamePattern n -> return ([], Map.singleton n scrutinee)
+      LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty)
+      ConstructorPattern name pats -> do
+        (ConstructorInfo vars args ret) <- lookupConstructor name
+        when
+          (length args /= length pats)
+          (throwError (MismatchedPatternArgs name (length args) (length pats)))
+        (cs, valMap) <- mconcat <$> forM (zip args pats) (uncurry inspectPattern)
+        let sc = SchemeExpr vars ret
+        return (ExplicitlyInstantiates scrutinee sc : cs, valMap)
 
 inferDefs :: Assumptions -> [ValueDefinition ()] -> Infer (Assumptions, [Constraint], [ValueDefinition TypeExpr])
 inferDefs usageAs defs = do
