@@ -12,7 +12,14 @@ import Data.Maybe (listToMaybe)
 import Ourlude
 
 -- Represents the kind of error that can occur
-data LexerError = Unexpected Char | UnexpectedEOF | UnmatchedLayout deriving (Eq, Show)
+data LexerError
+  = -- We encountered a character we weren't expecting to see
+    Unexpected Char
+  | -- We reached the end of a file while still expecting characters
+    UnexpectedEOF
+  | -- An indentation layout was created but not closed
+    UnmatchedLayout
+  deriving (Eq, Show)
 
 -- Create the right lex error when we encounter an unexpected string
 unexpected :: String -> LexerError
@@ -69,7 +76,7 @@ string = traverse char
 -- Create an alternation of a list of lexers.
 --
 -- This will match if any of the lexers matches, picking the longest match, as usual.
-oneOf :: [Lexer a] -> Lexer a
+oneOf :: Alternative f => [f a] -> f a
 oneOf = foldl1' (<|>)
 
 -- Represents a kind of Token we can lex out.
@@ -126,12 +133,13 @@ data Token
 
 -- Lex out one of the tokens in our language
 token :: Lexer (Token, String)
-token = keywords <|> operators <|> intLitt <|> stringLitt <|> boolLitt <|> primName <|> lowerName <|> upperName
+token = keyword <|> operator <|> litteral <|> name
   where
     with :: Functor f => b -> f a -> f (b, a)
     with b = fmap (\a -> (b, a))
-    keywords :: Lexer (Token, String)
-    keywords =
+
+    keyword :: Lexer (Token, String)
+    keyword =
       oneOf
         [ Let `with` string "let",
           Where `with` string "where",
@@ -145,8 +153,9 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> boolLitt <|> primN
           Of `with` string "of",
           Underscore `with` string "_"
         ]
-    operators :: Lexer (Token, String)
-    operators =
+
+    operator :: Lexer (Token, String)
+    operator =
       oneOf
         [ OpenParens `with` string "(",
           CloseParens `with` string ")",
@@ -174,23 +183,39 @@ token = keywords <|> operators <|> intLitt <|> stringLitt <|> boolLitt <|> primN
           VBarVBar `with` string "||",
           AmpersandAmpersand `with` string "&&"
         ]
-    intLitt :: Lexer (Token, String)
-    intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
-    stringLitt :: Lexer (Token, String)
-    stringLitt = char '"' *> (const <$> many (satisfies (\c -> c /= '"')) <*> char '"') |> fmap (\x -> (StringLitt x, x))
-    boolLitt :: Lexer (Token, String)
-    boolLitt = (BoolLitt True `with` string "True") <|> (BoolLitt False `with` string "False")
-    continuesName :: Lexer Char
-    continuesName = satisfies isAlphaNum <|> char '\''
-    primName :: Lexer (Token, String)
-    primName =
-      (IntTypeName `with` string "Int")
-        <|> (StringTypeName `with` string "String")
-        <|> (BoolTypeName `with` string "Bool")
-    upperName :: Lexer (Token, String)
-    upperName = (liftA2 (:) (satisfies isUpper) (many continuesName)) |> fmap (\x -> (UpperName x, x))
-    lowerName :: Lexer (Token, String)
-    lowerName = (liftA2 (:) (satisfies isLower) (many continuesName)) |> fmap (\x -> (LowerName x, x))
+
+    litteral :: Lexer (Token, String)
+    litteral = intLitt <|> stringLitt <|> boolLitt
+      where
+        intLitt :: Lexer (Token, String)
+        intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
+
+        stringLitt :: Lexer (Token, String)
+        stringLitt = char '"' *> (const <$> many (satisfies (\c -> c /= '"')) <*> char '"') |> fmap (\x -> (StringLitt x, x))
+
+        boolLitt :: Lexer (Token, String)
+        boolLitt = (BoolLitt True `with` string "True") <|> (BoolLitt False `with` string "False")
+
+    name :: Lexer (Token, String)
+    name = upperName <|> lowerName <|> primName
+      where
+        continuesName :: Lexer Char
+        continuesName = satisfies isAlphaNum <|> char '\''
+
+        followedBy :: Lexer Char -> Lexer Char -> Lexer String
+        followedBy l1 l2 = liftA2 (:) l1 (many l2)
+
+        upperName :: Lexer (Token, String)
+        upperName = (satisfies isUpper `followedBy` continuesName) |> fmap (\x -> (UpperName x, x))
+
+        lowerName :: Lexer (Token, String)
+        lowerName = (satisfies isLower `followedBy` continuesName) |> fmap (\x -> (LowerName x, x))
+
+        primName :: Lexer (Token, String)
+        primName =
+          (IntTypeName `with` string "Int")
+            <|> (StringTypeName `with` string "String")
+            <|> (BoolTypeName `with` string "Bool")
 
 -- A raw token is either a "real" token, or some whitespace that we actually want to ignore
 data RawToken = Blankspace String | Comment String | Newline | RawToken Token String
@@ -201,7 +226,7 @@ rawLexer = some (whitespace <|> comment <|> fmap (uncurry RawToken) token)
   where
     whitespace = blankspace <|> newline
     blankspace = Blankspace <$> some (satisfies (\x -> isSpace x && x /= '\n'))
-    comment = Comment <$> (string "--" *> some (satisfies (\x -> x /= '\n')))
+    comment = Comment <$> (string "--" *> some (satisfies (/= '\n')))
     newline = Newline <$ char '\n'
 
 -- Represents a position some token can have in the middle of a line.
@@ -233,7 +258,11 @@ data Layout = Explicit | Implicit Int
 --
 -- We have a current stack of layouts, a stream of tokens, and a flag to know if the
 -- we're looking to start a layout with the next token.
-data LayoutState = LayoutState {layouts :: [Layout], tokens :: [Token], expectingLayout :: Bool}
+data LayoutState = LayoutState
+  { layouts :: [Layout],
+    tokens :: [Token],
+    expectingLayout :: Bool
+  }
 
 -- The Monadic context we use for laying out tokens.
 --
@@ -289,6 +318,7 @@ layout inputs =
   where
     startsLayout :: Token -> Bool
     startsLayout t = elem t [Let, Where, Of]
+
     step :: Positioned Token -> LayoutM ()
     step (Positioned t linePos col) = do
       expectingLayout' <- gets expectingLayout
@@ -300,15 +330,18 @@ layout inputs =
         _ | linePos == Start -> continueImplicitLayout col
         _ -> return ()
       yieldToken t
+
     closeExplicitLayout :: LayoutM ()
     closeExplicitLayout =
       currentLayout >>= \case
         Just Explicit -> popLayout
         _ -> throwError (Unexpected '}')
+
     startExplicitLayout :: LayoutM ()
     startExplicitLayout = do
       modify' (\s -> s {expectingLayout = False})
       pushLayout Explicit
+
     startImplicitLayout :: Int -> LayoutM ()
     startImplicitLayout col = do
       modify' (\s -> s {expectingLayout = False})
@@ -323,6 +356,7 @@ layout inputs =
           yieldToken OpenBrace
           yieldToken CloseBrace
           continueImplicitLayout col
+
     continueImplicitLayout :: Int -> LayoutM ()
     continueImplicitLayout col = do
       closeFurtherLayouts
@@ -337,6 +371,7 @@ layout inputs =
               popLayout
               closeFurtherLayouts
             _ -> return ()
+
     closeImplicitLayouts :: LayoutM ()
     closeImplicitLayouts =
       currentLayout >>= \case
@@ -349,6 +384,5 @@ layout inputs =
 
 -- Lex a specific string, producing a list of tokens if no errors occurred.
 lexer :: String -> Either LexerError [Token]
-lexer input = do
-  (raw, _) <- runLexer rawLexer input
-  raw |> position |> layout
+lexer input =
+  runLexer rawLexer input >>= (fst >>> position >>> layout)
