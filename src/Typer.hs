@@ -12,6 +12,7 @@ import Control.Monad
     forM_,
     unless,
     when,
+    zipWithM,
   )
 import Control.Monad.Except
   ( Except,
@@ -69,8 +70,6 @@ data TypeError
     UnknownType TypeName
   | -- A mismatch of a type constructor with expected vs actual args
     MismatchedTypeArgs TypeName Int Int
-  | -- A mismatch between a pattern's expected vs actual arguments
-    MismatchedPatternArgs Name Int Int
   | -- A type synonym ends up being cyclical
     CyclicalTypeSynonym TypeName [TypeName]
   deriving (Eq, Show)
@@ -360,6 +359,9 @@ generalize free t =
 withBound :: TypeVar -> Infer a -> Infer a
 withBound a = local (\r -> r {bound = Set.insert a (bound r)})
 
+withManyBound :: Set.Set TypeVar -> Infer a -> Infer a
+withManyBound vars = local (\r -> r {bound = Set.union (bound r) vars})
+
 resolveInfer :: TypeExpr -> Infer TypeExpr
 resolveInfer t = do
   resolutions' <- asks resolutions
@@ -477,25 +479,35 @@ inferExpr expr = case expr of
 
 inferPatternDef :: TypeExpr -> PatternDef () -> Infer (Assumptions, [Constraint], TypeExpr, PatternDef TypeExpr)
 inferPatternDef scrutinee (PatternDef pat e) = do
-  (as, cs, t, e') <- inferExpr e
-  return (as, cs, t, PatternDef pat e')
+  tv <- TypeVar <$> fresh
+  (cs1, valMap, boundSet) <- inspectPattern tv pat
+  (as, cs2, t, e') <- withManyBound boundSet (inferExpr e)
+  return
+    ( adjustValAssumptions valMap as,
+      SameType tv t : cs1 <> cs2 <> valConstraints valMap as,
+      t,
+      PatternDef pat e'
+    )
   where
-    inferPattern :: TypeExpr -> Assumptions -> Pattern -> Infer (Assumptions, [Constraint])
-    inferPattern scrutinee as pat = undefined
-
-    inspectPattern :: TypeExpr -> Pattern -> Infer ([Constraint], Map.Map ValName TypeExpr)
-    inspectPattern scrutinee pat = case pat of
-      WildcardPattern -> return ([], Map.empty)
-      NamePattern n -> return ([], Map.singleton n scrutinee)
-      LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty)
+    inspectPattern :: TypeExpr -> Pattern -> Infer ([Constraint], Map.Map ValName TypeExpr, Set.Set TypeVar)
+    inspectPattern scrutinee' pat' = case pat' of
+      WildcardPattern -> return ([], Map.empty, Set.empty)
+      NamePattern n -> return ([], Map.singleton n scrutinee, Set.empty)
+      LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty, Set.empty)
       ConstructorPattern name pats -> do
-        sc <- lookupConstructor name
-        when
-          (length args /= length pats)
-          (throwError (MismatchedPatternArgs name (length args) (length pats)))
-        (cs, valMap) <- mconcat <$> forM (zip args pats) (uncurry inspectPattern)
-        let sc = SchemeExpr vars ret
-        return (ExplicitlyInstantiates scrutinee sc : cs, valMap)
+        patVars <- forM pats (const fresh)
+        let patTypes = TypeVar <$> patVars
+        (cs, valMap, boundSet) <- mconcat <$> zipWithM inspectPattern patTypes pats
+        let patType = foldr FunctionType scrutinee' patTypes
+        constructor <- lookupConstructor name
+        return (ExplicitlyInstantiates patType constructor : cs, valMap, Set.fromList patVars <> boundSet)
+
+    adjustValAssumptions :: Map.Map ValName TypeExpr -> Assumptions -> Assumptions
+    adjustValAssumptions mp as = foldr removeAssumption as (Map.keys mp)
+
+    valConstraints :: Map.Map ValName TypeExpr -> Assumptions -> [Constraint]
+    valConstraints mp as =
+      foldMap (\(n, t) -> [SameType t t' | t' <- lookupAssumptions n as]) (Map.toList mp)
 
 inferDefs :: Assumptions -> [ValueDefinition ()] -> Infer (Assumptions, [Constraint], [ValueDefinition TypeExpr])
 inferDefs usageAs defs = do
@@ -599,8 +611,11 @@ typeExpr expr = case expr of
     sc@(SchemeExpr names _) <- schemeFor t
     e' <- withTyperNames names (typeExpr e)
     return (LambdaExpr n sc e')
-  CaseExpr _ _ -> error "Can't handle cases yet"
+  CaseExpr e patDefs -> CaseExpr <$> typeExpr e <*> forM patDefs typePatternDef
   LetExpr defs e -> LetExpr <$> typeDefinitions defs <*> typeExpr e
+
+typePatternDef :: PatternDef TypeExpr -> Typer (PatternDef SchemeExpr)
+typePatternDef (PatternDef pat expr) = PatternDef pat <$> typeExpr expr
 
 typeDefinitions :: [ValueDefinition TypeExpr] -> Typer [ValueDefinition SchemeExpr]
 typeDefinitions defs =
