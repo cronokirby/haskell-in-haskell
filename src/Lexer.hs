@@ -325,10 +325,11 @@ layout inputs =
       case t of
         CloseBrace -> closeExplicitLayout
         OpenBrace | expectingLayout' -> startExplicitLayout
-        _ | startsLayout t -> modify' (\s -> s {expectingLayout = True})
-        _ | expectingLayout' -> startImplicitLayout col
-        _ | linePos == Start -> continueImplicitLayout col
-        _ -> return ()
+        _
+          | startsLayout t -> modify' (\s -> s {expectingLayout = True})
+          | expectingLayout' -> startImplicitLayout col
+          | linePos == Start -> continueImplicitLayout col
+          | otherwise -> return ()
       yieldToken t
 
     closeExplicitLayout :: LayoutM ()

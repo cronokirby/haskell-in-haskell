@@ -56,6 +56,14 @@ import Simplifier
     ValueDefinition (..),
   )
 
+-- Map over a list monadically, then squash the results monoidally
+foldMapM :: (Monad m, Monoid b) => (a -> m b) -> [a] -> m b
+foldMapM f = mapM f >>> fmap mconcat
+
+-- Create a function type given a return value an an ordered list of argument types
+makeFunctionType :: TypeExpr -> [TypeExpr] -> TypeExpr
+makeFunctionType = foldr FunctionType
+
 -- Represents a kind of error that can happen while type checking
 data TypeError
   = -- There's a mismatch between two different types
@@ -77,18 +85,29 @@ data TypeError
 asGeneral :: SchemeExpr -> SchemeExpr -> Bool
 asGeneral (SchemeExpr vars1 _) (SchemeExpr vars2 _) = length vars1 >= length vars2
 
+{- Type Information
+
+We need to gather certain information about what type synonyms exist, so that
+we can resolve type declarations later
+-}
+
+-- Gather all of the custom types, along with the number of arguments they contain
 gatherCustomTypes :: [Definition t] -> Map.Map TypeName Int
 gatherCustomTypes =
   foldMap <| \case
     TypeDefinition name vars _ -> Map.singleton name (length vars)
     _ -> Map.empty
 
+-- Gather all of the type synonyms, at a superficial level
+--
+-- This will only look at one level of definition, and won't act recursively
 gatherTypeSynonyms :: [Definition t] -> Map.Map TypeName TypeExpr
 gatherTypeSynonyms =
   foldMap <| \case
     TypeSynonym name expr -> Map.singleton name expr
     _ -> Map.empty
 
+-- Which type definitions does this type reference?
 typeDependencies :: TypeExpr -> [TypeName]
 typeDependencies StringType = []
 typeDependencies IntType = []
@@ -97,23 +116,37 @@ typeDependencies (TypeVar _) = []
 typeDependencies (FunctionType t1 t2) = typeDependencies t1 ++ typeDependencies t2
 typeDependencies (CustomType name exprs) = name : concatMap typeDependencies exprs
 
-data SorterState = SorterState {unseen :: Set.Set TypeName, output :: [TypeName]}
+-- This is the state we keep track of while sorting the graph of types
+data SorterState = SorterState
+  { -- All of the type names we haven't seen yet
+    unseen :: Set.Set TypeName,
+    -- The current output we've generated so far
+    output :: [TypeName]
+  }
 
+-- The context in which the topological sorting of the type graph takes place
+--
+-- We have access to a set of ancestors to keep track of cycles, the current state,
+-- which we can modify, and the ability to throw exceptions.
 type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except TypeError)) a
 
+-- Given a mapping from names to shallow types, find a linear ordering of these types
+--
+-- The types are sorted topologically, based on their dependencies. This means that
+-- a type will come after all of its dependencies
 sortTypeSynonyms :: Map.Map TypeName TypeExpr -> Either TypeError [TypeName]
-sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) [])
+sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap reverse
   where
+    -- Find the dependencies of a given type name
+    --
+    -- This acts similarly to a "neighbors" function in a traditional graph
     deps :: TypeName -> [TypeName]
     deps k = Map.findWithDefault [] k (Map.map typeDependencies mp)
 
+    -- Run the sorter, given a seed state
     runSorter :: SorterM a -> SorterState -> Either TypeError a
     runSorter m st =
       runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
-
-    pick :: Set.Set a -> Maybe a
-    pick s | Set.null s = Nothing
-    pick s = Just (Set.elemAt 0 s)
 
     see :: TypeName -> SorterM Bool
     see name = do
@@ -130,7 +163,7 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) [])
     sort :: SorterM [TypeName]
     sort = do
       unseen' <- gets unseen
-      case pick unseen' of
+      case Set.lookupMin unseen' of
         Nothing -> gets output
         Just n -> do
           dfs n
@@ -139,8 +172,9 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) [])
     dfs :: TypeName -> SorterM ()
     dfs name = do
       ancestors <- ask
-      when (Set.member name ancestors) <| do
-        throwError (CyclicalTypeSynonym name (Set.toList ancestors))
+      when
+        (Set.member name ancestors)
+        (throwError (CyclicalTypeSynonym name (Set.toList ancestors)))
       new <- see name
       when new <| do
         withAncestor name (forM_ (deps name) dfs)
@@ -167,10 +201,12 @@ resolve mp (FunctionType t1 t2) = do
   return (FunctionType t1' t2')
 resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
   Nothing -> throwError (UnknownType name)
-  Just (Synonym t) | null ts -> return t
-  Just (Synonym _) -> throwError (MismatchedTypeArgs name 0 (length ts))
-  Just (Custom arity) | arity == length ts -> return ct
-  Just (Custom arity) -> throwError (MismatchedTypeArgs name arity (length ts))
+  Just (Synonym t)
+    | null ts -> return t
+    | otherwise -> throwError (MismatchedTypeArgs name 0 (length ts))
+  Just (Custom arity)
+    | arity == length ts -> return ct
+    | otherwise -> throwError (MismatchedTypeArgs name arity (length ts))
 
 type ResolutionM a = ReaderT (Map.Map TypeName TypeExpr) (StateT ResolutionMap (Except TypeError)) a
 
@@ -179,22 +215,22 @@ createResolutions defs = do
   let customInfo = gatherCustomTypes defs
       typeSynMap = gatherTypeSynonyms defs
   names <- sortTypeSynonyms typeSynMap
-  runResolutionM (resolveAll (reverse names)) typeSynMap (Map.map Custom customInfo)
+  runResolutionM (resolveAll names) typeSynMap (Map.map Custom customInfo)
   where
     runResolutionM :: ResolutionM a -> Map.Map TypeName TypeExpr -> ResolutionMap -> Either TypeError ResolutionMap
     runResolutionM m typeSynMap st =
       runReaderT m typeSynMap |> (`execStateT` st) |> runExcept
+
     resolveAll :: [TypeName] -> ReaderT (Map.Map TypeName TypeExpr) (StateT ResolutionMap (Except TypeError)) ()
-    resolveAll [] = return ()
-    resolveAll (n : ns) = do
-      lookup' <- asks (Map.lookup n)
-      case lookup' of
-        Nothing -> throwError (UnknownType n)
-        Just unresolved -> do
-          resolutions' <- get
-          resolved <- resolve resolutions' unresolved
-          modify' (Map.insert n (Synonym resolved))
-      resolveAll ns
+    resolveAll =
+      mapM_ <| \n -> do
+        lookup' <- asks (Map.lookup n)
+        case lookup' of
+          Nothing -> throwError (UnknownType n)
+          Just unresolved -> do
+            resolutions' <- get
+            resolved <- resolve resolutions' unresolved
+            modify' (Map.insert n (Synonym resolved))
 
 -- Represents some kind of constraint we generate during our gathering pharse.
 --
@@ -205,16 +241,18 @@ data Constraint
     SameType TypeExpr TypeExpr
   | -- An assertation that some type explicitly instantiates some scheme
     ExplicitlyInstantiates TypeExpr SchemeExpr
-  | -- An assertion that some type implicitly insntatiates some type, generalized over some names
+  | -- An assertion that some type implicitly insntatiates some type, given some bound vars
     ImplicitlyInstantations TypeExpr (Set.Set TypeVar) TypeExpr
   deriving (Eq, Show)
 
--- Represents a substitution of types for type names
+-- Represents a substitution of type variables for actual types
 newtype Subst = Subst (Map.Map TypeVar TypeExpr) deriving (Eq, Show)
 
+-- We can combine multiple substitutions together
 instance Semigroup Subst where
   (Subst s1) <> (Subst s2) = Subst (Map.map (subst (Subst s1)) s2 <> s1)
 
+-- There is a substitution that doesn't do anything
 instance Monoid Subst where
   mempty = Subst mempty
 
@@ -256,6 +294,8 @@ instance Substitutable Constraint where
     ImplicitlyInstantations (subst s t1) (subst s vars) (subst s t2)
 
 -- A class of types where we can find the free type names inside
+--
+-- These are the type variables appearing inside of a given type
 class FreeTypeVars a where
   ftv :: a -> Set.Set TypeName
 
@@ -276,14 +316,15 @@ instance FreeTypeVars SchemeExpr where
 instance (Ord a, FreeTypeVars a) => FreeTypeVars (Set.Set a) where
   ftv = foldMap ftv
 
--- A class for types where we can detect which variables are important
--- in a constraint
+-- A class for types where we can detect which variables are important.
 class ActiveTypeVars a where
   atv :: a -> Set.Set TypeName
 
 instance ActiveTypeVars Constraint where
   atv (SameType t1 t2) = Set.union (ftv t1) (ftv t2)
   atv (ExplicitlyInstantiates t sc) = Set.union (ftv t) (ftv sc)
+  -- What's different is that the important variables are the ones appearing
+  -- in the first type, or the free variables implicitly bound on the right
   atv (ImplicitlyInstantations t1 vars t2) =
     Set.union (ftv t1) (Set.intersection (ftv vars) (ftv t2))
 
@@ -296,19 +337,19 @@ type ConstructorInfo = Map.Map ConstructorName SchemeExpr
 -- Looking at the definitions, gather information about what constructors are present
 gatherConstructorInfo :: MonadError TypeError m => ResolutionMap -> [Definition t] -> m ConstructorInfo
 gatherConstructorInfo resolutions' defs =
-  forM defs (extractEnv resolutions') |> fmap mconcat
+  foldMapM (extractEnv resolutions') defs
   where
     extractEnv :: (MonadError TypeError m) => ResolutionMap -> Definition t -> m ConstructorInfo
     extractEnv _ (TypeSynonym _ _) = return mempty
     extractEnv _ (ValueDefinition _) = return mempty
     extractEnv mp (TypeDefinition tn names constructors) =
-      mconcat <$> mapM constructorType constructors
+      foldMapM constructorType constructors
       where
         constructorType :: (MonadError TypeError m) => ConstructorDefinition -> m ConstructorInfo
         constructorType (ConstructorDefinition n ts) = do
           resolved <- mapM (resolve mp) ts
           let t = CustomType tn (map TypeVar names)
-              sc = SchemeExpr names <| foldr FunctionType t resolved
+              sc = SchemeExpr names (makeFunctionType t resolved)
           return (Map.singleton n sc)
 
 -- The environment we use when doing type inference.
@@ -397,6 +438,7 @@ lookupAssumptions target (Assumptions as) =
 assumptionNames :: Assumptions -> Set.Set Name
 assumptionNames (Assumptions as) = Set.fromList (map fst as)
 
+-- Get the scheme we know a builtin name to conform to
 builtinScheme :: Builtin -> SchemeExpr
 builtinScheme Compose =
   SchemeExpr
@@ -433,11 +475,17 @@ builtinScheme b =
     Negate -> FunctionType IntType IntType
     _ -> error "Already handled"
 
+-- Get the type of a given litteral
 littType :: Litteral -> TypeExpr
 littType (IntLitteral _) = IntType
 littType (StringLitteral _) = StringType
 littType (BoolLitteral _) = BoolType
 
+-- Run constraint generation over a given expression.
+--
+-- This returns the assumptions about variables we've encountered,
+-- the constraints we've managed to gather, the type of the expression we've inferred,
+-- and the typed version of that expression tree.
 inferExpr :: Expr () -> Infer (Assumptions, [Constraint], TypeExpr, Expr TypeExpr)
 inferExpr expr = case expr of
   LittExpr (litt) ->
@@ -473,12 +521,18 @@ inferExpr expr = case expr of
     let tv = TypeVar a
     (as, cs, t, e') <- withBound a (inferExpr e)
     let inferred = FunctionType tv t
-    return (removeAssumption n as, [SameType t' tv | t' <- lookupAssumptions n as] <> cs, inferred, LambdaExpr n tv e')
+    return
+      ( removeAssumption n as,
+        [SameType t' tv | t' <- lookupAssumptions n as] <> cs,
+        inferred,
+        LambdaExpr n tv e'
+      )
   LetExpr defs e -> do
     (as1, cs1, t, e') <- inferExpr e
     (as2, cs2, defs') <- inferDefs as1 defs
     return (as2, cs1 <> cs2, t, LetExpr defs' e')
 
+-- Run inference over a pattern definition, given the scrutinee's type
 inferPatternDef :: TypeExpr -> PatternDef () -> Infer (Assumptions, [Constraint], TypeExpr, PatternDef TypeExpr)
 inferPatternDef scrutinee (PatternDef pat e) = do
   tv <- TypeVar <$> fresh
@@ -500,7 +554,7 @@ inferPatternDef scrutinee (PatternDef pat e) = do
         patVars <- forM pats (const fresh)
         let patTypes = TypeVar <$> patVars
         (cs, valMap, boundSet) <- mconcat <$> zipWithM inspectPattern patTypes pats
-        let patType = foldr FunctionType scrutinee' patTypes
+        let patType = makeFunctionType scrutinee' patTypes
         constructor <- lookupConstructor name
         return (ExplicitlyInstantiates patType constructor : cs, valMap, Set.fromList patVars <> boundSet)
 
@@ -532,6 +586,7 @@ inferDefs usageAs defs = do
   let (as', cs') = foldr process (as, cs) usages
   return (as', cs', defs')
 
+-- Solve a list of constraints, by producing a valid substitution of type variables
 solve :: [Constraint] -> Infer Subst
 solve [] = return mempty
 solve constraints = solve' (nextSolvable constraints)
@@ -561,6 +616,7 @@ solve constraints = solve' (nextSolvable constraints)
         sc' <- instantiate sc
         solve (SameType t sc' : cs)
 
+-- Try and unify two type expressions togethe
 unify :: TypeExpr -> TypeExpr -> Infer Subst
 unify t1 t2 | t1 == t2 = return mempty
 unify (TypeVar n) t = bind n t
@@ -578,31 +634,50 @@ unify (CustomType name1 ts1) (CustomType name2 ts2)
      in foldM go mempty together
 unify t1 t2 = throwError (TypeMismatch t1 t2)
 
+-- Try and bind a variable to a given type expression
 bind :: TypeVar -> TypeExpr -> Infer Subst
 bind a t
   | t == TypeVar a = return mempty
   | Set.member a (ftv t) = throwError (InfiniteType a t)
   | otherwise = return (singleSubst a t)
 
-data TyperInfo = TyperInfo {typerNames :: Set.Set Name, typerSub :: Subst}
+-- Represents the contextual information we have while typing our syntax tree
+--
+-- We introduce locally scoped context as we traverse the tree, introducing
+-- lexically scoped type variables.
+data TyperInfo = TyperInfo
+  { -- The type variables we know to be bound in this ocntext
+    typerVars :: Set.Set TypeVar,
+    -- The substitution we have access to
+    typerSub :: Subst
+  }
 
+-- The context we have while assigning types to our syntax tree
+--
+-- We have access to a typing context, as mentioned earlier, and we can also throw errors.
+-- The main error that can occurr while typing is that the scheme we find isn't
+-- as general as the one declared for a given type.
 newtype Typer a = Typer (ReaderT TyperInfo (Except TypeError) a)
   deriving (Functor, Applicative, Monad, MonadReader TyperInfo, MonadError TypeError)
 
+-- Run a typer computation, given a substitution
 runTyper :: Typer a -> Subst -> Either TypeError a
 runTyper (Typer r) sub = runReaderT r (TyperInfo Set.empty sub) |> runExcept
 
-withTyperNames :: [Name] -> Typer a -> Typer a
-withTyperNames names =
-  let addTo = Set.union (Set.fromList names)
-   in local (\r -> r {typerNames = addTo (typerNames r)})
+-- Introduce new type variables to run a typer computation
+withTyperNames :: [TypeVar] -> Typer a -> Typer a
+withTyperNames vars =
+  let addTo = Set.union (Set.fromList vars)
+   in local (\r -> r {typerVars = addTo (typerVars r)})
 
+-- Get the scheme for a given type expression, using our typing context
 schemeFor :: TypeExpr -> Typer SchemeExpr
 schemeFor t = do
-  typerNames' <- asks typerNames
+  typerVars' <- asks typerVars
   typerSub' <- asks typerSub
-  return (generalize typerNames' (subst typerSub' t))
+  return (generalize typerVars' (subst typerSub' t))
 
+-- Assign types to a given expression
 typeExpr :: Expr TypeExpr -> Typer (Expr SchemeExpr)
 typeExpr expr = case expr of
   LittExpr litt -> return (LittExpr litt)
@@ -616,9 +691,11 @@ typeExpr expr = case expr of
   CaseExpr e patDefs -> CaseExpr <$> typeExpr e <*> forM patDefs typePatternDef
   LetExpr defs e -> LetExpr <$> typeDefinitions defs <*> typeExpr e
 
+-- Assign types to a pattern definition
 typePatternDef :: PatternDef TypeExpr -> Typer (PatternDef SchemeExpr)
 typePatternDef (PatternDef pat expr) = PatternDef pat <$> typeExpr expr
 
+-- Assign types to a series of definitions
 typeDefinitions :: [ValueDefinition TypeExpr] -> Typer [ValueDefinition SchemeExpr]
 typeDefinitions defs =
   forM defs <| \(NameDefinition name ann t e) -> do
@@ -629,12 +706,14 @@ typeDefinitions defs =
       _ -> return ()
     return (NameDefinition name ann sc e')
 
+-- Take the value definitions out of all of the definitions we've been given
 pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
 pickValueDefinitions = map pick >>> catMaybes
   where
     pick (ValueDefinition v) = Just v
     pick _ = Nothing
 
+-- Infer and check the types for a series of value definitions
 inferTypes :: [Definition ()] -> Infer [ValueDefinition SchemeExpr]
 inferTypes defs = do
   constructors <- asks constructorInfo
@@ -646,6 +725,7 @@ inferTypes defs = do
   sub <- solve (cs' <> cs)
   liftEither <| runTyper (typeDefinitions defs') sub
 
+-- Run the type checker on a given AST, producing just the value definitions, annotated
 typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
 typer (AST defs) = do
   resolutions' <- createResolutions defs
