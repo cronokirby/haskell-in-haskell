@@ -1,26 +1,80 @@
 module Main where
 
+import Control.Monad ((>=>))
 import Data.Char (toLower)
-import Lexer (lexer)
+import qualified Lexer
 import Ourlude
-import Parser (parser)
-import Simplifier (simplifier)
+import qualified Parser
+import qualified Simplifier
 import System.Environment (getArgs)
-import Text.Pretty.Simple (pPrint)
-import Typer (typer)
+import Text.Pretty.Simple (pPrint, pPrintString)
+import qualified Typer
 
--- How far does the user want us to go
-data Stage = Lex | Parse | Simplify | TypeCheck deriving (Eq)
+-- An error that occurrs in a stage, including its name and what went wrong
+data StagedError = StagedError String String
 
-readStage :: String -> Maybe Stage
-readStage "lex" = Just Lex
-readStage "parse" = Just Parse
-readStage "simplify" = Just Simplify
-readStage "type" = Just TypeCheck
+-- Stage a result with an error that can be shown, given that stage's name
+stageEither :: Show e => String -> Either e a -> Either StagedError a
+stageEither name m = case m of
+  Left e -> Left (StagedError name (show e))
+  Right a -> Right a
+
+-- Print a staged error
+printStagedError :: StagedError -> IO ()
+printStagedError (StagedError name err) = do
+  putStrLn (name ++ " Error:")
+  pPrintString err
+
+-- Represents a stage taking input `a` and producing output `b`
+data Stage a b = Stage
+  { -- The name of the stage
+    name :: String,
+    -- The function allowing us to run a stage on some input, producing an error
+    runStage :: a -> Either StagedError b
+  }
+
+-- Make a stage, given a name, and a function producing a result that we can show
+makeStage :: Show e => String -> (a -> Either e b) -> Stage a b
+makeStage name r = Stage name (r >>> stageEither name)
+
+-- Compose two stages together
+(>->) :: Stage a b -> Stage b c -> Stage a c
+(>->) (Stage _ r1) (Stage n2 r2) = Stage n2 (r1 >=> r2)
+
+-- Execute a stage by printing out the result or errors
+execStage :: Show b => Stage a b -> a -> IO ()
+execStage (Stage name r) a = case r a of
+  Left err -> printStagedError err
+  Right b -> do
+    putStrLn (name ++ ":")
+    pPrint b
+
+lexerStage :: Stage String [Lexer.Token]
+lexerStage = makeStage "Lexer" Lexer.lexer
+
+parserStage :: Stage [Lexer.Token] Parser.AST
+parserStage = makeStage "Parser" Parser.parser
+
+simplifierStage :: Stage Parser.AST (Simplifier.AST ())
+simplifierStage = makeStage "Simplifier" Simplifier.simplifier
+
+typerStage :: Stage (Simplifier.AST ()) [Simplifier.ValueDefinition Simplifier.SchemeExpr]
+typerStage = makeStage "Typer" Typer.typer
+
+-- Read out which stages to execute based on a string
+readStage :: String -> Maybe (String -> IO ())
+readStage "lex" =
+  lexerStage |> execStage |> Just
+readStage "parse" =
+  lexerStage >-> parserStage |> execStage |> Just
+readStage "simplify" =
+  lexerStage >-> parserStage >-> simplifierStage |> execStage |> Just
+readStage "type" =
+  lexerStage >-> parserStage >-> simplifierStage >-> typerStage |> execStage |> Just
 readStage _ = Nothing
 
 -- The arguments we'll need for our program
-data Args = Args FilePath Stage
+data Args = Args FilePath (String -> IO ())
 
 parseArgs :: [String] -> Maybe Args
 parseArgs (stageName : file : _) = do
@@ -31,48 +85,7 @@ parseArgs _ = Nothing
 process :: Args -> IO ()
 process (Args path stage) = do
   content <- readFile path
-  lex content
-  where
-    lex content = case lexer content of
-      Left err -> do
-        putStrLn "Lexer Error:"
-        print err
-      Right tokens ->
-        if stage == Lex
-          then do
-            putStrLn "Tokens:"
-            pPrint tokens
-          else parse tokens
-    parse tokens = case parser tokens of
-      Left err -> do
-        putStrLn "Parser Error:"
-        print err
-      Right parsed ->
-        if stage == Parse
-          then do
-            putStrLn "Parsed:"
-            pPrint parsed
-          else simplify parsed
-    simplify ast = case simplifier ast of
-      Left err -> do
-        putStrLn "Simplifier Error:"
-        print err
-      Right simplified ->
-        if stage == Simplify
-          then do
-            putStrLn "Simplified:"
-            pPrint simplified
-          else typeCheck simplified
-    typeCheck simplified = case typer simplified of
-      Left err -> do
-        putStrLn "Type Error:"
-        print err
-      Right typed ->
-        if stage == TypeCheck
-          then do
-            putStrLn "Typed:"
-            pPrint typed
-          else return ()
+  stage content
 
 main :: IO ()
 main = do
