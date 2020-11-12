@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module STG (STG (..), Atom (..), Litteral (..), ValName, stg) where
 
 import Ourlude
@@ -112,10 +114,30 @@ data Binding = Binding ValName LambdaForm deriving (Eq, Show)
 -- Represents an STG program, which is just a list of top level bindings.
 data STG = STG [Binding] deriving (Eq, Show)
 
+gatherApplications :: S.Expr SchemeExpr -> (S.Expr SchemeExpr, [S.Expr SchemeExpr])
+gatherApplications expression = go expression []
+  where
+    go (S.ApplyExpr f e) acc = go f (e : acc)
+    go e acc = (e, acc)
+
+atomize :: S.Expr SchemeExpr -> Atom
+atomize expression = case expression of
+  S.LittExpr l -> LitteralAtom l
+  _ -> undefined
+
 -- Convert an expression into an STG expression
 convertExpr :: S.Expr SchemeExpr -> Expr
-convertExpr (S.LittExpr l) = Litteral l
-convertExpr _ = undefined
+convertExpr =
+  gatherApplications >>> \case
+    (e, []) -> handle e
+    (f, args) -> case f of
+      -- Builtins, which are all operators, will be fully saturated from a parsing perspective
+      S.Builtin b -> Builtin b (map atomize args)
+      _ -> undefined
+  where
+    handle :: S.Expr SchemeExpr -> Expr
+    handle (S.LittExpr l) = Litteral l
+    handle _ = undefined
 
 -- Convert an expression to a lambda form
 --

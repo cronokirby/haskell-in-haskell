@@ -26,4 +26,6 @@ tests :: TestTree
 tests =
   testGroup
     "STG Tests"
-    [testCase "litterals" (shouldCompile "{ x = 3; y = \"foo\"; y = True }")]
+    [ testCase "litterals" (shouldCompile "{ x = 3; y = \"foo\"; y = True }"),
+      testCase "one level arithmetic" (shouldCompile "{ x = 2 + 2 }")
+    ]
