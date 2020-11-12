@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 
 module Typer (typer, TypeError) where
 
@@ -54,6 +53,7 @@ import Simplifier
     TypeVar,
     ValName,
     ValueDefinition (..),
+    pickValueDefinitions,
   )
 
 -- Map over a list monadically, then squash the results monoidally
@@ -336,8 +336,8 @@ type ConstructorInfo = Map.Map ConstructorName SchemeExpr
 
 -- Looking at the definitions, gather information about what constructors are present
 gatherConstructorInfo :: MonadError TypeError m => ResolutionMap -> [Definition t] -> m ConstructorInfo
-gatherConstructorInfo resolutions' defs =
-  foldMapM (extractEnv resolutions') defs
+gatherConstructorInfo resolutions' =
+  foldMapM (extractEnv resolutions')
   where
     extractEnv :: (MonadError TypeError m) => ResolutionMap -> Definition t -> m ConstructorInfo
     extractEnv _ (TypeSynonym _ _) = return mempty
@@ -412,7 +412,7 @@ resolveInfer t = do
 
 lookupConstructor :: ConstructorName -> Infer SchemeExpr
 lookupConstructor name = do
-  result <- Map.lookup name <$> asks constructorInfo
+  result <- asks (constructorInfo >>> Map.lookup name)
   case result of
     Nothing -> throwError (UnboundName name)
     Just res -> return res
@@ -488,7 +488,7 @@ littType (BoolLitteral _) = BoolType
 -- and the typed version of that expression tree.
 inferExpr :: Expr () -> Infer (Assumptions, [Constraint], TypeExpr, Expr TypeExpr)
 inferExpr expr = case expr of
-  LittExpr (litt) ->
+  LittExpr litt ->
     let t = littType litt
      in return (mempty, [], t, LittExpr litt)
   ApplyExpr e1 e2 -> do
@@ -683,7 +683,7 @@ typeExpr expr = case expr of
   LittExpr litt -> return (LittExpr litt)
   NameExpr n -> return (NameExpr n)
   Builtin b -> return (Builtin b)
-  ApplyExpr e1 e2 -> ApplyExpr <$> (typeExpr e1) <*> (typeExpr e2)
+  ApplyExpr e1 e2 -> ApplyExpr <$> typeExpr e1 <*> typeExpr e2
   LambdaExpr n t e -> do
     sc@(SchemeExpr names _) <- schemeFor t
     e' <- withTyperNames names (typeExpr e)
@@ -705,13 +705,6 @@ typeDefinitions defs =
       Just d | not (asGeneral sc d) -> throwError (NotGeneralEnough sc d)
       _ -> return ()
     return (NameDefinition name ann sc e')
-
--- Take the value definitions out of all of the definitions we've been given
-pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
-pickValueDefinitions = map pick >>> catMaybes
-  where
-    pick (ValueDefinition v) = Just v
-    pick _ = Nothing
 
 -- Infer and check the types for a series of value definitions
 inferTypes :: [Definition ()] -> Infer [ValueDefinition SchemeExpr]

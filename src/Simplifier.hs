@@ -19,6 +19,7 @@ module Simplifier
     TypeName,
     Builtin (..),
     simplifier,
+    pickValueDefinitions,
   )
 where
 
@@ -27,7 +28,7 @@ import Data.List (foldl', groupBy)
 import Data.Maybe (catMaybes)
 import Ourlude
 import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, Pattern (..), TypeExpr (..), TypeName, TypeVar, ValName)
-import qualified Parser as Parser
+import qualified Parser
 
 newtype AST t = AST [Definition t] deriving (Eq, Show)
 
@@ -38,6 +39,13 @@ data Definition t
   deriving (Eq, Show)
 
 data ValueDefinition t = NameDefinition ValName (Maybe SchemeExpr) t (Expr t) deriving (Eq, Show)
+
+-- Take the value definitions out of all of the definitions we've been given
+pickValueDefinitions :: [Definition t] -> [ValueDefinition t]
+pickValueDefinitions = map pick >>> catMaybes
+  where
+    pick (ValueDefinition v) = Just v
+    pick _ = Nothing
 
 data SchemeExpr = SchemeExpr [TypeVar] TypeExpr deriving (Eq, Show)
 
@@ -111,7 +119,7 @@ convertExpr (Parser.BinExpr op e1 e2) = do
   e2' <- convertExpr e2
   return (ApplyExpr (ApplyExpr (Builtin b) e1') e2')
 -- Negation is replaced by a built in function as well
-convertExpr (Parser.NegateExpr e) = ApplyExpr (Builtin Negate) <$> (convertExpr e)
+convertExpr (Parser.NegateExpr e) = ApplyExpr (Builtin Negate) <$> convertExpr e
 convertExpr (Parser.WhereExpr e defs) =
   convertExpr (Parser.LetExpr defs e)
 convertExpr (Parser.IfExpr cond thenn elsse) = do
@@ -129,18 +137,16 @@ convertExpr (Parser.NameExpr name) = Right (NameExpr name)
 convertExpr (Parser.LittExpr litt) = Right (LittExpr litt)
 convertExpr (Parser.LambdaExpr names body) = do
   body' <- convertExpr body
-  return (foldr (\x acc -> LambdaExpr x () acc) body' names)
+  return (foldr (`LambdaExpr` ()) body' names)
 convertExpr (Parser.ApplyExpr f exprs) = do
   f' <- convertExpr f
   exprs' <- traverse convertExpr exprs
-  return (foldl' (\acc x -> ApplyExpr acc x) f' exprs')
+  return (foldl' ApplyExpr f' exprs')
 convertExpr (Parser.CaseExpr expr patterns) = do
-  let transformPat (Parser.PatternDef p e) = PatternDef p <$> (convertExpr e)
+  let transformPat (Parser.PatternDef p e) = PatternDef p <$> convertExpr e
   patterns' <- traverse transformPat patterns
   expr' <- convertExpr expr
   return (CaseExpr expr' patterns')
-convertExpr (Parser.NameExpr name) = Right (NameExpr name)
-convertExpr (Parser.LittExpr litt) = Right (LittExpr litt)
 convertExpr (Parser.LetExpr defs e) = do
   defs' <- convertValueDefinitions defs
   e' <- convertExpr e
@@ -154,6 +160,7 @@ data PatternTree = Leaf (Expr ()) | Branch [(Pattern, PatternTree)] | Empty deri
 treeDepth :: PatternTree -> Int
 treeDepth (Leaf _) = 0
 treeDepth (Branch bs) = map (snd >>> treeDepth) bs |> maximum |> (+ 1)
+treeDepth _ = error "Impossible case reached in treeDepth"
 
 -- True if a given pattern is equivalent, or captures more values than another
 covers :: Pattern -> Pattern -> Bool
@@ -165,7 +172,7 @@ covers (NamePattern _) WildcardPattern = True
 covers (NamePattern _) _ = True
 covers (LitteralPattern l1) (LitteralPattern l2) | l1 == l2 = True
 covers (ConstructorPattern c1 pats1) (ConstructorPattern c2 pats2) =
-  c1 == c2 && length pats1 == length pats2 && (all (uncurry covers) (zip pats1 pats2))
+  c1 == c2 && length pats1 == length pats2 && all (uncurry covers) (zip pats1 pats2)
 covers _ _ = False
 
 -- This adds a full block pattern to the pattern tree
@@ -187,6 +194,7 @@ addBranches (p : ps, expr) (Branch bs) =
           then trickled
           else extra : trickled
    in Branch bs'
+addBranches _ _ = error "Impossible case in addBranches"
 
 lambdaNames :: [Name]
 lambdaNames = map (\x -> "$" ++ show x) [(0 :: Integer) ..]
@@ -198,7 +206,7 @@ lambdaNames = map (\x -> "$" ++ show x) [(0 :: Integer) ..]
 convertTree :: PatternTree -> Expr ()
 convertTree tree =
   foldr
-    (\x acc -> LambdaExpr x () acc)
+    (`LambdaExpr` ())
     (fold lambdaNames tree)
     (take (treeDepth tree) lambdaNames)
   where
@@ -207,6 +215,7 @@ convertTree tree =
     fold (n : ns) (Branch bs) =
       let makeCase (pat, tree') = PatternDef pat (fold ns tree')
        in CaseExpr (NameExpr n) (map makeCase (reverse bs))
+    fold _ _ = error "Impossible case in convertTree"
 
 -- This converts value definitions by gathering the different patterns into a single lambda expression,
 -- and adding the optional type annotation if it exists.
@@ -244,7 +253,7 @@ convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
         [] -> Left (UnimplementedAnnotation name)
         (l : ls) | all (== l) ls -> Right ()
         ls -> Left (DifferentPatternLengths name ls)
-      let tree = foldl' (\acc x -> addBranches x acc) Empty pats
+      let tree = foldl' (flip addBranches) Empty pats
           expr = convertTree tree
       return (NameDefinition name schemeExpr () expr)
 
@@ -262,4 +271,4 @@ convertDefinitions defs =
         return (typedefs ++ map ValueDefinition valuedefs')
 
 simplifier :: Parser.AST -> Either SimplifierError (AST ())
-simplifier (Parser.AST defs) = AST <$> (convertDefinitions defs)
+simplifier (Parser.AST defs) = AST <$> convertDefinitions defs
