@@ -18,6 +18,7 @@ library
                      , Lexer
                      , Parser
                      , Simplifier
+                     , STG
                      , Typer
   ghc-options:         -Wall
   hs-source-dirs:      src
@@ -44,5 +45,6 @@ test-suite haskell-in-haskell-test
   other-modules:       LexerTest
                      , ParserTest
                      , SimplifierTest
+                     , STGTest
                      , TyperTest
   type:                exitcode-stdio-1.0

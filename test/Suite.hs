@@ -1,6 +1,7 @@
 import qualified LexerTest
 import Ourlude
 import qualified ParserTest
+import qualified STGTest
 import qualified SimplifierTest
 import Test.Tasty
 import qualified TyperTest
@@ -15,5 +16,6 @@ tests =
     [ LexerTest.tests,
       ParserTest.tests,
       SimplifierTest.tests,
-      TyperTest.tests
+      TyperTest.tests,
+      STGTest.tests
     ]

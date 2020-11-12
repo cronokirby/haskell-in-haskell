@@ -5,6 +5,7 @@ import Data.Char (toLower)
 import qualified Lexer
 import Ourlude
 import qualified Parser
+import qualified STG
 import qualified Simplifier
 import System.Environment (getArgs)
 import Text.Pretty.Simple (pPrint, pPrintString)
@@ -58,8 +59,11 @@ parserStage = makeStage "Parser" Parser.parser
 simplifierStage :: Stage Parser.AST (Simplifier.AST ())
 simplifierStage = makeStage "Simplifier" Simplifier.simplifier
 
-typerStage :: Stage (Simplifier.AST ()) [Simplifier.ValueDefinition Simplifier.SchemeExpr]
+typerStage :: Stage (Simplifier.AST ()) (Simplifier.AST Simplifier.SchemeExpr)
 typerStage = makeStage "Typer" Typer.typer
+
+stgStage :: Stage (Simplifier.AST Simplifier.SchemeExpr) STG.STG
+stgStage = makeStage "STG" (STG.stg >>> (Right :: a -> Either () a))
 
 -- Read out which stages to execute based on a string
 readStage :: String -> Maybe (String -> IO ())
@@ -71,7 +75,10 @@ readStage "simplify" =
   lexerStage >-> parserStage >-> simplifierStage |> execStage |> Just
 readStage "type" =
   lexerStage >-> parserStage >-> simplifierStage >-> typerStage |> execStage |> Just
+readStage "stg" =
+  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage |> execStage |> Just
 readStage _ = Nothing
+
 
 -- The arguments we'll need for our program
 data Args = Args FilePath (String -> IO ())
