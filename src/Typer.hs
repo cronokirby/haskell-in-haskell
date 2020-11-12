@@ -725,9 +725,18 @@ inferTypes defs = do
   sub <- solve (cs' <> cs)
   liftEither <| runTyper (typeDefinitions defs') sub
 
+pluckTypeDefinitions :: [Definition a] -> [Definition b]
+pluckTypeDefinitions = map go >>> catMaybes
+  where
+    go (ValueDefinition _) = Nothing
+    go (TypeDefinition n vs cs) = Just (TypeDefinition n vs cs)
+    go (TypeSynonym t1 t2) = Just (TypeSynonym t1 t2)
+
 -- Run the type checker on a given AST, producing just the value definitions, annotated
-typer :: AST () -> Either TypeError [ValueDefinition SchemeExpr]
+typer :: AST () -> Either TypeError (AST SchemeExpr)
 typer (AST defs) = do
   resolutions' <- createResolutions defs
   constructorInfo' <- gatherConstructorInfo resolutions' defs
-  runInfer (inferTypes defs) resolutions' constructorInfo'
+  valDefs' <- runInfer (inferTypes defs) resolutions' constructorInfo'
+  let allDefs = pluckTypeDefinitions defs ++ map ValueDefinition valDefs'
+  return (AST allDefs)
