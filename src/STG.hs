@@ -123,6 +123,7 @@ gatherApplications expression = go expression []
 atomize :: S.Expr SchemeExpr -> Atom
 atomize expression = case expression of
   S.LittExpr l -> LitteralAtom l
+  S.NameExpr n -> NameAtom n
   _ -> undefined
 
 -- Convert an expression into an STG expression
@@ -133,10 +134,12 @@ convertExpr =
     (f, args) -> case f of
       -- Builtins, which are all operators, will be fully saturated from a parsing perspective
       S.Builtin b -> Builtin b (map atomize args)
+      S.NameExpr n -> Apply n (map atomize args)
       _ -> undefined
   where
     handle :: S.Expr SchemeExpr -> Expr
     handle (S.LittExpr l) = Litteral l
+    handle (S.NameExpr n) = Apply n []
     handle _ = undefined
 
 -- Convert an expression to a lambda form

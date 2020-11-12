@@ -27,5 +27,6 @@ tests =
   testGroup
     "STG Tests"
     [ testCase "litterals" (shouldCompile "{ x = 3; y = \"foo\"; y = True }"),
-      testCase "one level arithmetic" (shouldCompile "{ x = 2 + 2 }")
+      testCase "one level arithmetic" (shouldCompile "{ x = 2 + 2 }"),
+      testCase "function application" (shouldCompile "{ f = f; x = f 1 2 3 }")
     ]
