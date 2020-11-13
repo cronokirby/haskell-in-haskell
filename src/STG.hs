@@ -139,12 +139,18 @@ gatherApplications expression = go expression []
     go (S.ApplyExpr f e) acc = go f (e : acc)
     go e acc = (e, acc)
 
-atomize :: S.Expr SchemeExpr -> STGM Atom
-atomize expression =
-  return <| case expression of
-    S.LittExpr l -> LitteralAtom l
-    S.NameExpr n -> NameAtom n
-    _ -> undefined
+atomize :: S.Expr SchemeExpr -> STGM ([Binding], Atom)
+atomize expression = case expression of
+  S.LittExpr l -> return ([], LitteralAtom l)
+  S.NameExpr n -> return ([], NameAtom n)
+  e -> do
+    name <- fresh
+    l <- exprToLambda e
+    return ([Binding name l], NameAtom name)
+
+makeLet :: [Binding] -> Expr -> Expr
+makeLet [] e = e
+makeLet bindings e = Let bindings e
 
 -- Convert an expression into an STG expression
 convertExpr :: S.Expr SchemeExpr -> STGM Expr
@@ -153,14 +159,24 @@ convertExpr =
     (e, []) -> handle e
     (f, args) -> case f of
       -- Builtins, which are all operators, will be fully saturated from a parsing perspective
-      S.Builtin b -> Builtin b <$> mapM atomize args
-      S.NameExpr n -> Apply n <$> mapM atomize args
+      S.Builtin b -> do
+        (bindings, atoms) <- gatherAtoms args
+        return (makeLet bindings (Builtin b atoms))
+      S.NameExpr n -> do
+        (bindings, atoms) <- gatherAtoms args
+        return (makeLet bindings (Apply n atoms))
       _ -> undefined
   where
     handle :: S.Expr SchemeExpr -> STGM Expr
     handle (S.LittExpr l) = return (Litteral l)
     handle (S.NameExpr n) = return (Apply n [])
     handle _ = undefined
+
+    gatherAtoms :: [S.Expr SchemeExpr] -> STGM ([Binding], [Atom])
+    gatherAtoms = mapM atomize >>> fmap gatherBindings
+
+    gatherBindings :: [([b], a)] -> ([b], [a])
+    gatherBindings l = (concatMap fst l, map snd l)
 
 -- Convert an expression to a lambda form
 --
