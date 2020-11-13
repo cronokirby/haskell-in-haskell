@@ -56,10 +56,6 @@ import Simplifier
     pickValueDefinitions,
   )
 
--- Map over a list monadically, then squash the results monoidally
-foldMapM :: (Monad m, Monoid b) => (a -> m b) -> [a] -> m b
-foldMapM f = mapM f >>> fmap mconcat
-
 -- Create a function type given a return value an an ordered list of argument types
 makeFunctionType :: TypeExpr -> [TypeExpr] -> TypeExpr
 makeFunctionType = foldr FunctionType

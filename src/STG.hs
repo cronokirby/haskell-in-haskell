@@ -4,7 +4,10 @@
 module STG (STG (..), Atom (..), Litteral (..), ValName, stg) where
 
 import Control.Monad (mapM)
+import Control.Monad.Reader
 import Control.Monad.State
+import Data.Maybe (catMaybes)
+import qualified Data.Set as Set
 import Ourlude
 import Simplifier
   ( AST (..),
@@ -117,14 +120,21 @@ data Binding = Binding ValName LambdaForm deriving (Eq, Show)
 -- Represents an STG program, which is just a list of top level bindings.
 newtype STG = STG [Binding] deriving (Eq, Show)
 
+-- The information we have access to when compiling to STG
+newtype STGMInfo = STGMInfo
+  { -- The names we know to appear at the top level
+    topLevelNames :: Set.Set ValName
+  }
+
 -- The Context in which we generate STG code
 --
 -- We have access to a source of fresh variable names.
-newtype STGM a = STGM (State Int a)
-  deriving (Functor, Applicative, Monad, MonadState Int)
+newtype STGM a = STGM (ReaderT STGMInfo (State Int) a)
+  deriving (Functor, Applicative, Monad, MonadState Int, MonadReader STGMInfo)
 
-runSTGM :: STGM a -> a
-runSTGM (STGM m) = runState m 0 |> fst
+runSTGM :: STGM a -> STGMInfo -> a
+runSTGM (STGM m) info =
+  m |> (`runReaderT` info) |> (`runState` 0) |> fst
 
 -- Create a fresh name
 fresh :: STGM ValName
@@ -196,15 +206,48 @@ convertExpr =
     gatherBindings :: [([b], a)] -> ([b], [a])
     gatherBindings l = (concatMap fst l, map snd l)
 
+-- Gather the free names appearing in an expression
+attachFreeNames :: LambdaForm -> STGM LambdaForm
+attachFreeNames lambda@(LambdaForm _ u names expr) = do
+  topLevel <- asks topLevelNames
+  let free = Set.difference (inLambda lambda) topLevel |> Set.toList
+  return (LambdaForm free u names expr)
+  where
+    inLambda :: LambdaForm -> Set.Set ValName
+    inLambda (LambdaForm _ _ ns e) =
+      Set.difference (inExpr e) (Set.fromList ns)
+
+    inExpr :: Expr -> Set.Set ValName
+    inExpr (Apply n atoms) = Set.singleton n <> foldMap inAtom atoms
+    inExpr (Constructor _ atoms) = foldMap inAtom atoms
+    inExpr (Builtin _ atoms) = foldMap inAtom atoms
+    inExpr (Let bindings e) =
+      let free = inExpr e <> foldMap inBinding bindings
+       in Set.difference free (bindingNames bindings)
+    inExpr Case {} = undefined
+    inExpr _ = Set.empty
+
+    inAtom :: Atom -> Set.Set ValName
+    inAtom LitteralAtom {} = Set.empty
+    inAtom (NameAtom n) = Set.singleton n
+
+    bindingNames :: [Binding] -> Set.Set ValName
+    bindingNames = map (\(Binding n _) -> n) >>> Set.fromList
+
+    inBinding :: Binding -> Set.Set ValName
+    inBinding (Binding n lf) =
+      Set.delete n (inLambda lf)
+
 -- Convert an expression to a lambda form
 --
 -- This will always create a lambda, although with no
 -- arguments if the expression we're converting wasn't
 -- a lambda to begin with
 exprToLambda :: S.Expr SchemeExpr -> STGM LambdaForm
-exprToLambda =
-  gatherLambdas
-    >>> \(names, e) -> LambdaForm [] U names <$> convertExpr e
+exprToLambda expr = do
+  let (names, e) = gatherLambdas expr
+  e' <- convertExpr e
+  attachFreeNames (LambdaForm [] U names e')
   where
     gatherLambdas :: S.Expr SchemeExpr -> ([ValName], S.Expr SchemeExpr)
     gatherLambdas (S.LambdaExpr name _ e) =
@@ -225,6 +268,19 @@ convertAST :: AST SchemeExpr -> STGM STG
 convertAST (AST defs) =
   defs |> pickValueDefinitions |> convertValueDefinitions |> fmap STG
 
+gatherInformation :: AST SchemeExpr -> STGMInfo
+gatherInformation (AST defs) =
+  let topLevel = gatherTopLevel defs |> Set.fromList
+   in STGMInfo topLevel
+  where
+    gatherTopLevel :: [S.Definition t] -> [ValName]
+    gatherTopLevel = map go >>> catMaybes
+      where
+        go (S.ValueDefinition (NameDefinition n _ _ _)) = Just n
+        go _ = Nothing
+
 -- Run the STG compilation step
 stg :: AST SchemeExpr -> STG
-stg = convertAST >>> runSTGM
+stg ast =
+  let info = gatherInformation ast
+   in runSTGM (convertAST ast) info

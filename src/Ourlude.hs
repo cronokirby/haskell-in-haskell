@@ -4,6 +4,7 @@ module Ourlude
     (<|),
     (>>>),
     (<<<),
+    foldMapM,
   )
 where
 
@@ -34,3 +35,7 @@ infixl 9 >>>
 (>>>) :: (a -> b) -> (b -> c) -> (a -> c)
 f >>> g = g . f
 {-# INLINE (>>>) #-}
+
+-- Map over a list monadically, then squash the results monoidally
+foldMapM :: (Monad m, Monoid b) => (a -> m b) -> [a] -> m b
+foldMapM f = mapM f >>> fmap mconcat

@@ -3,7 +3,7 @@ module STGTest (tests) where
 import Lexer (lexer)
 import Ourlude
 import Parser (parser)
-import STG (STG (..), stg)
+import STG (stg)
 import Simplifier (simplifier)
 import Test.Tasty
 import Test.Tasty.HUnit
