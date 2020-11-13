@@ -1,7 +1,10 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
 module STG (STG (..), Atom (..), Litteral (..), ValName, stg) where
 
+import Control.Monad (mapM)
+import Control.Monad.State
 import Ourlude
 import Simplifier
   ( AST (..),
@@ -112,7 +115,23 @@ data LambdaForm = LambdaForm [ValName] Updateable [ValName] Expr deriving (Eq, S
 data Binding = Binding ValName LambdaForm deriving (Eq, Show)
 
 -- Represents an STG program, which is just a list of top level bindings.
-data STG = STG [Binding] deriving (Eq, Show)
+newtype STG = STG [Binding] deriving (Eq, Show)
+
+-- The Context in which we generate STG code
+--
+-- We have access to a source of fresh variable names.
+newtype STGM a = STGM (State Int a)
+  deriving (Functor, Applicative, Monad, MonadState Int)
+
+runSTGM :: STGM a -> a
+runSTGM (STGM m) = runState m 0 |> fst
+
+-- Create a fresh name
+fresh :: STGM ValName
+fresh = do
+  x <- get
+  put (x + 1)
+  return ("$$" ++ show x)
 
 gatherApplications :: S.Expr SchemeExpr -> (S.Expr SchemeExpr, [S.Expr SchemeExpr])
 gatherApplications expression = go expression []
@@ -120,26 +139,27 @@ gatherApplications expression = go expression []
     go (S.ApplyExpr f e) acc = go f (e : acc)
     go e acc = (e, acc)
 
-atomize :: S.Expr SchemeExpr -> Atom
-atomize expression = case expression of
-  S.LittExpr l -> LitteralAtom l
-  S.NameExpr n -> NameAtom n
-  _ -> undefined
+atomize :: S.Expr SchemeExpr -> STGM Atom
+atomize expression =
+  return <| case expression of
+    S.LittExpr l -> LitteralAtom l
+    S.NameExpr n -> NameAtom n
+    _ -> undefined
 
 -- Convert an expression into an STG expression
-convertExpr :: S.Expr SchemeExpr -> Expr
+convertExpr :: S.Expr SchemeExpr -> STGM Expr
 convertExpr =
   gatherApplications >>> \case
     (e, []) -> handle e
     (f, args) -> case f of
       -- Builtins, which are all operators, will be fully saturated from a parsing perspective
-      S.Builtin b -> Builtin b (map atomize args)
-      S.NameExpr n -> Apply n (map atomize args)
+      S.Builtin b -> Builtin b <$> mapM atomize args
+      S.NameExpr n -> Apply n <$> mapM atomize args
       _ -> undefined
   where
-    handle :: S.Expr SchemeExpr -> Expr
-    handle (S.LittExpr l) = Litteral l
-    handle (S.NameExpr n) = Apply n []
+    handle :: S.Expr SchemeExpr -> STGM Expr
+    handle (S.LittExpr l) = return (Litteral l)
+    handle (S.NameExpr n) = return (Apply n [])
     handle _ = undefined
 
 -- Convert an expression to a lambda form
@@ -147,19 +167,20 @@ convertExpr =
 -- This will always create a lambda, although with no
 -- arguments if the expression we're converting wasn't
 -- a lambda to begin with
-exprToLambda :: S.Expr SchemeExpr -> LambdaForm
+exprToLambda :: S.Expr SchemeExpr -> STGM LambdaForm
 exprToLambda S.LambdaExpr {} = undefined
-exprToLambda e = LambdaForm [] U [] (convertExpr e)
+exprToLambda e = LambdaForm [] U [] <$> convertExpr e
 
 -- Convert a definition into an STG binding
-convertDef :: ValueDefinition SchemeExpr -> Binding
+convertDef :: ValueDefinition SchemeExpr -> STGM Binding
 convertDef (NameDefinition name _ _ e) =
-  Binding name (exprToLambda e)
+  Binding name <$> exprToLambda e
 
 -- Convert the value definitions composing a program into STG
-convertValueDefinitions :: [ValueDefinition SchemeExpr] -> STG
-convertValueDefinitions = map convertDef >>> STG
+convertValueDefinitions :: [ValueDefinition SchemeExpr] -> STGM STG
+convertValueDefinitions = mapM convertDef >>> fmap STG
 
 -- Run the STG compilation step
 stg :: AST SchemeExpr -> STG
-stg (AST defs) = defs |> pickValueDefinitions |> convertValueDefinitions
+stg (AST defs) =
+  defs |> pickValueDefinitions |> convertValueDefinitions |> runSTGM
