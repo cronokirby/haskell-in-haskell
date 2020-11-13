@@ -170,6 +170,10 @@ convertExpr =
     handle :: S.Expr SchemeExpr -> STGM Expr
     handle (S.LittExpr l) = return (Litteral l)
     handle (S.NameExpr n) = return (Apply n [])
+    handle (S.LetExpr defs e) = do
+      defs' <- convertValueDefinitions defs
+      e' <- convertExpr e
+      return (Let defs' e')
     handle _ = undefined
 
     gatherAtoms :: [S.Expr SchemeExpr] -> STGM ([Binding], [Atom])
@@ -200,10 +204,13 @@ convertDef (NameDefinition name _ _ e) =
   Binding name <$> exprToLambda e
 
 -- Convert the value definitions composing a program into STG
-convertValueDefinitions :: [ValueDefinition SchemeExpr] -> STGM STG
-convertValueDefinitions = mapM convertDef >>> fmap STG
+convertValueDefinitions :: [ValueDefinition SchemeExpr] -> STGM [Binding]
+convertValueDefinitions = mapM convertDef
+
+convertAST :: AST SchemeExpr -> STGM STG
+convertAST (AST defs) =
+  defs |> pickValueDefinitions |> convertValueDefinitions |> fmap STG
 
 -- Run the STG compilation step
 stg :: AST SchemeExpr -> STG
-stg (AST defs) =
-  defs |> pickValueDefinitions |> convertValueDefinitions |> runSTGM
+stg = convertAST >>> runSTGM
