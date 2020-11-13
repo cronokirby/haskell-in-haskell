@@ -184,8 +184,15 @@ convertExpr =
 -- arguments if the expression we're converting wasn't
 -- a lambda to begin with
 exprToLambda :: S.Expr SchemeExpr -> STGM LambdaForm
-exprToLambda S.LambdaExpr {} = undefined
-exprToLambda e = LambdaForm [] U [] <$> convertExpr e
+exprToLambda =
+  gatherLambdas
+    >>> \(names, e) -> LambdaForm [] U names <$> convertExpr e
+  where
+    gatherLambdas :: S.Expr SchemeExpr -> ([ValName], S.Expr SchemeExpr)
+    gatherLambdas (S.LambdaExpr name _ e) =
+      let (names, e') = gatherLambdas e
+       in (name : names, e')
+    gatherLambdas e = ([], e)
 
 -- Convert a definition into an STG binding
 convertDef :: ValueDefinition SchemeExpr -> STGM Binding
