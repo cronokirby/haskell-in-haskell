@@ -29,5 +29,6 @@ tests =
     [ testCase "litterals" (shouldCompile "{ x = 3; y = \"foo\"; y = True }"),
       testCase "one level arithmetic" (shouldCompile "{ x = 2 + 2 }"),
       testCase "function application" (shouldCompile "{ f = f; x = f 1 2 3 }"),
-      testCase "simple let bindings" (shouldCompile "{ x = let { x1 = 1; x2 = 2 } in x1 + x2 }")
+      testCase "simple let bindings" (shouldCompile "{ x = let { x1 = 1; x2 = 2 } in x1 + x2 }"),
+      testCase "complicated functions" (shouldCompile "{ x = (\\y -> y + 1) 1 }")
     ]

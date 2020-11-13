@@ -148,6 +148,10 @@ atomize expression = case expression of
     l <- exprToLambda e
     return ([Binding name l], NameAtom name)
 
+atomToExpr :: Atom -> Expr
+atomToExpr (LitteralAtom l) = Litteral l
+atomToExpr (NameAtom n) = Apply n []
+
 makeLet :: [Binding] -> Expr -> Expr
 makeLet [] e = e
 makeLet bindings e = Let bindings e
@@ -165,7 +169,12 @@ convertExpr =
       S.NameExpr n -> do
         (bindings, atoms) <- gatherAtoms args
         return (makeLet bindings (Apply n atoms))
-      _ -> undefined
+      e -> do
+        (argBindings, atoms) <- gatherAtoms args
+        (eBindings, atom) <- atomize e
+        return <| case atom of
+          LitteralAtom _ -> error "Litterals cannot be functions"
+          NameAtom n -> makeLet (argBindings ++ eBindings) (Apply n atoms)
   where
     handle :: S.Expr SchemeExpr -> STGM Expr
     handle (S.LittExpr l) = return (Litteral l)
@@ -173,8 +182,13 @@ convertExpr =
     handle (S.LetExpr defs e) = do
       defs' <- convertValueDefinitions defs
       e' <- convertExpr e
-      return (Let defs' e')
-    handle _ = undefined
+      return (makeLet defs' e')
+    handle lambda@S.LambdaExpr {} = do
+      (bindings, atom) <- atomize lambda
+      return (makeLet bindings (atomToExpr atom))
+    handle S.ApplyExpr {} = error "Apply Expressions shouldn't appear here"
+    handle S.Builtin {} = error "Unary builtin operation"
+    handle S.CaseExpr {} = undefined
 
     gatherAtoms :: [S.Expr SchemeExpr] -> STGM ([Binding], [Atom])
     gatherAtoms = mapM atomize >>> fmap gatherBindings
