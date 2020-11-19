@@ -3,7 +3,7 @@ name:                  haskell-in-haskell
 version:               0.1.0.0
 license:               MIT
 license-file:          LICENSE
-author:                Lúcás Meier
+author:                Lucas Meier
 maintainer:            cronokirby@gmail.com
 build-type:            Simple
 extra-source-files:    README.md

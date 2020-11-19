@@ -57,7 +57,7 @@ closeTypeExpr t = SchemeExpr (names t) t
     names BoolType = []
     names (CustomType _ typs) = typs >>= names
     names (TypeVar n) = [n]
-    names (FunctionType t1 t2) = names t1 ++ names t2
+    names (t1 :-> t2) = names t1 ++ names t2
 
 data Expr t
   = LetExpr [ValueDefinition t] (Expr t)

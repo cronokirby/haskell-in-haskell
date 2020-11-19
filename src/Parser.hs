@@ -101,7 +101,7 @@ data TypeExpr
   | BoolType
   | CustomType TypeName [TypeExpr]
   | TypeVar TypeVar
-  | FunctionType TypeExpr TypeExpr
+  | TypeExpr :-> TypeExpr
   deriving (Eq, Show)
 
 data Expr
@@ -175,7 +175,7 @@ valueDefinition = nameDefinition <|> typeDefinition
     typeDefinition = liftA2 TypeAnnotation (valName <* token DoubleColon) typeExpr
 
 typeExpr :: Parser TypeExpr
-typeExpr = opsR (const FunctionType) baseType (token ThinArrow)
+typeExpr = opsR (const (:->)) baseType (token ThinArrow)
   where
     baseType = singleType <|> typeConstructor
     typeConstructor = liftA2 CustomType typeName (many unspacedType)

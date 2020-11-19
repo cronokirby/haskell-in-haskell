@@ -58,7 +58,7 @@ import Simplifier
 
 -- Create a function type given a return value an an ordered list of argument types
 makeFunctionType :: TypeExpr -> [TypeExpr] -> TypeExpr
-makeFunctionType = foldr FunctionType
+makeFunctionType = foldr (:->)
 
 -- Represents a kind of error that can happen while type checking
 data TypeError
@@ -109,7 +109,7 @@ typeDependencies StringType = []
 typeDependencies IntType = []
 typeDependencies BoolType = []
 typeDependencies (TypeVar _) = []
-typeDependencies (FunctionType t1 t2) = typeDependencies t1 ++ typeDependencies t2
+typeDependencies (t1 :-> t2) = typeDependencies t1 ++ typeDependencies t2
 typeDependencies (CustomType name exprs) = name : concatMap typeDependencies exprs
 
 -- This is the state we keep track of while sorting the graph of types
@@ -191,10 +191,10 @@ resolve _ IntType = return IntType
 resolve _ StringType = return StringType
 resolve _ BoolType = return BoolType
 resolve _ (TypeVar a) = return (TypeVar a)
-resolve mp (FunctionType t1 t2) = do
+resolve mp (t1 :-> t2) = do
   t1' <- resolve mp t1
   t2' <- resolve mp t2
-  return (FunctionType t1' t2')
+  return (t1' :-> t2')
 resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
   Nothing -> throwError (UnknownType name)
   Just (Synonym t)
@@ -274,7 +274,7 @@ instance Substitutable TypeExpr where
     StringType -> StringType
     BoolType -> BoolType
     TypeVar a -> Map.findWithDefault (TypeVar a) a s
-    FunctionType t1 t2 -> FunctionType (subst sub t1) (subst sub t2)
+    t1 :-> t2 -> subst sub t1 :-> subst sub t2
     CustomType name ts -> CustomType name (map (subst sub) ts)
 
 instance Substitutable SchemeExpr where
@@ -300,7 +300,7 @@ instance FreeTypeVars TypeExpr where
   ftv StringType = Set.empty
   ftv BoolType = Set.empty
   ftv (TypeVar a) = Set.singleton a
-  ftv (FunctionType t1 t2) = Set.union (ftv t1) (ftv t2)
+  ftv (t1 :-> t2) = Set.union (ftv t1) (ftv t2)
   ftv (CustomType _ ts) = foldMap ftv ts
 
 instance FreeTypeVars TypeName where
@@ -439,36 +439,28 @@ builtinScheme :: Builtin -> SchemeExpr
 builtinScheme Compose =
   SchemeExpr
     ["a", "b", "c"]
-    ( FunctionType
-        (FunctionType (TypeVar "b") (TypeVar "c"))
-        ( FunctionType
-            (FunctionType (TypeVar "a") (TypeVar "b"))
-            (FunctionType (TypeVar "a") (FunctionType (TypeVar "b") (TypeVar "c")))
-        )
-    )
+    ((TypeVar "b" :-> TypeVar "c") :-> (TypeVar "a" :-> TypeVar "b") :-> (TypeVar "a" :-> TypeVar "c"))
 builtinScheme Cash =
   SchemeExpr
     ["a", "b"]
-    ( FunctionType
-        (FunctionType (TypeVar "a") (TypeVar "b"))
-        (FunctionType (TypeVar "a") (TypeVar "b"))
+    ( (TypeVar "a" :-> TypeVar "b") :-> TypeVar "a" :-> TypeVar "b"
     )
 builtinScheme b =
   SchemeExpr [] <| case b of
-    Add -> FunctionType IntType (FunctionType IntType IntType)
-    Sub -> FunctionType IntType (FunctionType IntType IntType)
-    Mul -> FunctionType IntType (FunctionType IntType IntType)
-    Div -> FunctionType IntType (FunctionType IntType IntType)
-    Concat -> FunctionType StringType (FunctionType StringType StringType)
-    Less -> FunctionType IntType (FunctionType IntType BoolType)
-    LessEqual -> FunctionType IntType (FunctionType IntType BoolType)
-    Greater -> FunctionType IntType (FunctionType IntType BoolType)
-    GreaterEqual -> FunctionType IntType (FunctionType IntType BoolType)
-    EqualTo -> FunctionType IntType (FunctionType IntType BoolType)
-    NotEqualTo -> FunctionType IntType (FunctionType IntType BoolType)
-    And -> FunctionType BoolType (FunctionType BoolType BoolType)
-    Or -> FunctionType BoolType (FunctionType BoolType BoolType)
-    Negate -> FunctionType IntType IntType
+    Add -> IntType :-> IntType :-> IntType
+    Sub -> IntType :-> IntType :-> IntType
+    Mul -> IntType :-> IntType :-> IntType
+    Div -> IntType :-> IntType :-> IntType
+    Concat -> StringType :-> StringType :-> StringType
+    Less -> IntType :-> IntType :-> BoolType
+    LessEqual -> IntType :-> IntType :-> BoolType
+    Greater -> IntType :-> IntType :-> BoolType
+    GreaterEqual -> IntType :-> IntType :-> BoolType
+    EqualTo -> IntType :-> IntType :-> BoolType
+    NotEqualTo -> IntType :-> IntType :-> BoolType
+    And -> BoolType :-> BoolType :-> BoolType
+    Or -> BoolType :-> BoolType :-> BoolType
+    Negate -> IntType :-> IntType
     _ -> error "Already handled"
 
 -- Get the type of a given litteral
@@ -491,7 +483,7 @@ inferExpr expr = case expr of
     (as1, cs1, t1, e1') <- inferExpr e1
     (as2, cs2, t2, e2') <- inferExpr e2
     tv <- TypeVar <$> fresh
-    let cs' = [SameType t1 (FunctionType t2 tv)] <> cs1 <> cs2
+    let cs' = [SameType t1 (t2 :-> tv)] <> cs1 <> cs2
     return (as1 <> as2, cs', tv, ApplyExpr e1' e2')
   Builtin b -> do
     t <- instantiate (builtinScheme b)
@@ -516,11 +508,10 @@ inferExpr expr = case expr of
     a <- fresh
     let tv = TypeVar a
     (as, cs, t, e') <- withBound a (inferExpr e)
-    let inferred = FunctionType tv t
     return
       ( removeAssumption n as,
         [SameType t' tv | t' <- lookupAssumptions n as] <> cs,
-        inferred,
+        tv :-> t,
         LambdaExpr n tv e'
       )
   LetExpr defs e -> do
@@ -617,7 +608,7 @@ unify :: TypeExpr -> TypeExpr -> Infer Subst
 unify t1 t2 | t1 == t2 = return mempty
 unify (TypeVar n) t = bind n t
 unify t (TypeVar n) = bind n t
-unify (FunctionType t1 t2) (FunctionType t3 t4) = do
+unify (t1 :-> t2) (t3 :-> t4) = do
   su1 <- unify t1 t3
   su2 <- unify (subst su1 t2) (subst su1 t4)
   return (su2 <> su1)
