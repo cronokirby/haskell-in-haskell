@@ -26,7 +26,7 @@ instance Alternative Parser where
     Parser <| \input -> lA input ++ lB input
 
 opt :: Parser a -> Parser (Maybe a)
-opt p = (fmap Just p) <|> pure Nothing
+opt p = fmap Just p <|> pure Nothing
 
 satisifies :: (Token -> Bool) -> Parser Token
 satisifies p =
@@ -154,7 +154,7 @@ ast :: Parser AST
 ast = fmap AST (braced definition)
 
 definition :: Parser Definition
-definition = (fmap ValueDefinition valueDefinition) <|> typeDefinition <|> typeSynonym
+definition = fmap ValueDefinition valueDefinition <|> typeDefinition <|> typeSynonym
   where
     typeDefinition =
       token Data
@@ -186,7 +186,7 @@ unspacedType = namedType <|> singleType
     namedType = fmap (`CustomType` []) typeName
 
 singleType :: Parser TypeExpr
-singleType = (fmap TypeVar typeVar) <|> primType <|> parensed typeExpr
+singleType = fmap TypeVar typeVar <|> primType <|> parensed typeExpr
   where
     primType =
       (IntType <$ token IntTypeName)

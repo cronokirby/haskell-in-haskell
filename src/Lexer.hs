@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 module Lexer (Token (..), lexer) where
 
@@ -60,7 +61,7 @@ instance Alternative Lexer where
 -- A lexer that matches a single character matching a predicate
 satisfies :: (Char -> Bool) -> Lexer Char
 satisfies p =
-  Lexer <| \input -> case input of
+  Lexer <| \case
     c : cs | p c -> Right (c, cs)
     rest -> Left (unexpected rest)
 
@@ -135,7 +136,7 @@ token :: Lexer (Token, String)
 token = keyword <|> operator <|> litteral <|> name
   where
     with :: Functor f => b -> f a -> f (b, a)
-    with b = fmap (\a -> (b, a))
+    with b = fmap (b,)
 
     keyword :: Lexer (Token, String)
     keyword =
@@ -190,7 +191,7 @@ token = keyword <|> operator <|> litteral <|> name
         intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
 
         stringLitt :: Lexer (Token, String)
-        stringLitt = char '"' *> (const <$> many (satisfies (\c -> c /= '"')) <*> char '"') |> fmap (\x -> (StringLitt x, x))
+        stringLitt = char '"' *> (const <$> many (satisfies (/= '"')) <*> char '"') |> fmap (\x -> (StringLitt x, x))
 
         boolLitt :: Lexer (Token, String)
         boolLitt = (BoolLitt True `with` string "True") <|> (BoolLitt False `with` string "False")
@@ -303,7 +304,7 @@ compareIndentation col =
 -- Run the layout context, producing either an error, or the tokens with the inferred layout tokens.
 runLayoutM :: LayoutM a -> Either LexerError [Token]
 runLayoutM =
-  runExceptT >>> (`runState` (LayoutState [] [] True)) >>> \case
+  runExceptT >>> (`runState` LayoutState [] [] True) >>> \case
     (Left e, _) -> Left e
     (Right _, LayoutState _ ts _) -> Right (reverse ts)
 
@@ -316,7 +317,7 @@ layout inputs =
     closeImplicitLayouts
   where
     startsLayout :: Token -> Bool
-    startsLayout t = elem t [Let, Where, Of]
+    startsLayout = (`elem` [Let, Where, Of])
 
     step :: Positioned Token -> LayoutM ()
     step (Positioned t linePos col) = do
