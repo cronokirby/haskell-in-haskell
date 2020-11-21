@@ -10,7 +10,6 @@ import Ourlude
 import Simplifier
   ( AST (..),
     Builtin (..),
-    ConstructorName,
     Litteral (..),
     SchemeExpr (..),
     ValName,
@@ -83,7 +82,7 @@ data Alts
     StringAlts [(String, Expr)] DefaultAlt
   | -- Potential branches for constructor tags, introducing names,
     -- and then we end, as usual, with a default case
-    ConstrAlts [(Tag, [ConstructorName], Expr)] DefaultAlt
+    ConstrAlts [(Tag, [ValName], Expr)] DefaultAlt
   deriving (Eq, Show)
 
 -- A default alternative, which may introduce a variable, or not

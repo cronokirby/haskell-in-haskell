@@ -92,7 +92,6 @@ data Expr t
 
 data Pattern
   = LitteralPattern Litteral
-  | NamePattern Name
   | Wildcard
   | ConstructorPattern ConstructorName [Name]
   deriving (Eq, Show)
@@ -148,7 +147,9 @@ data ConstructorInfo = ConstructorInfo
     -- This information is in the type, but much more convenient to have readily available
     constructorArity :: Int,
     -- The type of this constructor, as a function
-    constructorType :: SchemeExpr
+    constructorType :: SchemeExpr,
+    -- The number this constructor has
+    constructorNumber :: Int
   }
   deriving (Eq, Show)
 
@@ -222,14 +223,14 @@ gatherConstructorMap =
   foldMap <| \case
     P.TypeDefinition name typeVars definitions ->
       let root = CustomType name (map TypeVar typeVars)
-       in foldMap (makeMap typeVars root) definitions
+       in foldMap (makeMap typeVars root) (zip definitions [0..])
     _ -> Map.empty
   where
-    makeMap :: [TypeVar] -> TypeExpr -> ConstructorDefinition -> ConstructorMap
-    makeMap typeVars ret (P.ConstructorDefinition cstr types) =
+    makeMap :: [TypeVar] -> TypeExpr -> (ConstructorDefinition, Int) -> ConstructorMap
+    makeMap typeVars ret (P.ConstructorDefinition cstr types, number) =
       let arity = length types
           scheme = SchemeExpr typeVars (foldr (:->) ret types)
-          info = ConstructorInfo arity scheme
+          info = ConstructorInfo arity scheme number
        in Map.singleton cstr info
 
 {- Resolving all of the type synonyms -}

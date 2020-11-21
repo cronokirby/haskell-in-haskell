@@ -351,7 +351,6 @@ inferPatternDef scrutinee (pat, e) = do
     inspectPattern :: TypeExpr -> Pattern -> Infer ([Constraint], Map.Map ValName TypeExpr, Set.Set TypeVar)
     inspectPattern scrutinee' pat' = case pat' of
       Wildcard -> return ([], Map.empty, Set.empty)
-      NamePattern n -> return ([], Map.singleton n scrutinee', Set.empty)
       LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty, Set.empty)
       ConstructorPattern cstr pats -> do
         patVars <- forM pats (const fresh)
