@@ -17,7 +17,6 @@ import Simplifier
     SchemeExpr (..),
     ValName,
     ValueDefinition (..),
-    pickValueDefinitions,
   )
 import qualified Simplifier as S
 
@@ -257,7 +256,7 @@ exprToLambda expr = do
 
 -- Convert a definition into an STG binding
 convertDef :: ValueDefinition SchemeExpr -> STGM Binding
-convertDef (NameDefinition name _ _ e) =
+convertDef (ValueDefinition name _ _ e) =
   Binding name <$> exprToLambda e
 
 -- Convert the value definitions composing a program into STG
@@ -265,19 +264,16 @@ convertValueDefinitions :: [ValueDefinition SchemeExpr] -> STGM [Binding]
 convertValueDefinitions = mapM convertDef
 
 convertAST :: AST SchemeExpr -> STGM STG
-convertAST (AST defs) =
-  defs |> pickValueDefinitions |> convertValueDefinitions |> fmap STG
+convertAST (AST _ defs) =
+  defs |> convertValueDefinitions |> fmap STG
 
 gatherInformation :: AST SchemeExpr -> STGMInfo
-gatherInformation (AST defs) =
+gatherInformation (AST _ defs) =
   let topLevel = gatherTopLevel defs |> Set.fromList
    in STGMInfo topLevel
   where
-    gatherTopLevel :: [S.Definition t] -> [ValName]
-    gatherTopLevel = map go >>> catMaybes
-      where
-        go (S.ValueDefinition (NameDefinition n _ _ _)) = Just n
-        go _ = Nothing
+    gatherTopLevel :: [S.ValueDefinition t] -> [ValName]
+    gatherTopLevel = map (\(S.ValueDefinition n _ _ _) -> n)
 
 -- Run the STG compilation step
 stg :: AST SchemeExpr -> STG

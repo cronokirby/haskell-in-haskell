@@ -84,7 +84,7 @@ newtype AST = AST [Definition] deriving (Eq, Show)
 
 data Definition
   = ValueDefinition ValueDefinition
-  | TypeDefinition TypeName [Name] [ConstructorDefinition]
+  | TypeDefinition TypeName [TypeVar] [ConstructorDefinition]
   | TypeSynonym TypeName TypeExpr
   deriving (Eq, Show)
 
@@ -160,7 +160,7 @@ definition = fmap ValueDefinition valueDefinition <|> typeDefinition <|> typeSyn
       token Data
         *> ( TypeDefinition
                <$> typeName
-               <*> many name
+               <*> many typeVar
                <*> (token Equal *> sepBy1 constructorDefinition (token VBar))
            )
     typeSynonym = token Type *> liftA2 TypeSynonym (typeName <* token Equal) typeExpr

@@ -58,7 +58,7 @@ tests =
                                         Div
                                         ( BinExpr
                                             Mul
-                                            (ApplyExpr (NameExpr "f") [(NameExpr "a")])
+                                            (ApplyExpr (NameExpr "f") [NameExpr "a"])
                                             (NameExpr "a")
                                         )
                                         (NameExpr "a")
@@ -113,7 +113,7 @@ tests =
         "function types"
         ( shouldParse
             "x :: (Int -> String) -> A -> B"
-            ( AST [ValueDefinition (TypeAnnotation "x" (FunctionType (FunctionType IntType StringType) (FunctionType (CustomType "A" []) (CustomType "B" []))))]
+            ( AST [ValueDefinition (TypeAnnotation "x" ((IntType :-> StringType) :-> CustomType "A" [] :-> CustomType "B" []))]
             )
         ),
       testCase
@@ -126,7 +126,7 @@ tests =
                     "L"
                     []
                     [ ConstructorDefinition "A" [IntType],
-                      ConstructorDefinition "B" [StringType, FunctionType StringType StringType]
+                      ConstructorDefinition "B" [StringType, StringType :-> StringType]
                     ]
                 ]
             )
@@ -142,11 +142,11 @@ tests =
         ( shouldParse
             "foo :: a -> List a; data List a = Cons a (List a) | Nil"
             ( AST
-                [ ValueDefinition (TypeAnnotation "foo" (FunctionType (TypeVar "a") (CustomType "List" [TypeVar "a"]))),
+                [ ValueDefinition (TypeAnnotation "foo" (TypeVar "a" :-> CustomType "List" [TypeVar "a"])),
                   TypeDefinition
                     "List"
                     ["a"]
-                    [ ConstructorDefinition "Cons" [TypeVar "a", (CustomType "List" [TypeVar "a"])],
+                    [ ConstructorDefinition "Cons" [TypeVar "a", CustomType "List" [TypeVar "a"]],
                       ConstructorDefinition "Nil" []
                     ]
                 ]

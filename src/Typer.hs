@@ -39,26 +39,29 @@ import Ourlude
 import Simplifier
   ( AST (..),
     Builtin (..),
-    ConstructorDefinition (..),
+    ConstructorInfo (..),
     ConstructorName,
-    Definition (..),
     Expr (..),
+    HasTypeInformation (..),
     Litteral (..),
     Name,
     Pattern (..),
     PatternDef (..),
+    ResolutionError,
+    ResolutionM (..),
     SchemeExpr (..),
     TypeExpr (..),
+    TypeInformation (..),
     TypeName,
     TypeVar,
     ValName,
     ValueDefinition (..),
-    pickValueDefinitions,
+    lookupConstructor,
+    resolveM,
   )
 
--- Create a function type given a return value an an ordered list of argument types
-makeFunctionType :: TypeExpr -> [TypeExpr] -> TypeExpr
-makeFunctionType = foldr (:->)
+asGeneral :: SchemeExpr -> SchemeExpr -> Bool
+asGeneral (SchemeExpr vars1 _) (SchemeExpr vars2 _) = length vars1 >= length vars2
 
 -- Represents a kind of error that can happen while type checking
 data TypeError
@@ -68,165 +71,11 @@ data TypeError
     InfiniteType TypeVar TypeExpr
   | -- An undefined name was used
     UnboundName Name
-  | -- A reference to some type that doesn't exist
-    UnknownType TypeName
-  | -- A mismatch of a type constructor with expected vs actual args
-    MismatchedTypeArgs TypeName Int Int
-  | -- A type synonym ends up being cyclical
-    CyclicalTypeSynonym TypeName [TypeName]
+  | -- An error ocurring because of a resolution
+    TypeResolutionError ResolutionError
   | -- An inferred scheme is not as general as the declared one
     NotGeneralEnough SchemeExpr SchemeExpr
   deriving (Eq, Show)
-
-asGeneral :: SchemeExpr -> SchemeExpr -> Bool
-asGeneral (SchemeExpr vars1 _) (SchemeExpr vars2 _) = length vars1 >= length vars2
-
-{- Type Information
-
-We need to gather certain information about what type synonyms exist, so that
-we can resolve type declarations later
--}
-
--- Gather all of the custom types, along with the number of arguments they contain
-gatherCustomTypes :: [Definition t] -> Map.Map TypeName Int
-gatherCustomTypes =
-  foldMap <| \case
-    TypeDefinition name vars _ -> Map.singleton name (length vars)
-    _ -> Map.empty
-
--- Gather all of the type synonyms, at a superficial level
---
--- This will only look at one level of definition, and won't act recursively
-gatherTypeSynonyms :: [Definition t] -> Map.Map TypeName TypeExpr
-gatherTypeSynonyms =
-  foldMap <| \case
-    TypeSynonym name expr -> Map.singleton name expr
-    _ -> Map.empty
-
--- Which type definitions does this type reference?
-typeDependencies :: TypeExpr -> [TypeName]
-typeDependencies StringType = []
-typeDependencies IntType = []
-typeDependencies BoolType = []
-typeDependencies (TypeVar _) = []
-typeDependencies (t1 :-> t2) = typeDependencies t1 ++ typeDependencies t2
-typeDependencies (CustomType name exprs) = name : concatMap typeDependencies exprs
-
--- This is the state we keep track of while sorting the graph of types
-data SorterState = SorterState
-  { -- All of the type names we haven't seen yet
-    unseen :: Set.Set TypeName,
-    -- The current output we've generated so far
-    output :: [TypeName]
-  }
-
--- The context in which the topological sorting of the type graph takes place
---
--- We have access to a set of ancestors to keep track of cycles, the current state,
--- which we can modify, and the ability to throw exceptions.
-type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except TypeError)) a
-
--- Given a mapping from names to shallow types, find a linear ordering of these types
---
--- The types are sorted topologically, based on their dependencies. This means that
--- a type will come after all of its dependencies
-sortTypeSynonyms :: Map.Map TypeName TypeExpr -> Either TypeError [TypeName]
-sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap reverse
-  where
-    -- Find the dependencies of a given type name
-    --
-    -- This acts similarly to a "neighbors" function in a traditional graph
-    deps :: TypeName -> [TypeName]
-    deps k = Map.findWithDefault [] k (Map.map typeDependencies mp)
-
-    -- Run the sorter, given a seed state
-    runSorter :: SorterM a -> SorterState -> Either TypeError a
-    runSorter m st =
-      runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
-
-    see :: TypeName -> SorterM Bool
-    see name = do
-      unseen' <- gets unseen
-      modify' (\s -> s {unseen = Set.delete name unseen'})
-      return (Set.member name unseen')
-
-    out :: TypeName -> SorterM ()
-    out name = modify' (\s -> s {output = name : output s})
-
-    withAncestor :: TypeName -> SorterM a -> SorterM a
-    withAncestor = local <<< Set.insert
-
-    sort :: SorterM [TypeName]
-    sort = do
-      unseen' <- gets unseen
-      case Set.lookupMin unseen' of
-        Nothing -> gets output
-        Just n -> do
-          dfs n
-          sort
-
-    dfs :: TypeName -> SorterM ()
-    dfs name = do
-      ancestors <- ask
-      when
-        (Set.member name ancestors)
-        (throwError (CyclicalTypeSynonym name (Set.toList ancestors)))
-      new <- see name
-      when new <| do
-        withAncestor name (forM_ (deps name) dfs)
-        out name
-
--- Represents the information we might have when resolving a type name
-data ResolvingInformation
-  = -- The name is a synonym for a fully resolved expression
-    Synonym TypeExpr
-  | -- The name is a custom type with a certain arity
-    Custom Int
-  deriving (Show)
-
-type ResolutionMap = Map.Map TypeName ResolvingInformation
-
-resolve :: MonadError TypeError m => ResolutionMap -> TypeExpr -> m TypeExpr
-resolve _ IntType = return IntType
-resolve _ StringType = return StringType
-resolve _ BoolType = return BoolType
-resolve _ (TypeVar a) = return (TypeVar a)
-resolve mp (t1 :-> t2) = do
-  t1' <- resolve mp t1
-  t2' <- resolve mp t2
-  return (t1' :-> t2')
-resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
-  Nothing -> throwError (UnknownType name)
-  Just (Synonym t)
-    | null ts -> return t
-    | otherwise -> throwError (MismatchedTypeArgs name 0 (length ts))
-  Just (Custom arity)
-    | arity == length ts -> return ct
-    | otherwise -> throwError (MismatchedTypeArgs name arity (length ts))
-
-type ResolutionM a = ReaderT (Map.Map TypeName TypeExpr) (StateT ResolutionMap (Except TypeError)) a
-
-createResolutions :: [Definition t] -> Either TypeError ResolutionMap
-createResolutions defs = do
-  let customInfo = gatherCustomTypes defs
-      typeSynMap = gatherTypeSynonyms defs
-  names <- sortTypeSynonyms typeSynMap
-  runResolutionM (resolveAll names) typeSynMap (Map.map Custom customInfo)
-  where
-    runResolutionM :: ResolutionM a -> Map.Map TypeName TypeExpr -> ResolutionMap -> Either TypeError ResolutionMap
-    runResolutionM m typeSynMap st =
-      runReaderT m typeSynMap |> (`execStateT` st) |> runExcept
-
-    resolveAll :: [TypeName] -> ReaderT (Map.Map TypeName TypeExpr) (StateT ResolutionMap (Except TypeError)) ()
-    resolveAll =
-      mapM_ <| \n -> do
-        lookup' <- asks (Map.lookup n)
-        case lookup' of
-          Nothing -> throwError (UnknownType n)
-          Just unresolved -> do
-            resolutions' <- get
-            resolved <- resolve resolutions' unresolved
-            modify' (Map.insert n (Synonym resolved))
 
 -- Represents some kind of constraint we generate during our gathering pharse.
 --
@@ -327,35 +176,13 @@ instance ActiveTypeVars Constraint where
 instance ActiveTypeVars a => ActiveTypeVars [a] where
   atv = foldMap atv
 
--- A map from constructor names to information about that constructor
-type ConstructorInfo = Map.Map ConstructorName SchemeExpr
-
--- Looking at the definitions, gather information about what constructors are present
-gatherConstructorInfo :: MonadError TypeError m => ResolutionMap -> [Definition t] -> m ConstructorInfo
-gatherConstructorInfo resolutions' =
-  foldMapM (extractEnv resolutions')
-  where
-    extractEnv :: (MonadError TypeError m) => ResolutionMap -> Definition t -> m ConstructorInfo
-    extractEnv _ (TypeSynonym _ _) = return mempty
-    extractEnv _ (ValueDefinition _) = return mempty
-    extractEnv mp (TypeDefinition tn names constructors) =
-      foldMapM constructorType constructors
-      where
-        constructorType :: (MonadError TypeError m) => ConstructorDefinition -> m ConstructorInfo
-        constructorType (ConstructorDefinition n ts) = do
-          resolved <- mapM (resolve mp) ts
-          let t = CustomType tn (map TypeVar names)
-              sc = SchemeExpr names (makeFunctionType t resolved)
-          return (Map.singleton n sc)
-
 -- The environment we use when doing type inference.
 --
 -- We keep a local environment of bound type names, as well
 -- as the information about type synonym resolutions.
 data InferEnv = InferEnv
   { bound :: Set.Set TypeName,
-    resolutions :: ResolutionMap,
-    constructorInfo :: ConstructorInfo
+    typeInfo :: TypeInformation
   }
 
 -- The context in which we perform type inference.
@@ -365,10 +192,16 @@ data InferEnv = InferEnv
 newtype Infer a = Infer (ReaderT InferEnv (StateT Int (Except TypeError)) a)
   deriving (Functor, Applicative, Monad, MonadReader InferEnv, MonadState Int, MonadError TypeError)
 
+instance HasTypeInformation Infer where
+  typeInformation = asks typeInfo
+
+instance ResolutionM Infer where
+  throwResolution = throwError <<< TypeResolutionError
+
 -- Run the inference context, provided we have a resolution map
-runInfer :: Infer a -> ResolutionMap -> ConstructorInfo -> Either TypeError a
-runInfer (Infer m) resolutions' constructorInfo' =
-  runReaderT m (InferEnv Set.empty resolutions' constructorInfo')
+runInfer :: Infer a -> TypeInformation -> Either TypeError a
+runInfer (Infer m) info =
+  runReaderT m (InferEnv Set.empty info)
     |> (`runStateT` 0)
     |> runExcept
     |> fmap fst
@@ -401,17 +234,11 @@ withBound a = local (\r -> r {bound = Set.insert a (bound r)})
 withManyBound :: Set.Set TypeVar -> Infer a -> Infer a
 withManyBound vars = local (\r -> r {bound = Set.union (bound r) vars})
 
-resolveInfer :: TypeExpr -> Infer TypeExpr
-resolveInfer t = do
-  resolutions' <- asks resolutions
-  resolve resolutions' t
+getConstructorType :: ConstructorName -> Infer SchemeExpr
+getConstructorType name = lookupConstructor name |> fmap constructorType
 
-lookupConstructor :: ConstructorName -> Infer SchemeExpr
-lookupConstructor name = do
-  result <- asks (constructorInfo >>> Map.lookup name)
-  case result of
-    Nothing -> throwError (UnboundName name)
-    Just res -> return res
+allConstructors :: Infer (Map.Map ConstructorName SchemeExpr)
+allConstructors = typeInformation |> fmap (constructorMap >>> Map.map constructorType)
 
 -- Represents an ordered collection about assumptions we've gathered so far
 newtype Assumptions = Assumptions [(Name, TypeExpr)]
@@ -541,8 +368,8 @@ inferPatternDef scrutinee (PatternDef pat e) = do
         patVars <- forM pats (const fresh)
         let patTypes = TypeVar <$> patVars
         (cs, valMap, boundSet) <- mconcat <$> zipWithM inspectPattern patTypes pats
-        let patType = makeFunctionType scrutinee' patTypes
-        constructor <- lookupConstructor name
+        let patType = foldr (:->) scrutinee' patTypes
+        constructor <- getConstructorType name
         return (ExplicitlyInstantiates patType constructor : cs, valMap, Set.fromList patVars <> boundSet)
 
     adjustValAssumptions :: Map.Map ValName TypeExpr -> Assumptions -> Assumptions
@@ -555,14 +382,14 @@ inferPatternDef scrutinee (PatternDef pat e) = do
 inferDefs :: Assumptions -> [ValueDefinition ()] -> Infer (Assumptions, [Constraint], [ValueDefinition TypeExpr])
 inferDefs usageAs defs = do
   together <-
-    forM defs <| \(NameDefinition n declared _ e) -> do
+    forM defs <| \(ValueDefinition n declared _ e) -> do
       (as, cs, t, e') <- inferExpr e
       extra <- case declared of
         Nothing -> return []
         Just (SchemeExpr names d) -> do
-          resolved <- resolveInfer d
+          resolved <- resolveM d
           return [ExplicitlyInstantiates t (SchemeExpr names resolved)]
-      return (as, extra ++ cs, (n, t), NameDefinition n declared t e')
+      return (as, extra ++ cs, (n, t), ValueDefinition n declared t e')
   bound' <- asks bound
   let as = usageAs <> foldMap (\(x, _, _, _) -> x) together
       cs = foldMap (\(_, x, _, _) -> x) together
@@ -685,38 +512,25 @@ typePatternDef (PatternDef pat expr) = PatternDef pat <$> typeExpr expr
 -- Assign types to a series of definitions
 typeDefinitions :: [ValueDefinition TypeExpr] -> Typer [ValueDefinition SchemeExpr]
 typeDefinitions defs =
-  forM defs <| \(NameDefinition name ann t e) -> do
+  forM defs <| \(ValueDefinition name ann t e) -> do
     sc <- schemeFor t
     e' <- typeExpr e
     case ann of
       Just d | not (asGeneral sc d) -> throwError (NotGeneralEnough sc d)
       _ -> return ()
-    return (NameDefinition name ann sc e')
+    return (ValueDefinition name ann sc e')
 
 -- Infer and check the types for a series of value definitions
-inferTypes :: [Definition ()] -> Infer [ValueDefinition SchemeExpr]
+inferTypes :: [ValueDefinition ()] -> Infer [ValueDefinition SchemeExpr]
 inferTypes defs = do
-  constructors <- asks constructorInfo
-  let valDefs = pickValueDefinitions defs
-  (as, cs, defs') <- inferDefs mempty valDefs
+  constructors <- allConstructors
+  (as, cs, defs') <- inferDefs mempty defs
   let unbound = Set.difference (assumptionNames as) (Map.keysSet constructors)
   unless (Set.null unbound) (throwError (UnboundName (Set.elemAt 0 unbound)))
   let cs' = [ExplicitlyInstantiates t s | (x, s) <- Map.toList constructors, t <- lookupAssumptions x as]
   sub <- solve (cs' <> cs)
   liftEither <| runTyper (typeDefinitions defs') sub
 
-pluckTypeDefinitions :: [Definition a] -> [Definition b]
-pluckTypeDefinitions = map go >>> catMaybes
-  where
-    go (ValueDefinition _) = Nothing
-    go (TypeDefinition n vs cs) = Just (TypeDefinition n vs cs)
-    go (TypeSynonym t1 t2) = Just (TypeSynonym t1 t2)
-
 -- Run the type checker on a given AST, producing just the value definitions, annotated
 typer :: AST () -> Either TypeError (AST SchemeExpr)
-typer (AST defs) = do
-  resolutions' <- createResolutions defs
-  constructorInfo' <- gatherConstructorInfo resolutions' defs
-  valDefs' <- runInfer (inferTypes defs) resolutions' constructorInfo'
-  let allDefs = pluckTypeDefinitions defs ++ map ValueDefinition valDefs'
-  return (AST allDefs)
+typer (AST info defs) = AST info <$> runInfer (inferTypes defs) info
