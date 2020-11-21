@@ -289,6 +289,9 @@ littType (BoolLitteral _) = BoolType
 -- and the typed version of that expression tree.
 inferExpr :: Expr () -> Infer (Assumptions, [Constraint], TypeExpr, Expr TypeExpr)
 inferExpr expr = case expr of
+  Error err -> do
+    tv <- TypeVar <$> fresh
+    return (mempty, [], tv, Error err)
   LittExpr litt ->
     let t = littType litt
      in return (mempty, [], t, LittExpr litt)
@@ -484,6 +487,7 @@ schemeFor t = do
 -- Assign types to a given expression
 typeExpr :: Expr TypeExpr -> Typer (Expr SchemeExpr)
 typeExpr expr = case expr of
+  Error err -> return (Error err)
   LittExpr litt -> return (LittExpr litt)
   NameExpr n -> return (NameExpr n)
   Builtin b -> return (Builtin b)

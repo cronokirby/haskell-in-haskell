@@ -83,9 +83,9 @@ tests =
                         []
                         ( CaseExpr
                             (NameExpr "x")
-                            [ PatternDef WildcardPattern (LittExpr (IntLitteral 3)),
-                              PatternDef (ConstructorPattern "A" [ConstructorPattern "B" [NamePattern "y"], NamePattern "y"]) (LittExpr (IntLitteral 3)),
-                              PatternDef (NamePattern "y") (NameExpr "y")
+                            [ (WildcardPattern, LittExpr (IntLitteral 3)),
+                              (ConstructorPattern "A" [ConstructorPattern "B" [NamePattern "y"], NamePattern "y"], LittExpr (IntLitteral 3)),
+                              (NamePattern "y", NameExpr "y")
                             ]
                         )
                     )
@@ -104,7 +104,7 @@ tests =
                     ( NameDefinition
                         "x"
                         []
-                        (CaseExpr (NameExpr "x") [PatternDef (LitteralPattern (StringLitteral "foo")) (NameExpr "x")])
+                        (CaseExpr (NameExpr "x") [(LitteralPattern (StringLitteral "foo"), NameExpr "x")])
                     )
                 ]
             )
