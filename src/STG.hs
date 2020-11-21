@@ -186,6 +186,7 @@ convertExpr =
     handle :: S.Expr SchemeExpr -> STGM Expr
     handle (S.LittExpr l) = return (Litteral l)
     handle (S.NameExpr n) = return (Apply n [])
+    handle (S.Error s) = return (Error s)
     handle (S.LetExpr defs e) = do
       defs' <- convertValueDefinitions defs
       e' <- convertExpr e

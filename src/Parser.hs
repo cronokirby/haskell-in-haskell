@@ -116,7 +116,7 @@ data Expr
   | LittExpr Litteral
   | NegateExpr Expr
   | ApplyExpr Expr [Expr]
-  | CaseExpr Expr [PatternDef]
+  | CaseExpr Expr [(Pattern, Expr)]
   deriving (Eq, Show)
 
 data Litteral
@@ -142,8 +142,6 @@ data BinOp
   | And
   | Or
   deriving (Eq, Show)
-
-data PatternDef = PatternDef Pattern Expr deriving (Eq, Show)
 
 data Pattern
   = WildcardPattern
@@ -207,7 +205,7 @@ expr = notWhereExpr <|> whereExpr
 caseExpr :: Parser Expr
 caseExpr = liftA2 CaseExpr (token Case *> expr <* token Of) (braced patternDef)
   where
-    patternDef = liftA2 PatternDef onePattern (token ThinArrow *> expr)
+    patternDef = liftA2 (,) onePattern (token ThinArrow *> expr)
 
 onePattern :: Parser Pattern
 onePattern = unspacedPattern <|> argfulPattern

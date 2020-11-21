@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TupleSections #-}
 
 module Typer (typer, TypeError) where
 
@@ -8,7 +9,6 @@ import Control.Monad
   ( foldM,
     forM,
     unless,
-    zipWithM,
   )
 import Control.Monad.Except
   ( Except,
@@ -39,7 +39,6 @@ import Simplifier
     Litteral (..),
     Name,
     Pattern (..),
-    PatternDef (..),
     ResolutionError,
     ResolutionM (..),
     SchemeExpr (..),
@@ -334,8 +333,8 @@ inferExpr expr = case expr of
     return (as2, cs1 <> cs2, t, LetExpr defs' e')
 
 -- Run inference over a pattern definition, given the scrutinee's type
-inferPatternDef :: TypeExpr -> PatternDef () -> Infer (Assumptions, [Constraint], TypeExpr, PatternDef TypeExpr)
-inferPatternDef scrutinee (PatternDef pat e) = do
+inferPatternDef :: TypeExpr -> (Pattern, Expr ()) -> Infer (Assumptions, [Constraint], TypeExpr, (Pattern, Expr TypeExpr))
+inferPatternDef scrutinee (pat, e) = do
   tv <- TypeVar <$> fresh
   (cs1, valMap, boundSet) <- inspectPattern tv pat
   (as, cs2, t, e') <- withManyBound boundSet (inferExpr e)
@@ -343,21 +342,21 @@ inferPatternDef scrutinee (PatternDef pat e) = do
     ( adjustValAssumptions valMap as,
       SameType tv scrutinee : cs1 <> cs2 <> valConstraints valMap as,
       t,
-      PatternDef pat e'
+      (pat, e')
     )
   where
     inspectPattern :: TypeExpr -> Pattern -> Infer ([Constraint], Map.Map ValName TypeExpr, Set.Set TypeVar)
     inspectPattern scrutinee' pat' = case pat' of
-      WildcardPattern -> return ([], Map.empty, Set.empty)
+      Wildcard -> return ([], Map.empty, Set.empty)
       NamePattern n -> return ([], Map.singleton n scrutinee', Set.empty)
       LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty, Set.empty)
-      ConstructorPattern name pats -> do
+      ConstructorPattern cstr pats -> do
         patVars <- forM pats (const fresh)
-        let patTypes = TypeVar <$> patVars
-        (cs, valMap, boundSet) <- mconcat <$> zipWithM inspectPattern patTypes pats
-        let patType = foldr (:->) scrutinee' patTypes
-        constructor <- constructorType <$> lookupConstructor name
-        return (ExplicitlyInstantiates patType constructor : cs, valMap, Set.fromList patVars <> boundSet)
+        let patTypes = map TypeVar patVars
+            patType = foldr (:->) scrutinee' patTypes
+            valMap = zip pats patTypes |> Map.fromList
+        constructor <- constructorType <$> lookupConstructor cstr
+        return ([ExplicitlyInstantiates patType constructor], valMap, Set.fromList patVars)
 
     adjustValAssumptions :: Map.Map ValName TypeExpr -> Assumptions -> Assumptions
     adjustValAssumptions mp as = foldr removeAssumption as (Map.keys mp)
@@ -497,8 +496,8 @@ typeExpr expr = case expr of
   LetExpr defs e -> LetExpr <$> typeDefinitions defs <*> typeExpr e
 
 -- Assign types to a pattern definition
-typePatternDef :: PatternDef TypeExpr -> Typer (PatternDef SchemeExpr)
-typePatternDef (PatternDef pat expr) = PatternDef pat <$> typeExpr expr
+typePatternDef :: (Pattern, Expr TypeExpr) -> Typer (Pattern, Expr SchemeExpr)
+typePatternDef (pat, expr) = (pat,) <$> typeExpr expr
 
 -- Assign types to a series of definitions
 typeDefinitions :: [ValueDefinition TypeExpr] -> Typer [ValueDefinition SchemeExpr]
