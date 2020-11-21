@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 module Simplifier
   ( Pattern (..),
@@ -10,7 +12,6 @@ module Simplifier
     SimplifierError (..),
     AST (..),
     Expr (..),
-    PatternDef (..),
     ValueDefinition (..),
     Name,
     ValName,
@@ -29,17 +30,17 @@ module Simplifier
   )
 where
 
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, replicateM, when)
 import Control.Monad.Except (Except, MonadError (..), liftEither, runExcept)
 import Control.Monad.Reader (ReaderT (..), ask, asks, local)
-import Control.Monad.State (StateT (..), execStateT, get, gets, modify')
-import Data.Function (on)
-import Data.List (foldl', groupBy)
+import Control.Monad.State (MonadState, State, StateT (..), execStateT, get, gets, modify', put, runState)
+import Data.Foldable (asum)
+import Data.List (elemIndex, foldl', transpose)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Ourlude
-import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, Pattern (..), TypeExpr (..), TypeName, TypeVar, ValName)
+import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, TypeExpr (..), TypeName, TypeVar, ValName)
 import qualified Parser as P
 
 data AST t = AST TypeInformation [ValueDefinition t] deriving (Eq, Show)
@@ -57,16 +58,6 @@ closeTypeExpr t = SchemeExpr (names t |> Set.toList) t
     names (CustomType _ typs) = foldMap names typs
     names (TypeVar n) = Set.singleton n
     names (t1 :-> t2) = names t1 <> names t2
-
-data Expr t
-  = LetExpr [ValueDefinition t] (Expr t)
-  | CaseExpr (Expr t) [PatternDef t]
-  | LittExpr Litteral
-  | Builtin Builtin
-  | NameExpr Name
-  | ApplyExpr (Expr t) (Expr t)
-  | LambdaExpr ValName t (Expr t)
-  deriving (Eq, Show)
 
 data Builtin
   = Add
@@ -87,7 +78,41 @@ data Builtin
   | Negate
   deriving (Eq, Show)
 
-data PatternDef t = PatternDef Pattern (Expr t) deriving (Eq, Show)
+data Expr t
+  = LetExpr [ValueDefinition t] (Expr t)
+  | CaseExpr (Expr t) [(Pattern, Expr t)]
+  | Error String
+  | LittExpr Litteral
+  | Builtin Builtin
+  | NameExpr Name
+  | ApplyExpr (Expr t) (Expr t)
+  | LambdaExpr ValName t (Expr t)
+  deriving (Eq, Show)
+
+data Pattern
+  = LitteralPattern Litteral
+  | NamePattern Name
+  | Wildcard
+  | ConstructorPattern ConstructorName [Name]
+  deriving (Eq, Show)
+
+substName :: Name -> Name -> Expr t -> Expr t
+substName old new = go
+  where
+    names :: [ValueDefinition t] -> [Name]
+    names = map (\(ValueDefinition n _ _ _) -> n)
+
+    go :: Expr t -> Expr t
+    go (NameExpr name) | name == old = NameExpr new
+    go (ApplyExpr f e) = ApplyExpr (go f) (go e)
+    go (CaseExpr scrut branches) =
+      CaseExpr (go scrut) (map (second go) branches)
+    go (LambdaExpr name t e) | name /= old = LambdaExpr name t (go e)
+    go (LetExpr defs e)
+      | old `notElem` names defs =
+        let changeDef (ValueDefinition n dec t e') = ValueDefinition n dec t (go e')
+         in LetExpr (map changeDef defs) (go e)
+    go terminal = terminal
 
 data SimplifierError
   = -- Multiple type annotations are present for the same value
@@ -364,8 +389,8 @@ convertExpr (P.IfExpr cond thenn elsse) = do
   return
     ( CaseExpr
         cond'
-        [ PatternDef (LitteralPattern (BoolLitteral True)) thenn',
-          PatternDef (LitteralPattern (BoolLitteral False)) elsse'
+        [ (LitteralPattern (BoolLitteral True), thenn'),
+          (LitteralPattern (BoolLitteral False), elsse')
         ]
     )
 convertExpr (P.NameExpr name) = Right (NameExpr name)
@@ -377,86 +402,20 @@ convertExpr (P.ApplyExpr f exprs) = do
   f' <- convertExpr f
   exprs' <- traverse convertExpr exprs
   return (foldl' ApplyExpr f' exprs')
-convertExpr (P.CaseExpr expr patterns) = do
-  let transformPat (P.PatternDef p e) = PatternDef p <$> convertExpr e
-  patterns' <- traverse transformPat patterns
-  expr' <- convertExpr expr
-  return (CaseExpr expr' patterns')
+convertExpr (P.CaseExpr expr patterns) = undefined
 convertExpr (P.LetExpr defs e) = do
   defs' <- convertValueDefinitions defs
   e' <- convertExpr e
   return (LetExpr defs' e')
 
-data PatternTree = Leaf (Expr ()) | Branch [(Pattern, PatternTree)] | Empty deriving (Eq, Show)
-
--- Calculate the depth of a given tree of patterns
---
--- This is useful to know the number of lambda arguments we might need
-treeDepth :: PatternTree -> Int
-treeDepth (Leaf _) = 0
-treeDepth (Branch bs) = map (snd >>> treeDepth) bs |> maximum |> (+ 1)
-treeDepth _ = error "Impossible case reached in treeDepth"
-
--- True if a given pattern is equivalent, or captures more values than another
-covers :: Pattern -> Pattern -> Bool
-covers WildcardPattern WildcardPattern = True
-covers WildcardPattern (NamePattern _) = True
-covers WildcardPattern _ = True
-covers (NamePattern _) (NamePattern _) = True
-covers (NamePattern _) WildcardPattern = True
-covers (NamePattern _) _ = True
-covers (LitteralPattern l1) (LitteralPattern l2) | l1 == l2 = True
-covers (ConstructorPattern c1 pats1) (ConstructorPattern c2 pats2) =
-  c1 == c2 && length pats1 == length pats2 && all (uncurry covers) (zip pats1 pats2)
-covers _ _ = False
-
--- This adds a full block pattern to the pattern tree
-addBranches :: ([Pattern], Expr ()) -> PatternTree -> PatternTree
-addBranches _ (Leaf expr) = Leaf expr
-addBranches ([], expr) Empty = Leaf expr
-addBranches (p : ps, expr) Empty = Branch [(p, addBranches (ps, expr) Empty)]
-addBranches (p : ps, expr) (Branch bs) =
-  -- We trickle down the case generation when we cover that pattern,
-  -- but we only need to create a new branch if no pattern completely covers us
-  let trickle (pat, tree) =
-        if covers p pat
-          then (pat, addBranches (ps, expr) tree)
-          else (pat, tree)
-      trickled = map trickle bs
-      extra = (p, addBranches (ps, expr) Empty)
-      bs' =
-        if any (\(pat, _) -> covers pat p) bs
-          then trickled
-          else extra : trickled
-   in Branch bs'
-addBranches _ _ = error "Impossible case in addBranches"
-
-lambdaNames :: [Name]
-lambdaNames = map (\x -> "$" ++ show x) [(0 :: Integer) ..]
-
--- Convert a pattern tree into a correct expression.
---
--- This creates a lambda expression, and then creates the necessary
--- nested cases.
-convertTree :: PatternTree -> Expr ()
-convertTree tree =
-  foldr
-    (`LambdaExpr` ())
-    (fold lambdaNames tree)
-    (take (treeDepth tree) lambdaNames)
-  where
-    fold :: [Name] -> PatternTree -> Expr ()
-    fold _ (Leaf expr) = expr
-    fold (n : ns) (Branch bs) =
-      let makeCase (pat, tree') = PatternDef pat (fold ns tree')
-       in CaseExpr (NameExpr n) (map makeCase (reverse bs))
-    fold _ _ = error "Impossible case in convertTree"
-
 -- This converts value definitions by gathering the different patterns into a single lambda expression,
 -- and adding the optional type annotation if it exists.
 -- This will emit errors if any discrepencies are encountered.
 convertValueDefinitions :: [P.ValueDefinition] -> Either SimplifierError [ValueDefinition ()]
-convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
+convertValueDefinitions = undefined
+
+{-
+groupBy ((==) `on` getName) >>> traverse gather
   where
     getTypeAnnotations ls =
       (catMaybes <<< (`map` ls)) <| \case
@@ -491,6 +450,201 @@ convertValueDefinitions = groupBy ((==) `on` getName) >>> traverse gather
       let tree = foldl' (flip addBranches) Empty pats
           expr = convertTree tree
       return (ValueDefinition name schemeExpr () expr)
+-}
+
+{- Pattern Matching Simplifying -}
+
+-- Check that a pattern is not a wildcard
+notWildcard :: P.Pattern -> Bool
+notWildcard P.WildcardPattern = False
+notWildcard _ = True
+
+swap :: Int -> [a] -> [a]
+swap i xs = (xs !! i) : (zip [0 ..] xs |> filter ((/= i) . fst) |> map snd)
+
+-- This is a matrix of patterns, the representation of some match expression
+--
+-- This matrix might have multiple columns, as generated by a function
+-- definition.
+newtype Matrix a = Matrix [Row a] deriving (Eq, Show)
+
+-- Represents a row in our pattern matrix
+data Row a = Row
+  { -- The patterns contained in this row
+    rowPats :: [P.Pattern],
+    -- The value contained in this row
+    rowVal :: a
+  }
+  deriving (Eq, Show)
+
+allWildCards :: Row a -> Bool
+allWildCards = rowPats >>> all (== P.WildcardPattern)
+
+gatherBranches :: [P.Pattern] -> [Branch]
+gatherBranches = foldMap pluckHead >>> Set.toList
+  where
+    pluckHead :: P.Pattern -> Set.Set Branch
+    pluckHead (P.LitteralPattern l) =
+      Set.singleton (LitteralBranch l)
+    pluckHead (P.ConstructorPattern name pats) =
+      Set.singleton (ConstructorBranch name (length pats))
+    pluckHead _ = Set.empty
+
+-- Get all the columns of a matrix
+columns :: Matrix a -> [[P.Pattern]]
+columns (Matrix rows) = rows |> map rowPats |> transpose
+
+-- Select the index of the next column in the matrix
+nextColumn :: Matrix a -> Maybe Int
+nextColumn = columns >>> map (any notWildcard) >>> elemIndex True
+
+-- Swap the nth column of a matrix with the first column
+swapColumn :: Int -> Matrix a -> Matrix a
+swapColumn index (Matrix rows) =
+  let vals = map rowVal rows
+      pats = map rowPats rows
+      transformed = pats |> transpose |> swap index |> transpose
+   in Matrix (zipWith Row transformed vals)
+
+-- Find the first name present in the first column of a matrix
+firstName :: Matrix a -> Maybe String
+firstName (Matrix rows) = map stripName rows |> asum
+  where
+    stripName :: Row a -> Maybe String
+    stripName (Row (P.NamePattern n : _) _) = Just n
+    stripName _ = Nothing
+
+-- Calculate the resulting matrix after choosing the default branch
+defaultMatrix :: Matrix a -> Matrix a
+defaultMatrix (Matrix rows) =
+  rows |> filter isDefault |> map stripHead |> Matrix
+  where
+    isDefault :: Row a -> Bool
+    isDefault (Row [] _) = True
+    isDefault (Row (P.WildcardPattern : _) _) = True
+    isDefault (Row (P.NamePattern _ : _) _) = True
+    isDefault _ = False
+
+    stripHead :: Row a -> Row a
+    stripHead (Row pats a) = Row (tail pats) a
+
+-- Calculate the matrix resulting after taking a branch
+branchMatrix :: Branch -> Matrix a -> Matrix a
+branchMatrix branch (Matrix rows) =
+  rows |> map (\(Row pats a) -> (`Row` a) <$> newPats pats) |> catMaybes |> Matrix
+  where
+    matches :: Branch -> P.Pattern -> Maybe [P.Pattern]
+    matches (LitteralBranch l) (P.LitteralPattern l') | l == l' = Just []
+    matches (ConstructorBranch name _) (P.ConstructorPattern name' pats)
+      | name == name' =
+        Just pats
+    matches _ _ = Nothing
+
+    makeWildCards :: Branch -> [P.Pattern]
+    makeWildCards (LitteralBranch _) = []
+    makeWildCards (ConstructorBranch _ arity) = replicate arity P.WildcardPattern
+
+    newPats :: [P.Pattern] -> Maybe [P.Pattern]
+    newPats [] = Just []
+    newPats (P.WildcardPattern : rest) =
+      Just (makeWildCards branch ++ rest)
+    newPats (P.NamePattern _ : rest) =
+      Just (makeWildCards branch ++ rest)
+    newPats (pat : rest) = (++ rest) <$> matches branch pat
+
+-- Represents a decision tree we use to generate a case expression.
+--
+-- The idea is that the tree represents an imperative set of commands we can
+-- use to advance our matches against some expressions.
+data Tree a
+  = -- Represents a failure in our pattern matching process
+    Fail
+  | -- Represents the output of a value
+    Leaf a
+  | -- Swapping the current value in index `i` with the first value, then continue
+    Swap Int (Tree a)
+  | -- Replace all occurences of a given name with the first value's name, and continue
+    SubstOut Name (Tree a)
+  | -- Here we have the actual branching
+    --
+    -- Each of these is a distinct possibility, based on the first value.
+    -- The last item is the default branch.
+    Select [(Branch, Tree a)] (Tree a)
+  deriving (Eq, Show)
+
+-- Represents a type of branch we can take in our decision tree
+data Branch
+  = -- A branch for a constructor of a certain arity
+    ConstructorBranch ConstructorName Int
+  | -- A branch for a value of literal type
+    LitteralBranch Litteral
+  deriving (Eq, Ord, Show)
+
+-- Build up a decision tree from a pattern matrix
+buildTree :: Matrix a -> Tree a
+buildTree (Matrix []) = Fail
+buildTree (Matrix (r : _)) | allWildCards r = Leaf (rowVal r)
+buildTree mat = case nextColumn mat of
+  Nothing -> error "There must be a non wildcard in one of the rows"
+  Just 0 ->
+    let col = head (columns mat)
+        makeTree branch = (branch, buildTree (branchMatrix branch mat))
+        branches = gatherBranches col |> map makeTree
+        default' = buildTree (defaultMatrix mat)
+        baseTree = Select branches default'
+     in case firstName mat of
+          Just n -> SubstOut n baseTree
+          Nothing -> baseTree
+  Just n -> Swap n (buildTree (swapColumn n mat))
+
+newtype TreeM a = TreeM (State Int a)
+  deriving (Functor, Applicative, Monad, MonadState Int)
+
+runTreeM :: TreeM a -> a
+runTreeM (TreeM m) = runState m 0 |> fst
+
+-- Create a fresh name in the Tree folding context
+fresh :: TreeM ValName
+fresh = do
+  c <- get
+  put (c + 1)
+  return ("$" ++ show c)
+
+-- Fold down a decision tree yielding expressions into a final case expression
+--
+-- We need to know the number of initial values we're matching against,
+-- and have access to the context in which we fold down trees.
+foldTree :: Int -> Tree (Expr t) -> TreeM ([ValName], Expr t)
+foldTree patCount theTree = do
+  names <- replicateM patCount fresh
+  expr <- go names theTree
+  return (names, expr)
+  where
+    handleBranch :: [String] -> (Branch, Tree (Expr t)) -> TreeM (Pattern, Expr t)
+    handleBranch names (branch, tree) = case branch of
+      LitteralBranch l -> (LitteralPattern l,) <$> go names tree
+      ConstructorBranch cstr arity -> do
+        newNames <- replicateM arity fresh
+        expr <- go (newNames ++ names) tree
+        return (ConstructorPattern cstr newNames, expr)
+
+    go :: [ValName] -> Tree (Expr t) -> TreeM (Expr t)
+    go names tree = case tree of
+      Fail -> return (Error "Pattern Match Failure")
+      Leaf expr -> return expr
+      Swap i tree' -> go (swap i names) tree'
+      SubstOut old tree' -> substName old (head names) <$> go names tree'
+      Select branches default' -> do
+        let rest = tail names
+            scrut = NameExpr (head names)
+        branchCases <- traverse (handleBranch rest) branches
+        defaultExpr <- go rest default'
+        return (CaseExpr scrut (branchCases ++ [(Wildcard, defaultExpr)]))
+
+compileMatrix :: Matrix (Expr t) -> ([ValName], Expr t)
+compileMatrix mat@(Matrix rows) =
+  let patCount = length (rowPats (head rows))
+   in buildTree mat |> foldTree patCount |> runTreeM
 
 convertDefinitions :: [P.Definition] -> Either SimplifierError [ValueDefinition ()]
 convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefinitions

@@ -123,7 +123,7 @@ data Litteral
   = IntLitteral Int
   | StringLitteral String
   | BoolLitteral Bool
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 data BinOp
   = Add

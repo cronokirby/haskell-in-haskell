@@ -6,10 +6,12 @@ module Ourlude
     (<<<),
     foldMapM,
     mapLeft,
+    first, second
   )
 where
 
 import Prelude
+import Data.Bifunctor (first, second)
 
 infixl 1 |>
 
