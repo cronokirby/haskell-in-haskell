@@ -49,14 +49,14 @@ data ValueDefinition t = ValueDefinition ValName (Maybe SchemeExpr) t (Expr t) d
 data SchemeExpr = SchemeExpr [TypeVar] TypeExpr deriving (Eq, Show)
 
 closeTypeExpr :: TypeExpr -> SchemeExpr
-closeTypeExpr t = SchemeExpr (names t) t
+closeTypeExpr t = SchemeExpr (names t |> Set.toList) t
   where
-    names StringType = []
-    names IntType = []
-    names BoolType = []
-    names (CustomType _ typs) = typs >>= names
-    names (TypeVar n) = [n]
-    names (t1 :-> t2) = names t1 ++ names t2
+    names StringType = Set.empty
+    names IntType = Set.empty
+    names BoolType = Set.empty
+    names (CustomType _ typs) = foldMap names typs
+    names (TypeVar n) = Set.singleton n
+    names (t1 :-> t2) = names t1 <> names t2
 
 data Expr t
   = LetExpr [ValueDefinition t] (Expr t)
