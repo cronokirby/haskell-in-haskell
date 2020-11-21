@@ -1,16 +1,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 
 module Typer (typer, TypeError) where
 
 import Control.Monad
   ( foldM,
     forM,
-    forM_,
     unless,
-    when,
     zipWithM,
   )
 import Control.Monad.Except
@@ -20,20 +17,16 @@ import Control.Monad.Except
     runExcept,
   )
 import Control.Monad.Reader
-  ( MonadReader (ask, local),
+  ( MonadReader (local),
     ReaderT (..),
     asks,
   )
 import Control.Monad.State
   ( MonadState (get, put),
     StateT (runStateT),
-    execStateT,
-    gets,
-    modify',
   )
 import Data.List (delete, find)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Ourlude
 import Simplifier
@@ -234,12 +227,6 @@ withBound a = local (\r -> r {bound = Set.insert a (bound r)})
 withManyBound :: Set.Set TypeVar -> Infer a -> Infer a
 withManyBound vars = local (\r -> r {bound = Set.union (bound r) vars})
 
-getConstructorType :: ConstructorName -> Infer SchemeExpr
-getConstructorType name = lookupConstructor name |> fmap constructorType
-
-allConstructors :: Infer (Map.Map ConstructorName SchemeExpr)
-allConstructors = typeInformation |> fmap (constructorMap >>> Map.map constructorType)
-
 -- Represents an ordered collection about assumptions we've gathered so far
 newtype Assumptions = Assumptions [(Name, TypeExpr)]
   deriving (Show, Semigroup, Monoid)
@@ -369,7 +356,7 @@ inferPatternDef scrutinee (PatternDef pat e) = do
         let patTypes = TypeVar <$> patVars
         (cs, valMap, boundSet) <- mconcat <$> zipWithM inspectPattern patTypes pats
         let patType = foldr (:->) scrutinee' patTypes
-        constructor <- getConstructorType name
+        constructor <- constructorType <$> lookupConstructor name
         return (ExplicitlyInstantiates patType constructor : cs, valMap, Set.fromList patVars <> boundSet)
 
     adjustValAssumptions :: Map.Map ValName TypeExpr -> Assumptions -> Assumptions
@@ -399,6 +386,8 @@ inferDefs usageAs defs = do
         (removeAssumption n as', [ImplicitlyInstantations t' bound' t | t' <- lookupAssumptions n as'] <> cs')
   let (as', cs') = foldr process (as, cs) usages
   return (as', cs', defs')
+
+{- Constraint Solving -}
 
 -- Solve a list of constraints, by producing a valid substitution of type variables
 solve :: [Constraint] -> Infer Subst
@@ -454,6 +443,8 @@ bind a t
   | t == TypeVar a = return mempty
   | Set.member a (ftv t) = throwError (InfiniteType a t)
   | otherwise = return (singleSubst a t)
+
+{- Type Annotation -}
 
 -- Represents the contextual information we have while typing our syntax tree
 --
@@ -530,6 +521,9 @@ inferTypes defs = do
   let cs' = [ExplicitlyInstantiates t s | (x, s) <- Map.toList constructors, t <- lookupAssumptions x as]
   sub <- solve (cs' <> cs)
   liftEither <| runTyper (typeDefinitions defs') sub
+  where
+    allConstructors :: Infer (Map.Map ConstructorName SchemeExpr)
+    allConstructors = typeInformation |> fmap (constructorMap >>> Map.map constructorType)
 
 -- Run the type checker on a given AST, producing just the value definitions, annotated
 typer :: AST () -> Either TypeError (AST SchemeExpr)

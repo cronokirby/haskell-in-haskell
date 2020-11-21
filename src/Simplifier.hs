@@ -29,10 +29,10 @@ module Simplifier
   )
 where
 
-import Control.Monad
-import Control.Monad.Except
-import Control.Monad.Reader
-import Control.Monad.State
+import Control.Monad (forM_, when)
+import Control.Monad.Except (Except, MonadError (..), liftEither, runExcept)
+import Control.Monad.Reader (ReaderT (..), ask, asks, local)
+import Control.Monad.State (StateT (..), execStateT, get, gets, modify')
 import Data.Function (on)
 import Data.List (foldl', groupBy)
 import qualified Data.Map as Map
