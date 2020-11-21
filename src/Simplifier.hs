@@ -645,7 +645,9 @@ foldTree patCount theTree = do
             scrut = NameExpr (head names)
         branchCases <- traverse (handleBranch rest) branches
         defaultExpr <- go rest default'
-        return (CaseExpr scrut (branchCases ++ [(Wildcard, defaultExpr)]))
+        return <| case branchCases of
+          [] -> defaultExpr
+          _ -> CaseExpr scrut (branchCases ++ [(Wildcard, defaultExpr)])
 
 compileMatrix :: Matrix (Expr t) -> ([ValName], Expr t)
 compileMatrix mat@(Matrix rows) =
