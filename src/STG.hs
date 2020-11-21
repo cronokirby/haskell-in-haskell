@@ -3,10 +3,8 @@
 
 module STG (STG (..), Atom (..), Litteral (..), ValName, stg) where
 
-import Control.Monad (mapM)
 import Control.Monad.Reader
 import Control.Monad.State
-import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Ourlude
 import Simplifier

@@ -95,6 +95,8 @@ data ValueDefinition
   | NameDefinition ValName [Pattern] Expr
   deriving (Eq, Show)
 
+infixr 2 :->
+
 data TypeExpr
   = StringType
   | IntType
