@@ -33,7 +33,7 @@ where
 import Control.Monad (forM_, replicateM, when)
 import Control.Monad.Except (Except, MonadError (..), liftEither, runExcept)
 import Control.Monad.Reader (ReaderT (..), ask, asks, local)
-import Control.Monad.State (MonadState, State, StateT (..), execStateT, get, gets, modify', put, runState)
+import Control.Monad.State (MonadState, StateT (..), execStateT, get, gets, modify', put)
 import Data.Foldable (asum)
 import Data.Function (on)
 import Data.List (elemIndex, foldl', groupBy, transpose)
@@ -91,9 +91,9 @@ data Expr t
   deriving (Eq, Show)
 
 data Pattern
-  = LitteralPattern Litteral
-  | Wildcard
-  | ConstructorPattern ConstructorName [Name]
+  = Wildcard
+  | LitteralPattern Litteral
+  | ConstructorPattern ConstructorName [ValName]
   deriving (Eq, Show)
 
 subst :: Name -> Expr t -> Expr t -> Expr t
@@ -137,6 +137,22 @@ data ResolutionError
   | -- We tried to lookup a constructor that doesn't exist
     UnknownConstructor ConstructorName
   deriving (Eq, Show)
+
+-- Represents the context we have access to in the simplifier
+--
+-- We do this in order to keep a global source of fresh variables
+newtype Simplifier a = Simplifier (StateT Int (Except SimplifierError) a)
+  deriving (Functor, Applicative, Monad, MonadState Int, MonadError SimplifierError)
+
+runSimplifier :: Simplifier a -> Either SimplifierError a
+runSimplifier (Simplifier m) = runStateT m 0 |> runExcept |> fmap fst
+
+-- Create a fresh name in the Tree folding context
+fresh :: Simplifier ValName
+fresh = do
+  c <- get
+  put (c + 1)
+  return ("$" ++ show c)
 
 {- Gathering Type Information -}
 
@@ -223,7 +239,7 @@ gatherConstructorMap =
   foldMap <| \case
     P.TypeDefinition name typeVars definitions ->
       let root = CustomType name (map TypeVar typeVars)
-       in foldMap (makeMap typeVars root) (zip definitions [0..])
+       in foldMap (makeMap typeVars root) (zip definitions [0 ..])
     _ -> Map.empty
   where
     makeMap :: [TypeVar] -> TypeExpr -> (ConstructorDefinition, Int) -> ConstructorMap
@@ -349,15 +365,15 @@ gatherResolutions defs = do
             modify' (Map.insert n (Synonym resolved))
 
 -- Gather all of the type information we need from the parsed definitions
-gatherTypeInformation :: [P.Definition] -> Either SimplifierError TypeInformation
+gatherTypeInformation :: [P.Definition] -> Simplifier TypeInformation
 gatherTypeInformation defs = do
-  resolutions' <- mapLeft SimplifierResolution <| gatherResolutions defs
+  resolutions' <- either (SimplifierResolution >>> throwError) return (gatherResolutions defs)
   let constructorMap' = gatherConstructorMap defs
   return (TypeInformation resolutions' constructorMap')
 
 {- Converting the actual AST and Expression Tree -}
 
-convertExpr :: P.Expr -> Either SimplifierError (Expr ())
+convertExpr :: P.Expr -> Simplifier (Expr ())
 -- We replace binary expressions with the corresponding bultin functions
 convertExpr (P.BinExpr op e1 e2) = do
   let b = case op of
@@ -394,8 +410,8 @@ convertExpr (P.IfExpr cond thenn elsse) = do
           (LitteralPattern (BoolLitteral False), elsse')
         ]
     )
-convertExpr (P.NameExpr name) = Right (NameExpr name)
-convertExpr (P.LittExpr litt) = Right (LittExpr litt)
+convertExpr (P.NameExpr name) = return (NameExpr name)
+convertExpr (P.LittExpr litt) = return (LittExpr litt)
 convertExpr (P.LambdaExpr names body) = do
   body' <- convertExpr body
   return (foldr (`LambdaExpr` ()) body' names)
@@ -407,8 +423,9 @@ convertExpr (P.CaseExpr expr patterns) = do
   expr' <- convertExpr expr
   matrix <- Matrix <$> traverse (\(p, e) -> Row [p] <$> convertExpr e) patterns
   -- We're guaranteed to have a single name, because we have a single column
-  let ([name], caseExpr) = compileMatrix matrix
-  return (subst name expr' caseExpr)
+  (names, caseExpr) <- compileMatrix matrix
+  -- We create a let, because inlining isn't necessarily desired
+  return (LetExpr [ValueDefinition (head names) Nothing () expr'] caseExpr)
 convertExpr (P.LetExpr defs e) = do
   defs' <- convertValueDefinitions defs
   e' <- convertExpr e
@@ -417,7 +434,7 @@ convertExpr (P.LetExpr defs e) = do
 -- This converts value definitions by gathering the different patterns into a single lambda expression,
 -- and adding the optional type annotation if it exists.
 -- This will emit errors if any discrepencies are encountered.
-convertValueDefinitions :: [P.ValueDefinition] -> Either SimplifierError [ValueDefinition ()]
+convertValueDefinitions :: [P.ValueDefinition] -> Simplifier [ValueDefinition ()]
 convertValueDefinitions =
   groupBy ((==) `on` getName) >>> traverse gather
   where
@@ -427,7 +444,7 @@ convertValueDefinitions =
         P.TypeAnnotation _ typ -> Just typ
         _ -> Nothing
 
-    squashPatterns :: [P.ValueDefinition] -> Either SimplifierError (Matrix (Expr ()))
+    squashPatterns :: [P.ValueDefinition] -> Simplifier (Matrix (Expr ()))
     squashPatterns ls = do
       let strip (P.NameDefinition _ pats body) = do
             body' <- convertExpr body
@@ -441,19 +458,19 @@ convertValueDefinitions =
     getName (P.TypeAnnotation name _) = name
     getName (P.NameDefinition name _ _) = name
 
-    gather :: [P.ValueDefinition] -> Either SimplifierError (ValueDefinition ())
+    gather :: [P.ValueDefinition] -> Simplifier (ValueDefinition ())
     gather [] = error "groupBy returned empty list"
     gather information = do
       let name = getName (head information)
           annotations = getTypeAnnotations information
       schemeExpr <- case map closeTypeExpr annotations of
-        [] -> Right Nothing
-        [single] -> Right (Just single)
-        tooMany -> Left (MultipleTypeAnnotations name tooMany)
+        [] -> return Nothing
+        [single] -> return (Just single)
+        tooMany -> throwError (MultipleTypeAnnotations name tooMany)
       matrix <- squashPatterns information
       validateMatrix matrix
-      let (names, caseExpr) = compileMatrix matrix
-          expr = foldr (`LambdaExpr` ()) caseExpr names
+      (names, caseExpr) <- compileMatrix matrix
+      let expr = foldr (`LambdaExpr` ()) caseExpr names
       return (ValueDefinition name schemeExpr () expr)
 
 {- Pattern Matching Simplifying -}
@@ -472,7 +489,7 @@ swap i xs = (xs !! i) : (zip [0 ..] xs |> filter ((/= i) . fst) |> map snd)
 -- definition.
 newtype Matrix a = Matrix [Row a] deriving (Eq, Show)
 
-validateMatrix :: Matrix a -> Either SimplifierError ()
+validateMatrix :: MonadError SimplifierError m => Matrix a -> m ()
 validateMatrix _ = return ()
 
 -- Represents a row in our pattern matrix
@@ -604,30 +621,17 @@ buildTree mat = case nextColumn mat of
           Nothing -> baseTree
   Just n -> Swap n (buildTree (swapColumn n mat))
 
-newtype TreeM a = TreeM (State Int a)
-  deriving (Functor, Applicative, Monad, MonadState Int)
-
-runTreeM :: TreeM a -> a
-runTreeM (TreeM m) = runState m 0 |> fst
-
--- Create a fresh name in the Tree folding context
-fresh :: TreeM ValName
-fresh = do
-  c <- get
-  put (c + 1)
-  return ("$" ++ show c)
-
 -- Fold down a decision tree yielding expressions into a final case expression
 --
 -- We need to know the number of initial values we're matching against,
 -- and have access to the context in which we fold down trees.
-foldTree :: Int -> Tree (Expr t) -> TreeM ([ValName], Expr t)
+foldTree :: Int -> Tree (Expr t) -> Simplifier ([ValName], Expr t)
 foldTree patCount theTree = do
   names <- replicateM patCount fresh
   expr <- go names theTree
   return (names, expr)
   where
-    handleBranch :: [String] -> (Branch, Tree (Expr t)) -> TreeM (Pattern, Expr t)
+    handleBranch :: [String] -> (Branch, Tree (Expr t)) -> Simplifier (Pattern, Expr t)
     handleBranch names (branch, tree) = case branch of
       LitteralBranch l -> (LitteralPattern l,) <$> go names tree
       ConstructorBranch cstr arity -> do
@@ -635,7 +639,7 @@ foldTree patCount theTree = do
         expr <- go (newNames ++ names) tree
         return (ConstructorPattern cstr newNames, expr)
 
-    go :: [ValName] -> Tree (Expr t) -> TreeM (Expr t)
+    go :: [ValName] -> Tree (Expr t) -> Simplifier (Expr t)
     go names tree = case tree of
       Fail -> return (Error "Pattern Match Failure")
       Leaf expr -> return expr
@@ -650,14 +654,14 @@ foldTree patCount theTree = do
           [] -> defaultExpr
           _ -> CaseExpr scrut (branchCases ++ [(Wildcard, defaultExpr)])
 
-compileMatrix :: Matrix (Expr t) -> ([ValName], Expr t)
+compileMatrix :: Matrix (Expr t) -> Simplifier ([ValName], Expr t)
 compileMatrix mat@(Matrix rows) =
   let patCount = length (rowPats (head rows))
-   in buildTree mat |> foldTree patCount |> runTreeM
+   in buildTree mat |> foldTree patCount
 
 {- Glueing it all together -}
 
-convertDefinitions :: [P.Definition] -> Either SimplifierError [ValueDefinition ()]
+convertDefinitions :: [P.Definition] -> Simplifier [ValueDefinition ()]
 convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefinitions
   where
     pluckValueDefinition :: P.Definition -> Maybe P.ValueDefinition
@@ -665,7 +669,8 @@ convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefi
     pluckValueDefinition _ = Nothing
 
 simplifier :: P.AST -> Either SimplifierError (AST ())
-simplifier (P.AST defs) = do
-  info <- gatherTypeInformation defs
-  defs' <- convertDefinitions defs
-  return (AST info defs')
+simplifier (P.AST defs) =
+  runSimplifier <| do
+    info <- gatherTypeInformation defs
+    defs' <- convertDefinitions defs
+    return (AST info defs')

@@ -25,7 +25,7 @@ import Control.Monad.State
   ( MonadState (get, put),
     StateT (runStateT),
   )
-import Data.List (delete, find)
+import Data.List (delete, find, nub)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Ourlude
@@ -51,6 +51,7 @@ import Simplifier
     lookupConstructor,
     resolveM,
   )
+
 
 asGeneral :: SchemeExpr -> SchemeExpr -> Bool
 asGeneral (SchemeExpr vars1 _) (SchemeExpr vars2 _) = length vars1 >= length vars2
@@ -393,15 +394,16 @@ inferDefs usageAs defs = do
 -- Solve a list of constraints, by producing a valid substitution of type variables
 solve :: [Constraint] -> Infer Subst
 solve [] = return mempty
-solve constraints = solve' (nextSolvable constraints)
+solve constraints = solve' (nextSolvable True constraints)
   where
     chooseOne :: Eq a => [a] -> [(a, [a])]
     chooseOne as = [(a, bs) | a <- as, let bs = delete a as]
 
-    nextSolvable :: [Constraint] -> (Constraint, [Constraint])
-    nextSolvable xs = case find solvable (chooseOne xs) of
+    nextSolvable :: Bool -> [Constraint] -> (Constraint, [Constraint])
+    nextSolvable trySorting xs = case find solvable (chooseOne xs) of
       Just c -> c
-      _ -> error "Couldn't find solvable constraint"
+      Nothing | trySorting -> nextSolvable False (nub xs)
+      Nothing -> error ("Couldn't find solvable constraint inside of:\n" ++ show xs)
       where
         solvable (SameType _ _, _) = True
         solvable (ExplicitlyInstantiates _ _, _) = True

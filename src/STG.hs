@@ -71,26 +71,18 @@ data Expr
 -- generation more cumbersome
 data Alts
   = -- Potential branches for integer litterals, then a default expression
-    IntAlts [(Int, Expr)] DefaultAlt
+    IntAlts [(Int, Expr)] (Maybe Expr)
   | -- Potential branches for booleans, then a default expression
     --
     -- Because booleans only have two values, we could simplify this representation,
     -- but that would make generating STG harder, and whatever compiler
     -- for the low level IR we generate should be able to see the redundancy.
-    BoolAlts [(Bool, Expr)] DefaultAlt
+    BoolAlts [(Bool, Expr)] (Maybe Expr)
   | -- Potential branches for string litterals, then a default case
-    StringAlts [(String, Expr)] DefaultAlt
+    StringAlts [(String, Expr)] (Maybe Expr)
   | -- Potential branches for constructor tags, introducing names,
     -- and then we end, as usual, with a default case
-    ConstrAlts [(Tag, [ValName], Expr)] DefaultAlt
-  deriving (Eq, Show)
-
--- A default alternative, which may introduce a variable, or not
-data DefaultAlt
-  = -- A wildcard alternative, introducing no variables
-    WildCard Expr
-  | -- A variable alternative, introducing a single variable
-    VarAlt ValName Expr
+    ConstrAlts [(Tag, [ValName], Expr)] (Maybe Expr)
   deriving (Eq, Show)
 
 -- A flag telling us when a thunk is updateable
@@ -195,13 +187,22 @@ convertExpr =
       return (makeLet bindings (atomToExpr atom))
     handle S.ApplyExpr {} = error "Apply Expressions shouldn't appear here"
     handle S.Builtin {} = error "Unary builtin operation"
-    handle S.CaseExpr {} = undefined
+    handle (S.CaseExpr _ []) = return (Error "Empty Case Expression")
+    handle (S.CaseExpr e branches) = convertExpr e >>= convertBranches branches
 
     gatherAtoms :: [S.Expr SchemeExpr] -> STGM ([Binding], [Atom])
     gatherAtoms = mapM atomize >>> fmap gatherBindings
 
     gatherBindings :: [([b], a)] -> ([b], [a])
     gatherBindings l = (concatMap fst l, map snd l)
+
+convertBranches :: [(S.Pattern, S.Expr SchemeExpr)] -> Expr -> STGM Expr
+convertBranches branches scrut = case head branches of
+  (S.LitteralPattern (S.IntLitteral _), _) -> undefined
+  (S.LitteralPattern (S.BoolLitteral _), _) -> undefined
+  (S.LitteralPattern (S.StringLitteral _), _) -> undefined
+  (S.ConstructorPattern cstr names, _) -> undefined
+  (S.Wildcard, e) -> convertExpr e
 
 -- Gather the free names appearing in an expression
 attachFreeNames :: LambdaForm -> STGM LambdaForm
