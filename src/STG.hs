@@ -158,7 +158,16 @@ gatherApplications expression = go expression []
 atomize :: S.Expr SchemeExpr -> STGM ([Binding], Atom)
 atomize expression = case expression of
   S.LittExpr l -> return ([], LitteralAtom l)
-  S.NameExpr n -> return ([], NameAtom n)
+  S.NameExpr n -> do
+    wasConstructor <- S.isConstructor n
+    if not wasConstructor
+      then return ([], NameAtom n)
+      else do
+        (S.ConstructorInfo arity _ tag) <- S.lookupConstructor n
+        name <- fresh
+        lambdaNames <- replicateM arity fresh
+        lambda <- attachFreeNames (LambdaForm [] U lambdaNames (Constructor tag (map NameAtom lambdaNames)))
+        return ([Binding name lambda], NameAtom name)
   e -> do
     name <- fresh
     l <- exprToLambda e
@@ -207,7 +216,19 @@ convertExpr =
   where
     handle :: S.Expr SchemeExpr -> STGM Expr
     handle (S.LittExpr l) = return (Litteral l)
-    handle (S.NameExpr n) = return (Apply n [])
+    handle (S.NameExpr n) = do
+      wasConstructor <- S.isConstructor n
+      if not wasConstructor
+        then return (Apply n [])
+        else do
+          (S.ConstructorInfo arity _ tag) <- S.lookupConstructor n
+          name <- fresh
+          if arity == 0
+            then return (Constructor tag [])
+            else do
+              lambdaNames <- replicateM arity fresh
+              lambda <- attachFreeNames (LambdaForm [] U lambdaNames (Constructor tag (map NameAtom lambdaNames)))
+              return (makeLet [Binding name lambda] (Apply name []))
     handle (S.Error s) = return (Error s)
     handle (S.LetExpr defs e) = do
       defs' <- convertValueDefinitions defs
