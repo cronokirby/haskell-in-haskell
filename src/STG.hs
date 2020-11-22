@@ -1,15 +1,20 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 module STG (STG (..), Atom (..), Litteral (..), ValName, stg) where
 
+import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.State
+import Data.List (find, takeWhile)
+import Data.Maybe (fromJust)
 import qualified Data.Set as Set
 import Ourlude
 import Simplifier
   ( AST (..),
     Builtin (..),
+    ConstructorName,
     Litteral (..),
     SchemeExpr (..),
     ValName,
@@ -82,7 +87,7 @@ data Alts
     StringAlts [(String, Expr)] (Maybe Expr)
   | -- Potential branches for constructor tags, introducing names,
     -- and then we end, as usual, with a default case
-    ConstrAlts [(Tag, [ValName], Expr)] (Maybe Expr)
+    ConstrAlts [((Tag, [ValName]), Expr)] (Maybe Expr)
   deriving (Eq, Show)
 
 -- A flag telling us when a thunk is updateable
@@ -109,9 +114,11 @@ data Binding = Binding ValName LambdaForm deriving (Eq, Show)
 newtype STG = STG [Binding] deriving (Eq, Show)
 
 -- The information we have access to when compiling to STG
-newtype STGMInfo = STGMInfo
+data STGMInfo = STGMInfo
   { -- The names we know to appear at the top level
-    topLevelNames :: Set.Set ValName
+    topLevelNames :: Set.Set ValName,
+    -- The information about types and constructors
+    typeInfo :: S.TypeInformation
   }
 
 -- The Context in which we generate STG code
@@ -119,6 +126,13 @@ newtype STGMInfo = STGMInfo
 -- We have access to a source of fresh variable names.
 newtype STGM a = STGM (ReaderT STGMInfo (State Int) a)
   deriving (Functor, Applicative, Monad, MonadState Int, MonadReader STGMInfo)
+
+instance S.HasTypeInformation STGM where
+  typeInformation = asks typeInfo
+
+-- All resolution errors will have been caught in the type checker
+instance S.ResolutionM STGM where
+  throwResolution err = error ("Resolution Error in STG: " ++ show err)
 
 runSTGM :: STGM a -> STGMInfo -> a
 runSTGM (STGM m) info =
@@ -130,6 +144,10 @@ fresh = do
   x <- get
   put (x + 1)
   return ("$$" ++ show x)
+
+-- Lookup the tag associated with a constructor's name
+constructorTag :: ConstructorName -> STGM Tag
+constructorTag name = S.lookupConstructor name |> fmap S.constructorNumber
 
 gatherApplications :: S.Expr SchemeExpr -> (S.Expr SchemeExpr, [S.Expr SchemeExpr])
 gatherApplications expression = go expression []
@@ -166,7 +184,20 @@ convertExpr =
         return (makeLet bindings (Builtin b atoms))
       S.NameExpr n -> do
         (bindings, atoms) <- gatherAtoms args
-        return (makeLet bindings (Apply n atoms))
+        wasConstructor <- S.isConstructor n
+        if not wasConstructor
+          then return (makeLet bindings (Apply n atoms))
+          else do
+            (S.ConstructorInfo arity _ tag) <- S.lookupConstructor n
+            let diff = arity - length atoms
+            if diff == 0
+              then return (makeLet bindings (Constructor tag atoms))
+              else do
+                lambdaNames <- replicateM diff fresh
+                let root = Constructor tag (atoms ++ map NameAtom lambdaNames)
+                lambda <- attachFreeNames (LambdaForm [] U lambdaNames root)
+                bindingName <- fresh
+                return (makeLet (bindings ++ [Binding bindingName lambda]) (Apply bindingName []))
       e -> do
         (argBindings, atoms) <- gatherAtoms args
         (eBindings, atom) <- atomize e
@@ -198,11 +229,29 @@ convertExpr =
 
 convertBranches :: [(S.Pattern, S.Expr SchemeExpr)] -> Expr -> STGM Expr
 convertBranches branches scrut = case head branches of
-  (S.LitteralPattern (S.IntLitteral _), _) -> undefined
-  (S.LitteralPattern (S.BoolLitteral _), _) -> undefined
-  (S.LitteralPattern (S.StringLitteral _), _) -> undefined
-  (S.ConstructorPattern cstr names, _) -> undefined
+  (S.LitteralPattern (S.IntLitteral _), _) -> do
+    branches' <- findPatterns (\(S.LitteralPattern (S.IntLitteral i)) -> return i) branches
+    default' <- findDefaultExpr branches
+    return (Case scrut (IntAlts branches' default'))
+  (S.LitteralPattern (S.BoolLitteral _), _) -> do
+    branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
+    default' <- findDefaultExpr branches
+    return (Case scrut (BoolAlts branches' default'))
+  (S.LitteralPattern (S.StringLitteral _), _) -> do
+    branches' <- findPatterns (\(S.LitteralPattern (S.StringLitteral s)) -> return s) branches
+    default' <- findDefaultExpr branches
+    return (Case scrut (StringAlts branches' default'))
+  (S.ConstructorPattern _ _, _) -> do
+    branches' <- findPatterns (\(S.ConstructorPattern cstr names) -> (,names) <$> constructorTag cstr) branches
+    default' <- findDefaultExpr branches
+    return (Case scrut (ConstrAlts branches' default'))
   (S.Wildcard, e) -> convertExpr e
+  where
+    findDefaultExpr :: [(S.Pattern, S.Expr SchemeExpr)] -> STGM (Maybe Expr)
+    findDefaultExpr = find (fst >>> (== S.Wildcard)) >>> traverse (snd >>> convertExpr)
+
+    findPatterns :: (S.Pattern -> STGM a) -> [(S.Pattern, S.Expr SchemeExpr)] -> STGM [(a, Expr)]
+    findPatterns conv = takeWhile (fst >>> (/= S.Wildcard)) >>> traverse (\(pat, e) -> liftA2 (,) (conv pat) (convertExpr e))
 
 -- Gather the free names appearing in an expression
 attachFreeNames :: LambdaForm -> STGM LambdaForm
@@ -222,8 +271,17 @@ attachFreeNames lambda@(LambdaForm _ u names expr) = do
     inExpr (Let bindings e) =
       let free = inExpr e <> foldMap inBinding bindings
        in Set.difference free (bindingNames bindings)
-    inExpr Case {} = undefined
+    inExpr (Case scrut alts) = inExpr scrut <> inAlts alts
     inExpr _ = Set.empty
+
+    inAlts :: Alts -> Set.Set ValName
+    inAlts (IntAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
+    inAlts (BoolAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
+    inAlts (StringAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
+    inAlts (ConstrAlts branches def) = foldMap inCstr branches <> foldMap inExpr def
+      where
+        inCstr :: ((Tag, [ValName]), Expr) -> Set.Set ValName
+        inCstr ((_, names'), e) = Set.difference (inExpr e) (Set.fromList names')
 
     inAtom :: Atom -> Set.Set ValName
     inAtom LitteralAtom {} = Set.empty
@@ -267,9 +325,9 @@ convertAST (AST _ defs) =
   defs |> convertValueDefinitions |> fmap STG
 
 gatherInformation :: AST SchemeExpr -> STGMInfo
-gatherInformation (AST _ defs) =
+gatherInformation (AST info defs) =
   let topLevel = gatherTopLevel defs |> Set.fromList
-   in STGMInfo topLevel
+   in STGMInfo topLevel info
   where
     gatherTopLevel :: [S.ValueDefinition t] -> [ValName]
     gatherTopLevel = map (\(S.ValueDefinition n _ _ _) -> n)

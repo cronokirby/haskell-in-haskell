@@ -25,6 +25,7 @@ module Simplifier
     TypeInformation (..),
     ConstructorInfo (..),
     resolveM,
+    isConstructor,
     lookupConstructor,
     simplifier,
   )
@@ -38,7 +39,7 @@ import Data.Foldable (asum)
 import Data.Function (on)
 import Data.List (elemIndex, foldl', groupBy, transpose)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import qualified Data.Set as Set
 import Ourlude
 import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, TypeExpr (..), TypeName, TypeVar, ValName)
@@ -225,6 +226,11 @@ resolveM :: ResolutionM m => TypeExpr -> m TypeExpr
 resolveM expr = do
   resolutions' <- resolutions <$> typeInformation
   either throwResolution return (resolve resolutions' expr)
+
+isConstructor :: HasTypeInformation m => Name -> m Bool
+isConstructor name = do
+  mp <- constructorMap <$> typeInformation
+  return (Map.lookup name mp |> isJust)
 
 -- Try and lookup the information about a given constructor, failing with a resolution error
 -- if that constructor doesn't exist
