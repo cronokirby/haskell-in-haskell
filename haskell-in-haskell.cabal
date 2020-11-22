@@ -14,12 +14,14 @@ executable haskell-in-haskell
                      , haskell-in-haskell
                      , pretty-simple >=4.0 && <4.1
   default-language:    Haskell2010
+  default-extensions:  NoImplicitPrelude
 
 library
   build-depends:       base >=4.13 && <5
                      , containers >=0.6 && <0.7
                      , mtl >=2.2 && <2.3
   default-language:    Haskell2010
-  exposed-modules:     Example
+  default-extensions:  NoImplicitPrelude
+  exposed-modules:     Ourlude
   ghc-options:         -Wall
   hs-source-dirs:      src

@@ -1,6 +1,6 @@
 module Main where
 
-import Example (example)
+import Ourlude
 
 main :: IO ()
-main = putStrLn example
+main = putStrLn <| "Hello Again!"

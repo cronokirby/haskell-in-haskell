@@ -10,6 +10,8 @@ module Ourlude
   )
 where
 
+import Prelude
+
 import Data.Bifunctor (first, second)
 
 infixl 1 |>
