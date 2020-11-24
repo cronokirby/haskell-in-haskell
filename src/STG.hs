@@ -162,12 +162,7 @@ atomize expression = case expression of
     wasConstructor <- S.isConstructor n
     if not wasConstructor
       then return ([], NameAtom n)
-      else do
-        (S.ConstructorInfo arity _ tag) <- S.lookupConstructor n
-        name <- fresh
-        lambdaNames <- replicateM arity fresh
-        lambda <- attachFreeNames (LambdaForm [] U lambdaNames (Constructor tag (map NameAtom lambdaNames)))
-        return ([Binding name lambda], NameAtom name)
+      else saturateConstructorAsAtom n
   e -> do
     name <- fresh
     l <- exprToLambda e
@@ -180,6 +175,32 @@ atomToExpr (NameAtom n) = Apply n []
 makeLet :: [Binding] -> Expr -> Expr
 makeLet [] e = e
 makeLet bindings e = Let bindings e
+
+data ConstructorResult = AlreadyFull Tag [Atom] | NeededFilling [Binding] ValName
+
+saturateConstructor :: Bool -> ConstructorName -> [Atom] -> STGM ConstructorResult
+saturateConstructor alwaysSaturate name atoms = do
+  (S.ConstructorInfo arity _ tag) <- S.lookupConstructor name
+  let diff = arity - length atoms
+  if not alwaysSaturate && diff == 0
+    then return (AlreadyFull tag atoms)
+    else do
+      lambdaNames <- replicateM diff fresh
+      let root = Constructor tag (atoms ++ map NameAtom lambdaNames)
+      lambda <- attachFreeNames (LambdaForm [] U lambdaNames root)
+      bindingName <- fresh
+      return (NeededFilling [Binding bindingName lambda] bindingName)
+
+saturateConstructorAsExpr :: ConstructorName -> [Atom] -> [Binding] -> STGM Expr
+saturateConstructorAsExpr name atoms bindings =
+  convert <$> saturateConstructor False name atoms
+  where
+    convert (AlreadyFull tag as) = Constructor tag as
+    convert (NeededFilling newBindings n) = makeLet (bindings <> newBindings) (Apply n [])
+
+saturateConstructorAsAtom :: ConstructorName -> STGM ([Binding], Atom)
+saturateConstructorAsAtom name =
+  (\(NeededFilling b n) -> (b, NameAtom n)) <$> saturateConstructor True name []
 
 -- Convert an expression into an STG expression
 convertExpr :: S.Expr SchemeExpr -> STGM Expr
@@ -196,17 +217,7 @@ convertExpr =
         wasConstructor <- S.isConstructor n
         if not wasConstructor
           then return (makeLet bindings (Apply n atoms))
-          else do
-            (S.ConstructorInfo arity _ tag) <- S.lookupConstructor n
-            let diff = arity - length atoms
-            if diff == 0
-              then return (makeLet bindings (Constructor tag atoms))
-              else do
-                lambdaNames <- replicateM diff fresh
-                let root = Constructor tag (atoms ++ map NameAtom lambdaNames)
-                lambda <- attachFreeNames (LambdaForm [] U lambdaNames root)
-                bindingName <- fresh
-                return (makeLet (bindings ++ [Binding bindingName lambda]) (Apply bindingName []))
+          else saturateConstructorAsExpr n atoms bindings
       e -> do
         (argBindings, atoms) <- gatherAtoms args
         (eBindings, atom) <- atomize e
@@ -220,15 +231,7 @@ convertExpr =
       wasConstructor <- S.isConstructor n
       if not wasConstructor
         then return (Apply n [])
-        else do
-          (S.ConstructorInfo arity _ tag) <- S.lookupConstructor n
-          name <- fresh
-          if arity == 0
-            then return (Constructor tag [])
-            else do
-              lambdaNames <- replicateM arity fresh
-              lambda <- attachFreeNames (LambdaForm [] U lambdaNames (Constructor tag (map NameAtom lambdaNames)))
-              return (makeLet [Binding name lambda] (Apply name []))
+        else saturateConstructorAsExpr n [] []
     handle (S.Error s) = return (Error s)
     handle (S.LetExpr defs e) = do
       defs' <- convertValueDefinitions defs
