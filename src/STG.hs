@@ -7,8 +7,7 @@ module STG (STG (..), Atom (..), Litteral (..), ValName, stg) where
 import Control.Applicative (liftA2)
 import Control.Monad.Reader
 import Control.Monad.State
-import Data.List (find, takeWhile)
-import Data.Maybe (fromJust)
+import Data.List (find)
 import qualified Data.Set as Set
 import Ourlude
 import Simplifier
@@ -195,7 +194,7 @@ saturateConstructorAsExpr :: ConstructorName -> [Atom] -> [Binding] -> STGM Expr
 saturateConstructorAsExpr name atoms bindings =
   convert <$> saturateConstructor False name atoms
   where
-    convert (AlreadyFull tag as) = Constructor tag as
+    convert (AlreadyFull tag as) = makeLet bindings (Constructor tag as)
     convert (NeededFilling newBindings n) = makeLet (bindings <> newBindings) (Apply n [])
 
 saturateConstructorAsAtom :: ConstructorName -> STGM ([Binding], Atom)
