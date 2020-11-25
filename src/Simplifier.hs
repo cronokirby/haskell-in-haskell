@@ -465,7 +465,7 @@ convertValueDefinitions =
         [single] -> return (Just single)
         tooMany -> throwError (MultipleTypeAnnotations name tooMany)
       matrix <- squashPatterns information
-      validateMatrix matrix
+      validateMatrix name matrix
       (names, caseExpr) <- compileMatrix matrix
       let expr = foldr (`LambdaExpr` ()) caseExpr names
       return (ValueDefinition name schemeExpr () expr)
@@ -486,8 +486,14 @@ swap i xs = (xs !! i) : (zip [0 ..] xs |> filter ((/= i) . fst) |> map snd)
 -- definition.
 newtype Matrix a = Matrix [Row a] deriving (Eq, Show)
 
-validateMatrix :: MonadError SimplifierError m => Matrix a -> m ()
-validateMatrix _ = return ()
+validateMatrix :: MonadError SimplifierError m => ValName -> Matrix a -> m ()
+validateMatrix name (Matrix rows) = do
+  let lengths = map (rowPats >>> length) rows
+      allEqual = null lengths || all (== head lengths) lengths
+  unless allEqual <|
+    throwError (DifferentPatternLengths name lengths)
+  return ()
+
 
 -- Represents a row in our pattern matrix
 data Row a = Row
