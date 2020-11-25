@@ -492,6 +492,10 @@ validateMatrix name (Matrix rows) = do
       allEqual = null lengths || all (== head lengths) lengths
   unless allEqual <|
     throwError (DifferentPatternLengths name lengths)
+  when (null rows) <|
+    -- If we're validating a matrix for some name, and there are no patterns,
+    -- then there are no definitions for that annotation
+    throwError (UnimplementedAnnotation name)
   return ()
 
 
