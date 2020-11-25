@@ -8,6 +8,7 @@ import qualified Parser
 import qualified STG
 import qualified Simplifier
 import System.Environment (getArgs)
+import Types (Scheme)
 import Text.Pretty.Simple (pPrint, pPrintString)
 import qualified Typer
 
@@ -59,10 +60,10 @@ parserStage = makeStage "Parser" Parser.parser
 simplifierStage :: Stage Parser.AST (Simplifier.AST ())
 simplifierStage = makeStage "Simplifier" Simplifier.simplifier
 
-typerStage :: Stage (Simplifier.AST ()) (Simplifier.AST Simplifier.SchemeExpr)
+typerStage :: Stage (Simplifier.AST ()) (Simplifier.AST Scheme)
 typerStage = makeStage "Typer" Typer.typer
 
-stgStage :: Stage (Simplifier.AST Simplifier.SchemeExpr) STG.STG
+stgStage :: Stage (Simplifier.AST Scheme) STG.STG
 stgStage = makeStage "STG" (STG.stg >>> (Right :: a -> Either () a))
 
 -- Read out which stages to execute based on a string
