@@ -6,11 +6,12 @@ import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
 import Lexer (Token (..))
 import Ourlude
+import Types (Type(..), TypeName, TypeVar)
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
 instance Functor Parser where
-  fmap f (Parser p) = Parser (p >>> fmap (\(a, s) -> (f a, s)))
+  fmap f (Parser p) = Parser (p >>> fmap (first f))
 
 instance Applicative Parser where
   pure a = Parser (\input -> [(a, input)])
@@ -70,10 +71,6 @@ braced p = token OpenBrace *> sepBy1 p (token Semicolon) <* token CloseBrace
 parensed :: Parser a -> Parser a
 parensed p = token OpenParens *> p <* token CloseParens
 
-type TypeVar = String
-
-type TypeName = String
-
 type ValName = String
 
 type ConstructorName = String
@@ -85,25 +82,14 @@ newtype AST = AST [Definition] deriving (Eq, Show)
 data Definition
   = ValueDefinition ValueDefinition
   | TypeDefinition TypeName [TypeVar] [ConstructorDefinition]
-  | TypeSynonym TypeName TypeExpr
+  | TypeSynonym TypeName Type
   deriving (Eq, Show)
 
-data ConstructorDefinition = ConstructorDefinition ConstructorName [TypeExpr] deriving (Eq, Show)
+data ConstructorDefinition = ConstructorDefinition ConstructorName [Type] deriving (Eq, Show)
 
 data ValueDefinition
-  = TypeAnnotation ValName TypeExpr
+  = TypeAnnotation ValName Type
   | NameDefinition ValName [Pattern] Expr
-  deriving (Eq, Show)
-
-infixr 2 :->
-
-data TypeExpr
-  = StringType
-  | IntType
-  | BoolType
-  | CustomType TypeName [TypeExpr]
-  | TypeVar TypeVar
-  | TypeExpr :-> TypeExpr
   deriving (Eq, Show)
 
 data Expr
@@ -174,24 +160,24 @@ valueDefinition = nameDefinition <|> typeDefinition
     nameDefinition = NameDefinition <$> valName <*> many unspacedPattern <*> (token Equal *> expr)
     typeDefinition = liftA2 TypeAnnotation (valName <* token DoubleColon) typeExpr
 
-typeExpr :: Parser TypeExpr
+typeExpr :: Parser Type
 typeExpr = opsR (const (:->)) baseType (token ThinArrow)
   where
     baseType = singleType <|> typeConstructor
     typeConstructor = liftA2 CustomType typeName (many unspacedType)
 
-unspacedType :: Parser TypeExpr
+unspacedType :: Parser Type
 unspacedType = namedType <|> singleType
   where
     namedType = fmap (`CustomType` []) typeName
 
-singleType :: Parser TypeExpr
-singleType = fmap TypeVar typeVar <|> primType <|> parensed typeExpr
+singleType :: Parser Type
+singleType = fmap TVar typeVar <|> primType <|> parensed typeExpr
   where
     primType =
-      (IntType <$ token IntTypeName)
-        <|> (StringType <$ token StringTypeName)
-        <|> (BoolType <$ token BoolTypeName)
+      (IntT <$ token IntTypeName)
+        <|> (StringT <$ token StringTypeName)
+        <|> (BoolT <$ token BoolTypeName)
 
 expr :: Parser Expr
 expr = notWhereExpr <|> whereExpr

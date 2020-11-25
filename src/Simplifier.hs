@@ -6,8 +6,6 @@
 module Simplifier
   ( Pattern (..),
     Litteral (..),
-    TypeExpr (..),
-    SchemeExpr (..),
     ConstructorDefinition (..),
     SimplifierError (..),
     AST (..),
@@ -31,7 +29,7 @@ module Simplifier
   )
 where
 
-import Control.Monad (forM_, replicateM, when)
+import Control.Monad (forM_, replicateM, when, unless)
 import Control.Monad.Except (Except, MonadError (..), liftEither, runExcept)
 import Control.Monad.Reader (ReaderT (..), ask, asks, local)
 import Control.Monad.State (MonadState, StateT (..), execStateT, get, gets, modify', put)
@@ -42,24 +40,13 @@ import qualified Data.Map as Map
 import Data.Maybe (catMaybes, isJust)
 import qualified Data.Set as Set
 import Ourlude
-import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, TypeExpr (..), TypeName, TypeVar, ValName)
+import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, ValName)
 import qualified Parser as P
+import Types (FreeTypeVars(..), Scheme (..), Type (..), TypeName, TypeVar, closeType)
 
 data AST t = AST TypeInformation [ValueDefinition t] deriving (Eq, Show)
 
-data ValueDefinition t = ValueDefinition ValName (Maybe SchemeExpr) t (Expr t) deriving (Eq, Show)
-
-data SchemeExpr = SchemeExpr [TypeVar] TypeExpr deriving (Eq, Show)
-
-closeTypeExpr :: TypeExpr -> SchemeExpr
-closeTypeExpr t = SchemeExpr (names t |> Set.toList) t
-  where
-    names StringType = Set.empty
-    names IntType = Set.empty
-    names BoolType = Set.empty
-    names (CustomType _ typs) = foldMap names typs
-    names (TypeVar n) = Set.singleton n
-    names (t1 :-> t2) = names t1 <> names t2
+data ValueDefinition t = ValueDefinition ValName (Maybe Scheme) t (Expr t) deriving (Eq, Show)
 
 data Builtin
   = Add
@@ -116,7 +103,7 @@ subst old new = go
 
 data SimplifierError
   = -- Multiple type annotations are present for the same value
-    MultipleTypeAnnotations ValName [SchemeExpr]
+    MultipleTypeAnnotations ValName [Scheme]
   | -- Different pattern lengths have been observed for the same function definition
     DifferentPatternLengths ValName [Int]
   | -- An annotation doesn't have a corresponding definition
@@ -124,7 +111,7 @@ data SimplifierError
   | -- An error that can occurr while resolving a reference to a type
     SimplifierResolution ResolutionError
   | -- A type variable is not bound in a constructor
-    ConstructorUnboundTypeVar ConstructorName TypeVar
+    UnboundTypeVarsInConstructor [TypeVar] ConstructorName
   deriving (Eq, Show)
 
 -- An error that can occurr while resolving a reference to a type
@@ -164,7 +151,7 @@ data ConstructorInfo = ConstructorInfo
     -- This information is in the type, but much more convenient to have readily available
     constructorArity :: Int,
     -- The type of this constructor, as a function
-    constructorType :: SchemeExpr,
+    constructorType :: Scheme,
     -- The number this constructor has
     constructorNumber :: Int
   }
@@ -176,7 +163,7 @@ type ConstructorMap = Map.Map ConstructorName ConstructorInfo
 -- Represents the information we might have when resolving a type name
 data ResolvingInformation
   = -- The name is a synonym for a fully resolved expression
-    Synonym TypeExpr
+    Synonym Type
   | -- The name is a custom type with a certain arity
     Custom Int
   deriving (Eq, Show)
@@ -202,11 +189,11 @@ class Monad m => HasTypeInformation m where
 class HasTypeInformation m => ResolutionM m where
   throwResolution :: ResolutionError -> m a
 
-resolve :: ResolutionMap -> TypeExpr -> Either ResolutionError TypeExpr
-resolve _ IntType = return IntType
-resolve _ StringType = return StringType
-resolve _ BoolType = return BoolType
-resolve _ (TypeVar a) = return (TypeVar a)
+resolve :: ResolutionMap -> Type -> Either ResolutionError Type
+resolve _ IntT = return IntT
+resolve _ StringT = return StringT
+resolve _ BoolT = return BoolT
+resolve _ (TVar a) = return (TVar a)
 resolve mp (t1 :-> t2) = do
   t1' <- resolve mp t1
   t2' <- resolve mp t2
@@ -222,7 +209,7 @@ resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
 
 -- Resolve a type in a context where we can throw resolution errors, and have access
 -- to type information
-resolveM :: ResolutionM m => TypeExpr -> m TypeExpr
+resolveM :: ResolutionM m => Type -> m Type
 resolveM expr = do
   resolutions' <- resolutions <$> typeInformation
   either throwResolution return (resolve resolutions' expr)
@@ -240,31 +227,35 @@ lookupConstructor name = do
   let info = Map.lookup name mp
   maybe (throwResolution (UnknownConstructor name)) return info
 
-gatherConstructorMap :: [P.Definition] -> ConstructorMap
+gatherConstructorMap :: MonadError SimplifierError m => [P.Definition] -> m ConstructorMap
 gatherConstructorMap =
-  foldMap <| \case
+  foldMapM <| \case
     P.TypeDefinition name typeVars definitions ->
-      let root = CustomType name (map TypeVar typeVars)
-       in foldMap (makeMap typeVars root) (zip definitions [0 ..])
-    _ -> Map.empty
+      let root = CustomType name (map TVar typeVars)
+       in foldMapM (makeMap typeVars root) (zip definitions [0 ..])
+    _ -> return Map.empty
   where
-    makeMap :: [TypeVar] -> TypeExpr -> (ConstructorDefinition, Int) -> ConstructorMap
-    makeMap typeVars ret (P.ConstructorDefinition cstr types, number) =
+    makeMap :: MonadError SimplifierError m => [TypeVar] -> Type -> (ConstructorDefinition, Int) -> m ConstructorMap
+    makeMap typeVars ret (P.ConstructorDefinition cstr types, number) = do
       let arity = length types
-          scheme = SchemeExpr typeVars (foldr (:->) ret types)
+          scheme = Scheme typeVars (foldr (:->) ret types)
           info = ConstructorInfo arity scheme number
-       in Map.singleton cstr info
+          freeInScheme = ftv scheme
+      unless (null freeInScheme) <|
+        throwError (UnboundTypeVarsInConstructor (Set.toList freeInScheme) cstr)
+      return (Map.singleton cstr info)
 
 {- Resolving all of the type synonyms -}
 
 -- Which type definitions does this type reference?
-typeDependencies :: TypeExpr -> [TypeName]
-typeDependencies StringType = []
-typeDependencies IntType = []
-typeDependencies BoolType = []
-typeDependencies (TypeVar _) = []
-typeDependencies (t1 :-> t2) = typeDependencies t1 ++ typeDependencies t2
-typeDependencies (CustomType name exprs) = name : concatMap typeDependencies exprs
+typeDependencies :: Type -> Set.Set TypeName
+typeDependencies StringT = mempty
+typeDependencies IntT = mempty
+typeDependencies BoolT = mempty
+typeDependencies (TVar _) = mempty
+typeDependencies (t1 :-> t2) = typeDependencies t1 <> typeDependencies t2
+typeDependencies (CustomType name exprs) =
+  Set.singleton name <> foldMap typeDependencies exprs
 
 -- This is the state we keep track of while sorting the graph of types
 data SorterState = SorterState
@@ -284,14 +275,14 @@ type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except Resoluti
 --
 -- The types are sorted topologically, based on their dependencies. This means that
 -- a type will come after all of its dependencies
-sortTypeSynonyms :: Map.Map TypeName TypeExpr -> Either ResolutionError [TypeName]
+sortTypeSynonyms :: Map.Map TypeName Type -> Either ResolutionError [TypeName]
 sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap reverse
   where
     -- Find the dependencies of a given type name
     --
     -- This acts similarly to a "neighbors" function in a traditional graph
-    deps :: TypeName -> [TypeName]
-    deps k = Map.findWithDefault [] k (Map.map typeDependencies mp)
+    deps :: TypeName -> Set.Set TypeName
+    deps k = Map.findWithDefault Set.empty k (Map.map typeDependencies mp)
 
     -- Run the sorter, given a seed state
     runSorter :: SorterM a -> SorterState -> Either ResolutionError a
@@ -340,13 +331,13 @@ gatherCustomTypes =
 -- Gather all of the type synonyms, at a superficial level
 --
 -- This will only look at one level of definition, and won't act recursively
-gatherTypeSynonyms :: [P.Definition] -> Map.Map TypeName TypeExpr
+gatherTypeSynonyms :: [P.Definition] -> Map.Map TypeName Type
 gatherTypeSynonyms =
   foldMap <| \case
     P.TypeSynonym name expr -> Map.singleton name expr
     _ -> Map.empty
 
-type MakeResolutionM a = ReaderT (Map.Map TypeName TypeExpr) (StateT ResolutionMap (Except ResolutionError)) a
+type MakeResolutionM a = ReaderT (Map.Map TypeName Type) (StateT ResolutionMap (Except ResolutionError)) a
 
 gatherResolutions :: [P.Definition] -> Either ResolutionError ResolutionMap
 gatherResolutions defs = do
@@ -355,7 +346,7 @@ gatherResolutions defs = do
   names <- sortTypeSynonyms typeSynMap
   runResolutionM (resolveAll names) typeSynMap (Map.map Custom customInfo)
   where
-    runResolutionM :: MakeResolutionM a -> Map.Map TypeName TypeExpr -> ResolutionMap -> Either ResolutionError ResolutionMap
+    runResolutionM :: MakeResolutionM a -> Map.Map TypeName Type -> ResolutionMap -> Either ResolutionError ResolutionMap
     runResolutionM m typeSynMap st =
       runReaderT m typeSynMap |> (`execStateT` st) |> runExcept
 
@@ -374,7 +365,7 @@ gatherResolutions defs = do
 gatherTypeInformation :: [P.Definition] -> Simplifier TypeInformation
 gatherTypeInformation defs = do
   resolutions' <- either (SimplifierResolution >>> throwError) return (gatherResolutions defs)
-  let constructorMap' = gatherConstructorMap defs
+  constructorMap' <- gatherConstructorMap defs
   return (TypeInformation resolutions' constructorMap')
 
 {- Converting the actual AST and Expression Tree -}
@@ -444,7 +435,7 @@ convertValueDefinitions :: [P.ValueDefinition] -> Simplifier [ValueDefinition ()
 convertValueDefinitions =
   groupBy ((==) `on` getName) >>> traverse gather
   where
-    getTypeAnnotations :: [P.ValueDefinition] -> [TypeExpr]
+    getTypeAnnotations :: [P.ValueDefinition] -> [Type]
     getTypeAnnotations ls =
       (catMaybes <<< (`map` ls)) <| \case
         P.TypeAnnotation _ typ -> Just typ
@@ -469,7 +460,7 @@ convertValueDefinitions =
     gather information = do
       let name = getName (head information)
           annotations = getTypeAnnotations information
-      schemeExpr <- case map closeTypeExpr annotations of
+      schemeExpr <- case map closeType annotations of
         [] -> return Nothing
         [single] -> return (Just single)
         tooMany -> throwError (MultipleTypeAnnotations name tooMany)

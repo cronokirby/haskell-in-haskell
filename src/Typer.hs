@@ -41,8 +41,6 @@ import Simplifier
     Pattern (..),
     ResolutionError,
     ResolutionM (..),
-    SchemeExpr (..),
-    TypeExpr (..),
     TypeInformation (..),
     TypeName,
     TypeVar,
@@ -51,23 +49,20 @@ import Simplifier
     lookupConstructor,
     resolveM,
   )
-
-
-asGeneral :: SchemeExpr -> SchemeExpr -> Bool
-asGeneral (SchemeExpr vars1 _) (SchemeExpr vars2 _) = length vars1 >= length vars2
+import Types (FreeTypeVars (..), Scheme (..), Type (..), asGeneral)
 
 -- Represents a kind of error that can happen while type checking
 data TypeError
   = -- There's a mismatch between two different types
-    TypeMismatch TypeExpr TypeExpr
+    TypeMismatch Type Type
   | -- Some type name references itself recursively
-    InfiniteType TypeVar TypeExpr
+    InfiniteType TypeVar Type
   | -- An undefined name was used
     UnboundName Name
   | -- An error ocurring because of a resolution
     TypeResolutionError ResolutionError
   | -- An inferred scheme is not as general as the declared one
-    NotGeneralEnough SchemeExpr SchemeExpr
+    NotGeneralEnough Scheme Scheme
   deriving (Eq, Show)
 
 -- Represents some kind of constraint we generate during our gathering pharse.
@@ -76,15 +71,15 @@ data TypeError
 -- necessary to be able to infer the correct types later on.
 data Constraint
   = -- An assertion that two type expressions are equivalent
-    SameType TypeExpr TypeExpr
+    SameType Type Type
   | -- An assertation that some type explicitly instantiates some scheme
-    ExplicitlyInstantiates TypeExpr SchemeExpr
+    ExplicitlyInstantiates Type Scheme
   | -- An assertion that some type implicitly insntatiates some type, given some bound vars
-    ImplicitlyInstantations TypeExpr (Set.Set TypeVar) TypeExpr
+    ImplicitlyInstantations Type (Set.Set TypeVar) Type
   deriving (Eq, Show)
 
 -- Represents a substitution of type variables for actual types
-newtype Subst = Subst (Map.Map TypeVar TypeExpr) deriving (Eq, Show)
+newtype Subst = Subst (Map.Map TypeVar Type) deriving (Eq, Show)
 
 -- We can combine multiple substitutions together
 instance Semigroup Subst where
@@ -95,7 +90,7 @@ instance Monoid Subst where
   mempty = Subst mempty
 
 -- Create a substitution from a single mapping
-singleSubst :: TypeName -> TypeExpr -> Subst
+singleSubst :: TypeName -> Type -> Subst
 singleSubst v t = Subst (Map.singleton v t)
 
 -- A class for types where substitutions can be applied
@@ -106,23 +101,23 @@ instance (Ord a, Substitutable a) => Substitutable (Set.Set a) where
   subst = subst >>> Set.map
 
 instance Substitutable TypeName where
-  subst (Subst s) a = case Map.findWithDefault (TypeVar a) a s of
-    TypeVar tn -> tn
+  subst (Subst s) a = case Map.findWithDefault (TVar a) a s of
+    TVar tn -> tn
     _ -> a
 
-instance Substitutable TypeExpr where
+instance Substitutable Type where
   subst sub@(Subst s) t = case t of
-    IntType -> IntType
-    StringType -> StringType
-    BoolType -> BoolType
-    TypeVar a -> Map.findWithDefault (TypeVar a) a s
+    IntT -> IntT
+    StringT -> StringT
+    BoolT -> BoolT
+    TVar a -> Map.findWithDefault (TVar a) a s
     t1 :-> t2 -> subst sub t1 :-> subst sub t2
     CustomType name ts -> CustomType name (map (subst sub) ts)
 
-instance Substitutable SchemeExpr where
-  subst (Subst s) (SchemeExpr vars t) =
+instance Substitutable Scheme where
+  subst (Subst s) (Scheme vars t) =
     let s' = Subst (foldr Map.delete s vars)
-     in SchemeExpr vars (subst s' t)
+     in Scheme vars (subst s' t)
 
 instance Substitutable Constraint where
   subst s (SameType t1 t2) = SameType (subst s t1) (subst s t2)
@@ -130,29 +125,6 @@ instance Substitutable Constraint where
     ExplicitlyInstantiates (subst s t) (subst s sc)
   subst s (ImplicitlyInstantations t1 vars t2) =
     ImplicitlyInstantations (subst s t1) (subst s vars) (subst s t2)
-
--- A class of types where we can find the free type names inside
---
--- These are the type variables appearing inside of a given type
-class FreeTypeVars a where
-  ftv :: a -> Set.Set TypeName
-
-instance FreeTypeVars TypeExpr where
-  ftv IntType = Set.empty
-  ftv StringType = Set.empty
-  ftv BoolType = Set.empty
-  ftv (TypeVar a) = Set.singleton a
-  ftv (t1 :-> t2) = Set.union (ftv t1) (ftv t2)
-  ftv (CustomType _ ts) = foldMap ftv ts
-
-instance FreeTypeVars TypeName where
-  ftv = Set.singleton
-
-instance FreeTypeVars SchemeExpr where
-  ftv (SchemeExpr vars t) = Set.difference (ftv t) (Set.fromList vars)
-
-instance (Ord a, FreeTypeVars a) => FreeTypeVars (Set.Set a) where
-  ftv = foldMap ftv
 
 -- A class for types where we can detect which variables are important.
 class ActiveTypeVars a where
@@ -208,17 +180,17 @@ fresh =
     return ("#" <> show count)
 
 -- Instantiate a scheme by providing a fresh tyep variable for each parameter
-instantiate :: SchemeExpr -> Infer TypeExpr
-instantiate (SchemeExpr vars t) = do
+instantiate :: Scheme -> Infer Type
+instantiate (Scheme vars t) = do
   newVars <- forM vars (const fresh)
-  let sub = foldMap (uncurry singleSubst) (zip vars (map TypeVar newVars))
+  let sub = foldMap (uncurry singleSubst) (zip vars (map TVar newVars))
   return (subst sub t)
 
 -- Generalize a type into a scheme by closing over all unbound variables
-generalize :: Set.Set TypeVar -> TypeExpr -> SchemeExpr
+generalize :: Set.Set TypeVar -> Type -> Scheme
 generalize free t =
   let as = Set.toList (Set.difference (ftv t) free)
-   in SchemeExpr as t
+   in Scheme as t
 
 -- Modify inference with access to a bound type variable
 withBound :: TypeVar -> Infer a -> Infer a
@@ -228,7 +200,7 @@ withManyBound :: Set.Set TypeVar -> Infer a -> Infer a
 withManyBound vars = local (\r -> r {bound = Set.union (bound r) vars})
 
 -- Represents an ordered collection about assumptions we've gathered so far
-newtype Assumptions = Assumptions [(Name, TypeExpr)]
+newtype Assumptions = Assumptions [(Name, Type)]
   deriving (Show, Semigroup, Monoid)
 
 -- Remove an assumption about a given name
@@ -236,11 +208,11 @@ removeAssumption :: Name -> Assumptions -> Assumptions
 removeAssumption v (Assumptions as) = Assumptions (filter ((/= v) . fst) as)
 
 -- An assumption about a single type
-singleAssumption :: Name -> TypeExpr -> Assumptions
+singleAssumption :: Name -> Type -> Assumptions
 singleAssumption v t = Assumptions [(v, t)]
 
 -- Lookup all of the assumptions we have about a given name
-lookupAssumptions :: Name -> Assumptions -> [TypeExpr]
+lookupAssumptions :: Name -> Assumptions -> [Type]
 lookupAssumptions target (Assumptions as) =
   [t | (v, t) <- as, v == target]
 
@@ -249,49 +221,49 @@ assumptionNames :: Assumptions -> Set.Set Name
 assumptionNames (Assumptions as) = Set.fromList (map fst as)
 
 -- Get the scheme we know a builtin name to conform to
-builtinScheme :: Builtin -> SchemeExpr
+builtinScheme :: Builtin -> Scheme
 builtinScheme Compose =
-  SchemeExpr
+  Scheme
     ["a", "b", "c"]
-    ((TypeVar "b" :-> TypeVar "c") :-> (TypeVar "a" :-> TypeVar "b") :-> (TypeVar "a" :-> TypeVar "c"))
+    ((TVar "b" :-> TVar "c") :-> (TVar "a" :-> TVar "b") :-> (TVar "a" :-> TVar "c"))
 builtinScheme Cash =
-  SchemeExpr
+  Scheme
     ["a", "b"]
-    ( (TypeVar "a" :-> TypeVar "b") :-> TypeVar "a" :-> TypeVar "b"
+    ( (TVar "a" :-> TVar "b") :-> TVar "a" :-> TVar "b"
     )
 builtinScheme b =
-  SchemeExpr [] <| case b of
-    Add -> IntType :-> IntType :-> IntType
-    Sub -> IntType :-> IntType :-> IntType
-    Mul -> IntType :-> IntType :-> IntType
-    Div -> IntType :-> IntType :-> IntType
-    Concat -> StringType :-> StringType :-> StringType
-    Less -> IntType :-> IntType :-> BoolType
-    LessEqual -> IntType :-> IntType :-> BoolType
-    Greater -> IntType :-> IntType :-> BoolType
-    GreaterEqual -> IntType :-> IntType :-> BoolType
-    EqualTo -> IntType :-> IntType :-> BoolType
-    NotEqualTo -> IntType :-> IntType :-> BoolType
-    And -> BoolType :-> BoolType :-> BoolType
-    Or -> BoolType :-> BoolType :-> BoolType
-    Negate -> IntType :-> IntType
+  Scheme [] <| case b of
+    Add -> IntT :-> IntT :-> IntT
+    Sub -> IntT :-> IntT :-> IntT
+    Mul -> IntT :-> IntT :-> IntT
+    Div -> IntT :-> IntT :-> IntT
+    Concat -> StringT :-> StringT :-> StringT
+    Less -> IntT :-> IntT :-> BoolT
+    LessEqual -> IntT :-> IntT :-> BoolT
+    Greater -> IntT :-> IntT :-> BoolT
+    GreaterEqual -> IntT :-> IntT :-> BoolT
+    EqualTo -> IntT :-> IntT :-> BoolT
+    NotEqualTo -> IntT :-> IntT :-> BoolT
+    And -> BoolT :-> BoolT :-> BoolT
+    Or -> BoolT :-> BoolT :-> BoolT
+    Negate -> IntT :-> IntT
     _ -> error "Already handled"
 
 -- Get the type of a given litteral
-littType :: Litteral -> TypeExpr
-littType (IntLitteral _) = IntType
-littType (StringLitteral _) = StringType
-littType (BoolLitteral _) = BoolType
+littType :: Litteral -> Type
+littType (IntLitteral _) = IntT
+littType (StringLitteral _) = StringT
+littType (BoolLitteral _) = BoolT
 
 -- Run constraint generation over a given expression.
 --
 -- This returns the assumptions about variables we've encountered,
 -- the constraints we've managed to gather, the type of the expression we've inferred,
 -- and the typed version of that expression tree.
-inferExpr :: Expr () -> Infer (Assumptions, [Constraint], TypeExpr, Expr TypeExpr)
+inferExpr :: Expr () -> Infer (Assumptions, [Constraint], Type, Expr Type)
 inferExpr expr = case expr of
   Error err -> do
-    tv <- TypeVar <$> fresh
+    tv <- TVar <$> fresh
     return (mempty, [], tv, Error err)
   LittExpr litt ->
     let t = littType litt
@@ -299,14 +271,14 @@ inferExpr expr = case expr of
   ApplyExpr e1 e2 -> do
     (as1, cs1, t1, e1') <- inferExpr e1
     (as2, cs2, t2, e2') <- inferExpr e2
-    tv <- TypeVar <$> fresh
+    tv <- TVar <$> fresh
     let cs' = [SameType t1 (t2 :-> tv)] <> cs1 <> cs2
     return (as1 <> as2, cs', tv, ApplyExpr e1' e2')
   Builtin b -> do
     t <- instantiate (builtinScheme b)
     return (mempty, [], t, Builtin b)
   NameExpr n -> do
-    tv <- TypeVar <$> fresh
+    tv <- TVar <$> fresh
     return (singleAssumption n tv, [], tv, NameExpr n)
   CaseExpr e pats -> do
     (as1, cs1, t, e') <- inferExpr e
@@ -318,12 +290,12 @@ inferExpr expr = case expr of
         (as2, cs2) = foldMap (\(a, c, _, _) -> (a, c)) inferred
     -- We generate constraints making sure each branch has the same return type,
     -- and the same scrutinee type
-    ret <- TypeVar <$> fresh
+    ret <- TVar <$> fresh
     let cs3 = map (\(_, _, branchRet, _) -> SameType ret branchRet) inferred
     return (as2 <> as1, cs3 <> cs2 <> cs1, ret, CaseExpr e' pats')
   LambdaExpr n _ e -> do
     a <- fresh
-    let tv = TypeVar a
+    let tv = TVar a
     (as, cs, t, e') <- withBound a (inferExpr e)
     return
       ( removeAssumption n as,
@@ -337,9 +309,9 @@ inferExpr expr = case expr of
     return (as2, cs1 <> cs2, t, LetExpr defs' e')
 
 -- Run inference over a pattern definition, given the scrutinee's type
-inferPatternDef :: TypeExpr -> (Pattern, Expr ()) -> Infer (Assumptions, [Constraint], TypeExpr, (Pattern, Expr TypeExpr))
+inferPatternDef :: Type -> (Pattern, Expr ()) -> Infer (Assumptions, [Constraint], Type, (Pattern, Expr Type))
 inferPatternDef scrutinee (pat, e) = do
-  tv <- TypeVar <$> fresh
+  tv <- TVar <$> fresh
   (cs1, valMap, boundSet) <- inspectPattern tv pat
   (as, cs2, t, e') <- withManyBound boundSet (inferExpr e)
   return
@@ -349,35 +321,35 @@ inferPatternDef scrutinee (pat, e) = do
       (pat, e')
     )
   where
-    inspectPattern :: TypeExpr -> Pattern -> Infer ([Constraint], Map.Map ValName TypeExpr, Set.Set TypeVar)
+    inspectPattern :: Type -> Pattern -> Infer ([Constraint], Map.Map ValName Type, Set.Set TypeVar)
     inspectPattern scrutinee' pat' = case pat' of
       Wildcard -> return ([], Map.empty, Set.empty)
       LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty, Set.empty)
       ConstructorPattern cstr pats -> do
         patVars <- forM pats (const fresh)
-        let patTypes = map TypeVar patVars
+        let patTypes = map TVar patVars
             patType = foldr (:->) scrutinee' patTypes
             valMap = zip pats patTypes |> Map.fromList
         constructor <- constructorType <$> lookupConstructor cstr
         return ([ExplicitlyInstantiates patType constructor], valMap, Set.fromList patVars)
 
-    adjustValAssumptions :: Map.Map ValName TypeExpr -> Assumptions -> Assumptions
+    adjustValAssumptions :: Map.Map ValName Type -> Assumptions -> Assumptions
     adjustValAssumptions mp as = foldr removeAssumption as (Map.keys mp)
 
-    valConstraints :: Map.Map ValName TypeExpr -> Assumptions -> [Constraint]
+    valConstraints :: Map.Map ValName Type -> Assumptions -> [Constraint]
     valConstraints mp as =
       foldMap (\(n, t) -> [SameType t t' | t' <- lookupAssumptions n as]) (Map.toList mp)
 
-inferDefs :: Assumptions -> [ValueDefinition ()] -> Infer (Assumptions, [Constraint], [ValueDefinition TypeExpr])
+inferDefs :: Assumptions -> [ValueDefinition ()] -> Infer (Assumptions, [Constraint], [ValueDefinition Type])
 inferDefs usageAs defs = do
   together <-
     forM defs <| \(ValueDefinition n declared _ e) -> do
       (as, cs, t, e') <- inferExpr e
       extra <- case declared of
         Nothing -> return []
-        Just (SchemeExpr names d) -> do
+        Just (Scheme names d) -> do
           resolved <- resolveM d
-          return [ExplicitlyInstantiates t (SchemeExpr names resolved)]
+          return [ExplicitlyInstantiates t (Scheme names resolved)]
       return (as, extra ++ cs, (n, t), ValueDefinition n declared t e')
   bound' <- asks bound
   let as = usageAs <> foldMap (\(x, _, _, _) -> x) together
@@ -423,10 +395,10 @@ solve constraints = solve' (nextSolvable True constraints)
         solve (SameType t sc' : cs)
 
 -- Try and unify two type expressions togethe
-unify :: TypeExpr -> TypeExpr -> Infer Subst
+unify :: Type -> Type -> Infer Subst
 unify t1 t2 | t1 == t2 = return mempty
-unify (TypeVar n) t = bind n t
-unify t (TypeVar n) = bind n t
+unify (TVar n) t = bind n t
+unify t (TVar n) = bind n t
 unify (t1 :-> t2) (t3 :-> t4) = do
   su1 <- unify t1 t3
   su2 <- unify (subst su1 t2) (subst su1 t4)
@@ -441,9 +413,9 @@ unify (CustomType name1 ts1) (CustomType name2 ts2)
 unify t1 t2 = throwError (TypeMismatch t1 t2)
 
 -- Try and bind a variable to a given type expression
-bind :: TypeVar -> TypeExpr -> Infer Subst
+bind :: TypeVar -> Type -> Infer Subst
 bind a t
-  | t == TypeVar a = return mempty
+  | t == TVar a = return mempty
   | Set.member a (ftv t) = throwError (InfiniteType a t)
   | otherwise = return (singleSubst a t)
 
@@ -479,14 +451,14 @@ withTyperNames vars =
    in local (\r -> r {typerVars = addTo (typerVars r)})
 
 -- Get the scheme for a given type expression, using our typing context
-schemeFor :: TypeExpr -> Typer SchemeExpr
+schemeFor :: Type -> Typer Scheme
 schemeFor t = do
   typerVars' <- asks typerVars
   typerSub' <- asks typerSub
   return (generalize typerVars' (subst typerSub' t))
 
 -- Assign types to a given expression
-typeExpr :: Expr TypeExpr -> Typer (Expr SchemeExpr)
+typeExpr :: Expr Type -> Typer (Expr Scheme)
 typeExpr expr = case expr of
   Error err -> return (Error err)
   LittExpr litt -> return (LittExpr litt)
@@ -494,18 +466,18 @@ typeExpr expr = case expr of
   Builtin b -> return (Builtin b)
   ApplyExpr e1 e2 -> ApplyExpr <$> typeExpr e1 <*> typeExpr e2
   LambdaExpr n t e -> do
-    sc@(SchemeExpr names _) <- schemeFor t
+    sc@(Scheme names _) <- schemeFor t
     e' <- withTyperNames names (typeExpr e)
     return (LambdaExpr n sc e')
   CaseExpr e patDefs -> CaseExpr <$> typeExpr e <*> forM patDefs typePatternDef
   LetExpr defs e -> LetExpr <$> typeDefinitions defs <*> typeExpr e
 
 -- Assign types to a pattern definition
-typePatternDef :: (Pattern, Expr TypeExpr) -> Typer (Pattern, Expr SchemeExpr)
+typePatternDef :: (Pattern, Expr Type) -> Typer (Pattern, Expr Scheme)
 typePatternDef (pat, expr) = (pat,) <$> typeExpr expr
 
 -- Assign types to a series of definitions
-typeDefinitions :: [ValueDefinition TypeExpr] -> Typer [ValueDefinition SchemeExpr]
+typeDefinitions :: [ValueDefinition Type] -> Typer [ValueDefinition Scheme]
 typeDefinitions defs =
   forM defs <| \(ValueDefinition name ann t e) -> do
     sc <- schemeFor t
@@ -516,7 +488,7 @@ typeDefinitions defs =
     return (ValueDefinition name ann sc e')
 
 -- Infer and check the types for a series of value definitions
-inferTypes :: [ValueDefinition ()] -> Infer [ValueDefinition SchemeExpr]
+inferTypes :: [ValueDefinition ()] -> Infer [ValueDefinition Scheme]
 inferTypes defs = do
   constructors <- allConstructors
   (as, cs, defs') <- inferDefs mempty defs
@@ -526,9 +498,9 @@ inferTypes defs = do
   sub <- solve (cs' <> cs)
   liftEither <| runTyper (typeDefinitions defs') sub
   where
-    allConstructors :: Infer (Map.Map ConstructorName SchemeExpr)
+    allConstructors :: Infer (Map.Map ConstructorName Scheme)
     allConstructors = typeInformation |> fmap (constructorMap >>> Map.map constructorType)
 
 -- Run the type checker on a given AST, producing just the value definitions, annotated
-typer :: AST () -> Either TypeError (AST SchemeExpr)
+typer :: AST () -> Either TypeError (AST Scheme)
 typer (AST info defs) = AST info <$> runInfer (inferTypes defs) info

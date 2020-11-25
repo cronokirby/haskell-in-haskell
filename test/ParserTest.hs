@@ -3,6 +3,7 @@ module ParserTest (tests) where
 import Lexer (lexer)
 import Ourlude
 import Parser
+import Types
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -24,7 +25,7 @@ tests =
         "parsing basic definitions"
         ( shouldParse
             "{ x :: Int; x = 3 }"
-            (AST [ValueDefinition (TypeAnnotation "x" IntType), ValueDefinition (NameDefinition "x" [] (LittExpr (IntLitteral 3)))])
+            (AST [ValueDefinition (TypeAnnotation "x" IntT), ValueDefinition (NameDefinition "x" [] (LittExpr (IntLitteral 3)))])
         ),
       testCase
         "parsing let definitions"
@@ -113,7 +114,7 @@ tests =
         "function types"
         ( shouldParse
             "x :: (Int -> String) -> A -> B"
-            ( AST [ValueDefinition (TypeAnnotation "x" ((IntType :-> StringType) :-> CustomType "A" [] :-> CustomType "B" []))]
+            ( AST [ValueDefinition (TypeAnnotation "x" ((IntT :-> StringT) :-> CustomType "A" [] :-> CustomType "B" []))]
             )
         ),
       testCase
@@ -121,12 +122,12 @@ tests =
         ( shouldParse
             "type X = Int;data L = A Int | B String (String -> String)"
             ( AST
-                [ TypeSynonym "X" IntType,
+                [ TypeSynonym "X" IntT,
                   TypeDefinition
                     "L"
                     []
-                    [ ConstructorDefinition "A" [IntType],
-                      ConstructorDefinition "B" [StringType, StringType :-> StringType]
+                    [ ConstructorDefinition "A" [IntT],
+                      ConstructorDefinition "B" [StringT, StringT :-> StringT]
                     ]
                 ]
             )
@@ -142,11 +143,11 @@ tests =
         ( shouldParse
             "foo :: a -> List a; data List a = Cons a (List a) | Nil"
             ( AST
-                [ ValueDefinition (TypeAnnotation "foo" (TypeVar "a" :-> CustomType "List" [TypeVar "a"])),
+                [ ValueDefinition (TypeAnnotation "foo" (TVar "a" :-> CustomType "List" [TVar "a"])),
                   TypeDefinition
                     "List"
                     ["a"]
-                    [ ConstructorDefinition "Cons" [TypeVar "a", CustomType "List" [TypeVar "a"]],
+                    [ ConstructorDefinition "Cons" [TVar "a", CustomType "List" [TVar "a"]],
                       ConstructorDefinition "Nil" []
                     ]
                 ]

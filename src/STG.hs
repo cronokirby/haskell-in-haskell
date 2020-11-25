@@ -15,11 +15,11 @@ import Simplifier
     Builtin (..),
     ConstructorName,
     Litteral (..),
-    SchemeExpr (..),
     ValName,
     ValueDefinition (..),
   )
 import qualified Simplifier as S
+import Types (Scheme(..))
 
 -- Represents a unit of data simple enough to be passed directly
 --
@@ -148,13 +148,13 @@ fresh = do
 constructorTag :: ConstructorName -> STGM Tag
 constructorTag name = S.lookupConstructor name |> fmap S.constructorNumber
 
-gatherApplications :: S.Expr SchemeExpr -> (S.Expr SchemeExpr, [S.Expr SchemeExpr])
+gatherApplications :: S.Expr Scheme -> (S.Expr Scheme, [S.Expr Scheme])
 gatherApplications expression = go expression []
   where
     go (S.ApplyExpr f e) acc = go f (e : acc)
     go e acc = (e, acc)
 
-atomize :: S.Expr SchemeExpr -> STGM ([Binding], Atom)
+atomize :: S.Expr Scheme -> STGM ([Binding], Atom)
 atomize expression = case expression of
   S.LittExpr l -> return ([], LitteralAtom l)
   S.NameExpr n -> do
@@ -202,7 +202,7 @@ saturateConstructorAsAtom name =
   (\(NeededFilling b n) -> (b, NameAtom n)) <$> saturateConstructor True name []
 
 -- Convert an expression into an STG expression
-convertExpr :: S.Expr SchemeExpr -> STGM Expr
+convertExpr :: S.Expr Scheme -> STGM Expr
 convertExpr =
   gatherApplications >>> \case
     (e, []) -> handle e
@@ -224,7 +224,7 @@ convertExpr =
           LitteralAtom _ -> error "Litterals cannot be functions"
           NameAtom n -> makeLet (argBindings ++ eBindings) (Apply n atoms)
   where
-    handle :: S.Expr SchemeExpr -> STGM Expr
+    handle :: S.Expr Scheme -> STGM Expr
     handle (S.LittExpr l) = return (Litteral l)
     handle (S.NameExpr n) = do
       wasConstructor <- S.isConstructor n
@@ -244,13 +244,13 @@ convertExpr =
     handle (S.CaseExpr _ []) = return (Error "Empty Case Expression")
     handle (S.CaseExpr e branches) = convertExpr e >>= convertBranches branches
 
-    gatherAtoms :: [S.Expr SchemeExpr] -> STGM ([Binding], [Atom])
+    gatherAtoms :: [S.Expr Scheme] -> STGM ([Binding], [Atom])
     gatherAtoms = mapM atomize >>> fmap gatherBindings
 
     gatherBindings :: [([b], a)] -> ([b], [a])
     gatherBindings l = (concatMap fst l, map snd l)
 
-convertBranches :: [(S.Pattern, S.Expr SchemeExpr)] -> Expr -> STGM Expr
+convertBranches :: [(S.Pattern, S.Expr Scheme)] -> Expr -> STGM Expr
 convertBranches branches scrut = case head branches of
   (S.LitteralPattern (S.IntLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.IntLitteral i)) -> return i) branches
@@ -270,10 +270,10 @@ convertBranches branches scrut = case head branches of
     return (Case scrut (ConstrAlts branches' default'))
   (S.Wildcard, e) -> convertExpr e
   where
-    findDefaultExpr :: [(S.Pattern, S.Expr SchemeExpr)] -> STGM (Maybe Expr)
+    findDefaultExpr :: [(S.Pattern, S.Expr Scheme)] -> STGM (Maybe Expr)
     findDefaultExpr = find (fst >>> (== S.Wildcard)) >>> traverse (snd >>> convertExpr)
 
-    findPatterns :: (S.Pattern -> STGM a) -> [(S.Pattern, S.Expr SchemeExpr)] -> STGM [(a, Expr)]
+    findPatterns :: (S.Pattern -> STGM a) -> [(S.Pattern, S.Expr Scheme)] -> STGM [(a, Expr)]
     findPatterns conv = takeWhile (fst >>> (/= S.Wildcard)) >>> traverse (\(pat, e) -> liftA2 (,) (conv pat) (convertExpr e))
 
 -- Gather the free names appearing in an expression
@@ -322,32 +322,32 @@ attachFreeNames lambda@(LambdaForm _ u names expr) = do
 -- This will always create a lambda, although with no
 -- arguments if the expression we're converting wasn't
 -- a lambda to begin with
-exprToLambda :: S.Expr SchemeExpr -> STGM LambdaForm
+exprToLambda :: S.Expr Scheme -> STGM LambdaForm
 exprToLambda expr = do
   let (names, e) = gatherLambdas expr
   e' <- convertExpr e
   attachFreeNames (LambdaForm [] U names e')
   where
-    gatherLambdas :: S.Expr SchemeExpr -> ([ValName], S.Expr SchemeExpr)
+    gatherLambdas :: S.Expr Scheme -> ([ValName], S.Expr Scheme)
     gatherLambdas (S.LambdaExpr name _ e) =
       let (names, e') = gatherLambdas e
        in (name : names, e')
     gatherLambdas e = ([], e)
 
 -- Convert a definition into an STG binding
-convertDef :: ValueDefinition SchemeExpr -> STGM Binding
+convertDef :: ValueDefinition Scheme -> STGM Binding
 convertDef (ValueDefinition name _ _ e) =
   Binding name <$> exprToLambda e
 
 -- Convert the value definitions composing a program into STG
-convertValueDefinitions :: [ValueDefinition SchemeExpr] -> STGM [Binding]
+convertValueDefinitions :: [ValueDefinition Scheme] -> STGM [Binding]
 convertValueDefinitions = mapM convertDef
 
-convertAST :: AST SchemeExpr -> STGM STG
+convertAST :: AST Scheme -> STGM STG
 convertAST (AST _ defs) =
   defs |> convertValueDefinitions |> fmap STG
 
-gatherInformation :: AST SchemeExpr -> STGMInfo
+gatherInformation :: AST Scheme -> STGMInfo
 gatherInformation (AST info defs) =
   let topLevel = gatherTopLevel defs |> Set.fromList
    in STGMInfo topLevel info
@@ -356,7 +356,7 @@ gatherInformation (AST info defs) =
     gatherTopLevel = map (\(S.ValueDefinition n _ _ _) -> n)
 
 -- Run the STG compilation step
-stg :: AST SchemeExpr -> STG
+stg :: AST Scheme -> STG
 stg ast =
   let info = gatherInformation ast
    in runSTGM (convertAST ast) info

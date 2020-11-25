@@ -20,6 +20,7 @@ library
                      , Simplifier
                      , STG
                      , Typer
+                     , Types
   ghc-options:         -Wall
   hs-source-dirs:      src
 
