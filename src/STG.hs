@@ -12,14 +12,40 @@ import qualified Data.Set as Set
 import Ourlude
 import Simplifier
   ( AST (..),
-    Builtin (..),
     ConstructorName,
     Litteral (..),
     ValName,
     ValueDefinition (..),
   )
 import qualified Simplifier as S
-import Types (Scheme(..))
+import Types (Scheme (..))
+
+-- Represents an actual primitive value
+data Primitive
+  = -- A primitive int value
+    PrimInt Int
+  | -- A primitive string value
+    PrimString String
+  deriving (Eq, Show)
+
+-- Primitive builtin operations
+--
+-- This differs from our previous built-ins, in the sense that
+-- these operate *exclusively* on primitive operations.
+data Builtin
+  = Add
+  | Sub
+  | Mul
+  | Div
+  | Less
+  | LessEqual
+  | Greater
+  | GreaterEqual
+  | EqualTo
+  | NotEqualTo
+  | Negate
+  | Concat
+  deriving (Eq, Show)
 
 -- Represents a unit of data simple enough to be passed directly
 --
@@ -27,7 +53,7 @@ import Types (Scheme(..))
 -- inside other applications, to make compilation much easier.
 data Atom
   = -- A litteral value
-    LitteralAtom Litteral
+    PrimitiveAtom Primitive
   | -- A reference to a name
     NameAtom ValName
   deriving (Eq, Show)
@@ -37,8 +63,8 @@ type Tag = Int
 
 -- Represents an expression in our STG language
 data Expr
-  = -- A litteral value
-    Litteral Litteral
+  = -- A primitive value
+    Primitive Primitive
   | -- Apply a name (function) to a potentially empty sequence of atoms
     Apply ValName [Atom]
   | -- Panic with a given error
@@ -76,14 +102,12 @@ data Expr
 data Alts
   = -- Potential branches for integer litterals, then a default expression
     IntAlts [(Int, Expr)] (Maybe Expr)
-  | -- Potential branches for booleans, then a default expression
-    --
-    -- Because booleans only have two values, we could simplify this representation,
-    -- but that would make generating STG harder, and whatever compiler
-    -- for the low level IR we generate should be able to see the redundancy.
-    BoolAlts [(Bool, Expr)] (Maybe Expr)
   | -- Potential branches for string litterals, then a default case
     StringAlts [(String, Expr)] (Maybe Expr)
+  | -- Match a primitive integer against a value
+    IntPrim ValName Expr
+  | -- Match a primitive string against a value
+    StringPrim ValName Expr
   | -- Potential branches for constructor tags, introducing names,
     -- and then we end, as usual, with a default case
     ConstrAlts [((Tag, [ValName]), Expr)] (Maybe Expr)
@@ -154,9 +178,27 @@ gatherApplications expression = go expression []
     go (S.ApplyExpr f e) acc = go f (e : acc)
     go e acc = (e, acc)
 
+litteralToAtom :: Litteral -> STGM ([Binding], Atom)
+litteralToAtom (StringLitteral s) = do
+  name <- fresh
+  boundName <- fresh
+  let scrut = Primitive (PrimString s)
+      l = LambdaForm [] U [] (Case scrut (StringPrim boundName (Constructor 0 [NameAtom boundName])))
+  return ([Binding name l], NameAtom name)
+litteralToAtom (IntLitteral i) = do
+  name <- fresh
+  boundName <- fresh
+  let scrut = Primitive (PrimInt i)
+      l = LambdaForm [] U [] (Case scrut (IntPrim boundName (Constructor 0 [NameAtom boundName])))
+  return ([Binding name l], NameAtom name)
+litteralToAtom (BoolLitteral b) = do
+  name <- fresh
+  let l = LambdaForm [] N [] (Constructor (if b then 1 else 0) [])
+  return ([Binding name l], NameAtom name)
+
 atomize :: S.Expr Scheme -> STGM ([Binding], Atom)
 atomize expression = case expression of
-  S.LittExpr l -> return ([], LitteralAtom l)
+  S.LittExpr l -> litteralToAtom l
   S.NameExpr n -> do
     wasConstructor <- S.isConstructor n
     if not wasConstructor
@@ -168,7 +210,7 @@ atomize expression = case expression of
     return ([Binding name l], NameAtom name)
 
 atomToExpr :: Atom -> Expr
-atomToExpr (LitteralAtom l) = Litteral l
+atomToExpr (PrimitiveAtom l) = Primitive l
 atomToExpr (NameAtom n) = Apply n []
 
 makeLet :: [Binding] -> Expr -> Expr
@@ -201,6 +243,25 @@ saturateConstructorAsAtom :: ConstructorName -> STGM ([Binding], Atom)
 saturateConstructorAsAtom name =
   (\(NeededFilling b n) -> (b, NameAtom n)) <$> saturateConstructor True name []
 
+builtinName :: S.Builtin -> ValName
+builtinName = \case
+  S.Add -> "prim_+"
+  S.Sub -> "prim_-"
+  S.Mul -> "prim_*"
+  S.Div -> "prim_/"
+  S.Concat -> "prim_++"
+  S.Less -> "prim_<"
+  S.LessEqual -> "prim_<="
+  S.Greater -> "prim_>"
+  S.GreaterEqual -> "prim_>="
+  S.EqualTo -> "prim_=="
+  S.NotEqualTo -> "prim_/="
+  S.Or -> "prim_||"
+  S.And -> "prim_&&"
+  S.Compose -> "prim_."
+  S.Cash -> "prim_$"
+  S.Negate -> "prim_neg"
+
 -- Convert an expression into an STG expression
 convertExpr :: S.Expr Scheme -> STGM Expr
 convertExpr =
@@ -210,7 +271,7 @@ convertExpr =
       -- Builtins, which are all operators, will be fully saturated from a parsing perspective
       S.Builtin b -> do
         (bindings, atoms) <- gatherAtoms args
-        return (makeLet bindings (Builtin b atoms))
+        return (makeLet bindings (Apply (builtinName b) atoms))
       S.NameExpr n -> do
         (bindings, atoms) <- gatherAtoms args
         wasConstructor <- S.isConstructor n
@@ -221,11 +282,15 @@ convertExpr =
         (argBindings, atoms) <- gatherAtoms args
         (eBindings, atom) <- atomize e
         return <| case atom of
-          LitteralAtom _ -> error "Litterals cannot be functions"
+          PrimitiveAtom _ -> error "Primitives cannot be functions"
           NameAtom n -> makeLet (argBindings ++ eBindings) (Apply n atoms)
   where
     handle :: S.Expr Scheme -> STGM Expr
-    handle (S.LittExpr l) = return (Litteral l)
+    handle (S.LittExpr l) =
+      return <| case l of
+        StringLitteral s -> Constructor 0 [PrimitiveAtom (PrimString s)]
+        IntLitteral i -> Constructor 0 [PrimitiveAtom (PrimInt i)]
+        BoolLitteral b -> Constructor (if b then 1 else 0) []
     handle (S.NameExpr n) = do
       wasConstructor <- S.isConstructor n
       if not wasConstructor
@@ -259,7 +324,8 @@ convertBranches branches scrut = case head branches of
   (S.LitteralPattern (S.BoolLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
     default' <- findDefaultExpr branches
-    return (Case scrut (BoolAlts branches' default'))
+    let constrBranches = map (first (\b -> (if b then 1 else 0, []))) branches'
+    return (Case scrut (ConstrAlts constrBranches default'))
   (S.LitteralPattern (S.StringLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.StringLitteral s)) -> return s) branches
     default' <- findDefaultExpr branches
@@ -299,15 +365,16 @@ attachFreeNames lambda@(LambdaForm _ u names expr) = do
 
     inAlts :: Alts -> Set.Set ValName
     inAlts (IntAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
-    inAlts (BoolAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
     inAlts (StringAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
     inAlts (ConstrAlts branches def) = foldMap inCstr branches <> foldMap inExpr def
-      where
-        inCstr :: ((Tag, [ValName]), Expr) -> Set.Set ValName
-        inCstr ((_, names'), e) = Set.difference (inExpr e) (Set.fromList names')
+    inAlts (IntPrim boundName expr') = Set.delete boundName (inExpr expr')
+    inAlts (StringPrim boundName expr') = Set.delete boundName (inExpr expr')
+
+    inCstr :: ((Tag, [ValName]), Expr) -> Set.Set ValName
+    inCstr ((_, names'), e) = Set.difference (inExpr e) (Set.fromList names')
 
     inAtom :: Atom -> Set.Set ValName
-    inAtom LitteralAtom {} = Set.empty
+    inAtom PrimitiveAtom {} = Set.empty
     inAtom (NameAtom n) = Set.singleton n
 
     bindingNames :: [Binding] -> Set.Set ValName
@@ -345,18 +412,151 @@ convertValueDefinitions = mapM convertDef
 
 convertAST :: AST Scheme -> STGM STG
 convertAST (AST _ defs) =
-  defs |> convertValueDefinitions |> fmap STG
+  defs |> convertValueDefinitions |> fmap ((builtins ++) >>> STG)
 
 gatherInformation :: AST Scheme -> STGMInfo
 gatherInformation (AST info defs) =
   let topLevel = gatherTopLevel defs |> Set.fromList
-   in STGMInfo topLevel info
+   in STGMInfo (builtinNames <> topLevel) info
   where
     gatherTopLevel :: [S.ValueDefinition t] -> [ValName]
     gatherTopLevel = map (\(S.ValueDefinition n _ _ _) -> n)
+
+builtinNames :: Set.Set ValName
+builtinNames = builtins |> map (\(Binding n _) -> n) |> Set.fromList
 
 -- Run the STG compilation step
 stg :: AST Scheme -> STG
 stg ast =
   let info = gatherInformation ast
    in runSTGM (convertAST ast) info
+
+-- The builtin operations we've created in this language
+builtins :: [Binding]
+builtins =
+  [ Binding "prim_+" (unboxedIntBuiltin Add),
+    Binding "prim_-" (unboxedIntBuiltin Sub),
+    Binding "prim_*" (unboxedIntBuiltin Mul),
+    Binding "prim_/" (unboxedIntBuiltin Div),
+    Binding "prim_++" (unboxedStringBuiltin Concat),
+    Binding "prim_<" (boolBuiltin Less),
+    Binding "prim_<=" (boolBuiltin LessEqual),
+    Binding "prim_>" (boolBuiltin Greater),
+    Binding "prim_>=" (boolBuiltin GreaterEqual),
+    Binding "prim_==" (boolBuiltin EqualTo),
+    Binding "prim_/=" (boolBuiltin NotEqualTo),
+    Binding
+      "prim_||"
+      ( LambdaForm
+          []
+          N
+          ["$0", "$1"]
+          ( Case
+              (Apply "$0" [])
+              ( ConstrAlts
+                  [ ((1, []), Constructor 1 []),
+                    ((0, []), Apply "$1" [])
+                  ]
+                  Nothing
+              )
+          )
+      ),
+    Binding
+      "prim_&&"
+      ( LambdaForm
+          []
+          N
+          ["$0", "$1"]
+          ( Case
+              (Apply "$0" [])
+              ( ConstrAlts
+                  [ ((0, []), Constructor 0 []),
+                    ((1, []), Apply "$1" [])
+                  ]
+                  Nothing
+              )
+          )
+      ),
+    Binding
+      "prim_."
+      ( LambdaForm
+          []
+          N
+          ["$0", "$1", "$2"]
+          ( Let
+              [ Binding
+                  "$3"
+                  ( LambdaForm ["$1", "$2"] U [] (Apply "$1" [NameAtom "$2"])
+                  )
+              ]
+              (Apply "$0" [NameAtom "$3"])
+          )
+      ),
+    Binding "prim_$" (LambdaForm [] N ["$0", "$1"] (Apply "$0" [NameAtom "$1"])),
+    Binding
+      "prim_neg"
+      ( LambdaForm
+          []
+          N
+          ["$0"]
+          ( Case
+              (Apply "$0" [])
+              ( ConstrAlts
+                  [ ( (0, ["#0"]),
+                      makeIntBox (Builtin Negate [NameAtom "#0"])
+                    )
+                  ]
+                  Nothing
+              )
+          )
+      )
+  ]
+  where
+    rawBuiltin :: (Expr -> Expr) -> Builtin -> LambdaForm
+    rawBuiltin f b =
+      LambdaForm
+        []
+        N
+        ["$0", "$1"]
+        ( Case
+            (Apply "$0" [])
+            ( ConstrAlts
+                [ ( (0, ["#0"]),
+                    Case
+                      (Apply "$1" [])
+                      ( ConstrAlts
+                          [ ( (0, ["#1"]),
+                              f (Builtin b [NameAtom "#0", NameAtom "#1"])
+                            )
+                          ]
+                          Nothing
+                      )
+                  )
+                ]
+                Nothing
+            )
+        )
+
+    makeIntBox :: Expr -> Expr
+    makeIntBox e =
+      Case e (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
+
+    makeStringBox :: Expr -> Expr
+    makeStringBox e =
+      Case e (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
+
+    unboxedIntBuiltin :: Builtin -> LambdaForm
+    unboxedIntBuiltin = rawBuiltin makeIntBox
+
+    unboxedStringBuiltin :: Builtin -> LambdaForm
+    unboxedStringBuiltin = rawBuiltin makeStringBox
+
+    boolBuiltin :: Builtin -> LambdaForm
+    boolBuiltin =
+      rawBuiltin <| \e ->
+        Case
+          e
+          ( IntAlts
+              [(0, Constructor 0 []), (1, Constructor 1 [])]
+              Nothing
+          )
