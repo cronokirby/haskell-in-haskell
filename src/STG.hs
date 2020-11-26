@@ -181,15 +181,11 @@ gatherApplications expression = go expression []
 litteralToAtom :: Litteral -> STGM ([Binding], Atom)
 litteralToAtom (StringLitteral s) = do
   name <- fresh
-  boundName <- fresh
-  let scrut = Primitive (PrimString s)
-      l = LambdaForm [] U [] (Case scrut (StringPrim boundName (Constructor 0 [NameAtom boundName])))
+  let l = LambdaForm [] U [] (Constructor 0 [PrimitiveAtom (PrimString s)])
   return ([Binding name l], NameAtom name)
 litteralToAtom (IntLitteral i) = do
   name <- fresh
-  boundName <- fresh
-  let scrut = Primitive (PrimInt i)
-      l = LambdaForm [] U [] (Case scrut (IntPrim boundName (Constructor 0 [NameAtom boundName])))
+  let l = LambdaForm [] U [] (Constructor 0 [PrimitiveAtom (PrimInt i)])
   return ([Binding name l], NameAtom name)
 litteralToAtom (BoolLitteral b) = do
   name <- fresh
