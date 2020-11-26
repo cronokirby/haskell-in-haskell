@@ -320,7 +320,9 @@ convertBranches branches scrut = case head branches of
   (S.LitteralPattern (S.IntLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.IntLitteral i)) -> return i) branches
     default' <- findDefaultExpr branches
-    return (Case scrut (IntAlts branches' default'))
+    boundName <- fresh
+    let primCase = Case (Apply boundName []) (IntAlts branches' default')
+    return (Case scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing))
   (S.LitteralPattern (S.BoolLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
     default' <- findDefaultExpr branches
@@ -329,7 +331,9 @@ convertBranches branches scrut = case head branches of
   (S.LitteralPattern (S.StringLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.StringLitteral s)) -> return s) branches
     default' <- findDefaultExpr branches
-    return (Case scrut (StringAlts branches' default'))
+    boundName <- fresh
+    let primCase = Case (Apply boundName []) (StringAlts branches' default')
+    return (Case scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing))
   (S.ConstructorPattern _ _, _) -> do
     branches' <- findPatterns (\(S.ConstructorPattern cstr names) -> (,names) <$> constructorTag cstr) branches
     default' <- findDefaultExpr branches
