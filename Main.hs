@@ -64,7 +64,7 @@ typerStage :: Stage (Simplifier.AST ()) (Simplifier.AST Scheme)
 typerStage = makeStage "Typer" Typer.typer
 
 stgStage :: Stage (Simplifier.AST Scheme) STG.STG
-stgStage = makeStage "STG" (STG.stg >>> (Right :: a -> Either () a))
+stgStage = makeStage "STG" STG.stg
 
 -- Read out which stages to execute based on a string
 readStage :: String -> Maybe (String -> IO ())

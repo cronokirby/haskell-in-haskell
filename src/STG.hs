@@ -18,7 +18,7 @@ import Simplifier
     ValueDefinition (..),
   )
 import qualified Simplifier as S
-import Types (Scheme (..))
+import Types (Scheme (..), Type (..))
 
 -- Represents an actual primitive value
 data Primitive
@@ -45,6 +45,8 @@ data Builtin
   | NotEqualTo
   | Negate
   | Concat
+  | PrintInt
+  | PrintString
   deriving (Eq, Show)
 
 -- Represents a unit of data simple enough to be passed directly
@@ -133,8 +135,14 @@ data LambdaForm = LambdaForm [ValName] Updateable [ValName] Expr deriving (Eq, S
 -- the connection with heap allocated thunks.
 data Binding = Binding ValName LambdaForm deriving (Eq, Show)
 
--- Represents an STG program, which is just a list of top level bindings.
-newtype STG = STG [Binding] deriving (Eq, Show)
+-- Represents an STG program, which is just a list of top level bindings, and an entry
+data STG = STG [Binding] LambdaForm deriving (Eq, Show)
+
+-- The kind of error that can happen when generating STG
+data STGError
+  = NoEntryPoint
+  | IncorrectEntryPointType Scheme
+  deriving (Eq, Show)
 
 -- The information we have access to when compiling to STG
 data STGMInfo = STGMInfo
@@ -410,9 +418,22 @@ convertDef (ValueDefinition name _ _ e) =
 convertValueDefinitions :: [ValueDefinition Scheme] -> STGM [Binding]
 convertValueDefinitions = mapM convertDef
 
-convertAST :: AST Scheme -> STGM STG
+convertAST :: AST Scheme -> STGM (Either STGError STG)
 convertAST (AST _ defs) =
-  defs |> convertValueDefinitions |> fmap ((builtins ++) >>> STG)
+  find (\(S.ValueDefinition n _ _ _) -> n == "main") defs |> \case
+    Nothing -> return (Left NoEntryPoint)
+    Just (S.ValueDefinition n _ (Scheme [] IntT) _) -> do
+      bindings <- gatherBindings
+      return (Right (STG bindings (entry PrintInt n)))
+    Just (S.ValueDefinition n _ (Scheme [] StringT) _) -> do
+      bindings <- gatherBindings
+      return (Right (STG bindings (entry PrintString n)))
+    Just (S.ValueDefinition _ _ s _) -> return (Left (IncorrectEntryPointType s))
+  where
+    entry b n = LambdaForm [] U [] (Case (Apply n []) (ConstrAlts [((0, ["#v"]), Builtin b [NameAtom "#v"])] Nothing))
+
+    gatherBindings =
+      defs |> convertValueDefinitions |> fmap (builtins ++)
 
 gatherInformation :: AST Scheme -> STGMInfo
 gatherInformation (AST info defs) =
@@ -426,7 +447,7 @@ builtinNames :: Set.Set ValName
 builtinNames = builtins |> map (\(Binding n _) -> n) |> Set.fromList
 
 -- Run the STG compilation step
-stg :: AST Scheme -> STG
+stg :: AST Scheme -> Either STGError STG
 stg ast =
   let info = gatherInformation ast
    in runSTGM (convertAST ast) info
