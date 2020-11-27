@@ -455,19 +455,19 @@ stg ast =
 -- The builtin operations we've created in this language
 builtins :: [Binding]
 builtins =
-  [ Binding "prim_+" (unboxedIntBuiltin Add),
-    Binding "prim_-" (unboxedIntBuiltin Sub),
-    Binding "prim_*" (unboxedIntBuiltin Mul),
-    Binding "prim_/" (unboxedIntBuiltin Div),
-    Binding "prim_++" (unboxedStringBuiltin Concat),
-    Binding "prim_<" (boolBuiltin Less),
-    Binding "prim_<=" (boolBuiltin LessEqual),
-    Binding "prim_>" (boolBuiltin Greater),
-    Binding "prim_>=" (boolBuiltin GreaterEqual),
-    Binding "prim_==" (boolBuiltin EqualTo),
-    Binding "prim_/=" (boolBuiltin NotEqualTo),
+  [ Binding "$prim_add" (unboxedIntBuiltin Add),
+    Binding "$prim_sub" (unboxedIntBuiltin Sub),
+    Binding "$prim_mul" (unboxedIntBuiltin Mul),
+    Binding "$prim_div" (unboxedIntBuiltin Div),
+    Binding "$prim_conc" (unboxedStringBuiltin Concat),
+    Binding "$prim_l" (boolBuiltin Less),
+    Binding "$prim_le" (boolBuiltin LessEqual),
+    Binding "$prim_g" (boolBuiltin Greater),
+    Binding "$prim_ge" (boolBuiltin GreaterEqual),
+    Binding "$prim_eq" (boolBuiltin EqualTo),
+    Binding "$prim_neq" (boolBuiltin NotEqualTo),
     Binding
-      "prim_||"
+      "$prim_or"
       ( LambdaForm
           []
           N
@@ -483,7 +483,7 @@ builtins =
           )
       ),
     Binding
-      "prim_&&"
+      "$prim_and"
       ( LambdaForm
           []
           N
@@ -499,7 +499,7 @@ builtins =
           )
       ),
     Binding
-      "prim_."
+      "$prim_compose"
       ( LambdaForm
           []
           N
@@ -513,9 +513,9 @@ builtins =
               (Apply "$0" [NameAtom "$3"])
           )
       ),
-    Binding "prim_$" (LambdaForm [] N ["$0", "$1"] (Apply "$0" [NameAtom "$1"])),
+    Binding "$prim_cash" (LambdaForm [] N ["$0", "$1"] (Apply "$0" [NameAtom "$1"])),
     Binding
-      "prim_neg"
+      "$prim_neg"
       ( LambdaForm
           []
           N
