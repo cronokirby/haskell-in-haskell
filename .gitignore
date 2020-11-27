@@ -1,2 +1,4 @@
 dist-newstyle/
 .test/
+.output.c
+a.out

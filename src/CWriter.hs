@@ -5,7 +5,7 @@ module CWriter (writeC) where
 import Control.Monad.State
 import Control.Monad.Writer
 import Ourlude
-import STG (STG (..))
+import STG (STG (..), Binding(..))
 
 -- A type for CCode.
 --
@@ -38,10 +38,40 @@ writeLine code = do
   tell code
   tell "\n"
 
-writeC :: STG -> CCode
-writeC _ = runCWriter <| do
-  writeLine "int main() {"
+-- Convert an identifier
+--
+-- We do this in a way that generates both valid C, and allows us
+-- to never clash between generated names, user names, and runtime
+-- C functions
+convertIdentifier :: String -> String
+convertIdentifier name
+  | '$' `elem` name || '#' `elem` name =
+    "gen_" ++ (name |> replace '$' "_S_" |> replace '#' "_P_")
+  where
+    replace char by str = foldMap (\c -> if c == char then by else [c]) str
+convertIdentifier name = "user_" ++ name
+
+genLambdaForm :: String -> CWriter ()
+genLambdaForm ident = do
+  writeLine ""
+  writeLine ("void " ++ ident ++ "(void) {")
   indent
-  writeLine "return 0;"
+  writeLine "return;"
   unindent
   writeLine "}"
+  writeLine ""
+
+generate :: STG -> CWriter ()
+generate (STG bindings _) = do
+    writeLine "#include \"runtime.c\""
+    forM_ bindings (\(Binding name _) -> genLambdaForm (convertIdentifier name))
+    genLambdaForm "entry"
+    writeLine "int main() {"
+    indent
+    writeLine "return 0;"
+    unindent
+    writeLine "}" 
+
+writeC :: STG -> CCode
+writeC stg = runCWriter (generate stg)
+
