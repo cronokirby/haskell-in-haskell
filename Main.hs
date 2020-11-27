@@ -1,16 +1,18 @@
 module Main where
 
+import qualified CWriter
 import Control.Monad ((>=>))
 import Data.Char (toLower)
+import Data.Maybe (listToMaybe)
 import qualified Lexer
 import Ourlude
 import qualified Parser
 import qualified STG
 import qualified Simplifier
 import System.Environment (getArgs)
-import Types (Scheme)
 import Text.Pretty.Simple (pPrint, pPrintString)
 import qualified Typer
+import Types (Scheme)
 
 -- An error that occurrs in a stage, including its name and what went wrong
 data StagedError = StagedError String String
@@ -66,27 +68,36 @@ typerStage = makeStage "Typer" Typer.typer
 stgStage :: Stage (Simplifier.AST Scheme) STG.STG
 stgStage = makeStage "STG" STG.stg
 
--- Read out which stages to execute based on a string
-readStage :: String -> Maybe (String -> IO ())
-readStage "lex" =
-  lexerStage |> execStage |> Just
-readStage "parse" =
-  lexerStage >-> parserStage |> execStage |> Just
-readStage "simplify" =
-  lexerStage >-> parserStage >-> simplifierStage |> execStage |> Just
-readStage "type" =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage |> execStage |> Just
-readStage "stg" =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage |> execStage |> Just
-readStage _ = Nothing
+writeCStage :: Stage (STG.STG) String
+writeCStage = makeStage "Output C" (\stg -> (Right (CWriter.writeC stg)) :: Either () String)
 
+-- Read out which stages to execute based on a string
+readStage :: String -> Maybe String -> Maybe (String -> IO ())
+readStage "lex" _ =
+  lexerStage |> execStage |> Just
+readStage "parse" _ =
+  lexerStage >-> parserStage |> execStage |> Just
+readStage "simplify" _ =
+  lexerStage >-> parserStage >-> simplifierStage |> execStage |> Just
+readStage "type" _ =
+  lexerStage >-> parserStage >-> simplifierStage >-> typerStage |> execStage |> Just
+readStage "stg" _ =
+  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage |> execStage |> Just
+readStage "compile" (Just outputFile) =
+  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage >-> writeCStage |> outputStage |> Just
+  where
+    outputStage (Stage name r) a = case r a of
+      Left err -> printStagedError err
+      Right output -> writeFile outputFile output
+readStage _ _ = Nothing
 
 -- The arguments we'll need for our program
 data Args = Args FilePath (String -> IO ())
 
 parseArgs :: [String] -> Maybe Args
-parseArgs (stageName : file : _) = do
-  stage <- readStage (map toLower stageName)
+parseArgs (stageName : file : rest) = do
+  let outputFile = listToMaybe rest
+  stage <- readStage (map toLower stageName) outputFile
   return (Args file stage)
 parseArgs _ = Nothing
 
