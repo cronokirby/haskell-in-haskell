@@ -45,8 +45,8 @@ data Builtin
   | NotEqualTo
   | Negate
   | Concat
-  | PrintInt
-  | PrintString
+  | ExitWithInt
+  | ExitWithString
   deriving (Eq, Show)
 
 -- Represents a unit of data simple enough to be passed directly
@@ -424,10 +424,10 @@ convertAST (AST _ defs) =
     Nothing -> return (Left NoEntryPoint)
     Just (S.ValueDefinition n _ (Scheme [] IntT) _) -> do
       bindings <- gatherBindings
-      return (Right (STG bindings (entry PrintInt n)))
+      return (Right (STG bindings (entry ExitWithInt n)))
     Just (S.ValueDefinition n _ (Scheme [] StringT) _) -> do
       bindings <- gatherBindings
-      return (Right (STG bindings (entry PrintString n)))
+      return (Right (STG bindings (entry ExitWithString n)))
     Just (S.ValueDefinition _ _ s _) -> return (Left (IncorrectEntryPointType s))
   where
     entry b n = LambdaForm [] U [] (Case (Apply n []) (ConstrAlts [((0, ["#v"]), Builtin b [NameAtom "#v"])] Nothing))
