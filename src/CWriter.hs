@@ -51,6 +51,9 @@ convertIdentifier name
     replace char by str = foldMap (\c -> if c == char then by else [c]) str
 convertIdentifier name = "user_" ++ name
 
+tableFor :: String -> String
+tableFor ident = "table_for_" ++ ident
+
 genLambdaForm :: String -> CWriter ()
 genLambdaForm ident = do
   writeLine ""
@@ -59,6 +62,7 @@ genLambdaForm ident = do
   writeLine "return NULL;"
   unindent
   writeLine "}"
+  writeLine ("InfoTable " ++ tableFor ident ++ " = { &" ++ ident ++ ", NULL, NULL };")
 
 generate :: STG -> CWriter ()
 generate (STG bindings _) = do
