@@ -232,7 +232,7 @@ saturateConstructor alwaysSaturate name atoms = do
     else do
       lambdaNames <- replicateM diff fresh
       let root = Constructor tag (atoms ++ map NameAtom lambdaNames)
-      lambda <- attachFreeNames (LambdaForm [] U lambdaNames root)
+      lambda <- attachFreeNames (LambdaForm [] N lambdaNames root)
       bindingName <- fresh
       return (NeededFilling [Binding bindingName lambda] bindingName)
 
@@ -355,7 +355,7 @@ attachFreeNames :: LambdaForm -> STGM LambdaForm
 attachFreeNames lambda@(LambdaForm _ u names expr) = do
   topLevel <- asks topLevelNames
   let free = Set.difference (inLambda lambda) topLevel |> Set.toList
-  return (LambdaForm free u names expr)
+  return (LambdaForm free (if null names then u else N) names expr)
   where
     inLambda :: LambdaForm -> Set.Set ValName
     inLambda (LambdaForm _ _ ns e) =
