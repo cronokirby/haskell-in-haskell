@@ -54,9 +54,9 @@ convertIdentifier name = "user_" ++ name
 genLambdaForm :: String -> CWriter ()
 genLambdaForm ident = do
   writeLine ""
-  writeLine ("void " ++ ident ++ "(void) {")
+  writeLine ("void* " ++ ident ++ "(void) {")
   indent
-  writeLine "return;"
+  writeLine "return NULL;"
   unindent
   writeLine "}"
 
@@ -68,6 +68,12 @@ generate (STG bindings _) = do
     writeLine ""
     writeLine "int main() {"
     indent
+    writeLine "CodeLabel label = &entry;"
+    writeLine "while (label != NULL) {"
+    indent
+    writeLine "label = label();"
+    unindent
+    writeLine "}"
     writeLine "return 0;"
     unindent
     writeLine "}" 
