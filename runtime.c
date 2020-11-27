@@ -14,7 +14,7 @@ void **H;
 void **H_base;
 size_t H_size;
 
-void H_alloc(size_t count) {
+void H_reserve(size_t count) {
   size_t diff = H - H_base;
   if (diff < count) {
     H_base = realloc(H_base, H_size);
@@ -29,7 +29,7 @@ void **SA;
 void **SA_base;
 size_t SA_size;
 
-void SA_alloc(size_t count) {
+void SA_reserve(size_t count) {
   size_t diff = SA - SA_base;
   if (diff < count) {
     SA_base = realloc(SA_base, SA_size);
@@ -42,7 +42,7 @@ void **SB;
 void **SB_base;
 size_t SB_size;
 
-void SB_alloc(size_t count) {
+void SB_reserve(size_t count) {
   size_t diff = SB - SB_base;
   if (diff < count) {
     SB_base = realloc(SB_base, SB_size);
