@@ -59,13 +59,13 @@ genLambdaForm ident = do
   writeLine "return;"
   unindent
   writeLine "}"
-  writeLine ""
 
 generate :: STG -> CWriter ()
 generate (STG bindings _) = do
     writeLine "#include \"runtime.c\""
     forM_ bindings (\(Binding name _) -> genLambdaForm (convertIdentifier name))
     genLambdaForm "entry"
+    writeLine ""
     writeLine "int main() {"
     indent
     writeLine "return 0;"
