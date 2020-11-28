@@ -54,6 +54,8 @@ data VarStorage
     IntStorage
   | -- A variable holding a char*
     StringStorage
+  | -- A variable holding a global storage
+    GlobalStorage
 
 -- A location some variable can be
 data Location
@@ -65,6 +67,8 @@ data Location
     TempPInt String
   | -- A temporary variable pointing to a String
     TempPString String
+  | -- Global function with a certain identifier path
+    GlobalFunction IdentPath
   deriving (Eq, Show)
 
 data Env = Env
@@ -229,8 +233,12 @@ genLambdaForm name (LambdaForm bound _ args expr) = do
 generate :: STG -> CWriter ()
 generate (STG bindings entry) = do
   writeLine "#include \"runtime.c\""
-  forM_ bindings (\(Binding name form) -> genLambdaForm name form)
-  genLambdaForm "$entry" entry
+  let topLevelNames = map (\(Binding name _) -> name) bindings
+      globalStorages = zip topLevelNames (repeat GlobalStorage)
+      globalLocations = map (\name -> (name, GlobalFunction (ident name))) topLevelNames
+  withLocations globalLocations <| withStorages globalStorages <| do
+    forM_ bindings (\(Binding name form) -> genLambdaForm name form)
+    genLambdaForm "$entry" entry
   entryPath <- getFullPath "$entry"
   writeLine ""
   writeLine "int main() {"
