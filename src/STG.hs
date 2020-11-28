@@ -12,6 +12,7 @@ module STG
     Expr (..),
     Alts (..),
     Primitive (..),
+    Updateable(..),
     stg,
   )
 where

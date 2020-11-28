@@ -9,8 +9,9 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
 import qualified Data.Map as Map
+import Data.Maybe (catMaybes)
 import Ourlude
-import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), Primitive (..), STG (..))
+import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), Primitive (..), STG (..), Updateable (..))
 import Text.Printf (printf)
 
 -- A type for CCode.
@@ -70,6 +71,8 @@ data Location
     TempString String
   | -- Global function with a certain identifier path
     GlobalFunction IdentPath
+  | -- The location of this thing is the current node
+    CurrentNode
   deriving (Eq, Show)
 
 data Env = Env
@@ -152,11 +155,25 @@ getFullPath name = do
   current <- asks currentFunction
   return (current <> ident name)
 
+-- Mark all of the closures that can be made global inside a let expression
+--
+-- We need to do this before we create the definitions for these functions,
+-- because how they might call themselves recursively depends on this information,
+-- and they want this information for the other definitions, which might
+-- depend on eachother mutually.
+withBindingStorages :: [Binding] -> CWriter a -> CWriter a
+withBindingStorages bindings m = do
+  let withBestStorage (Binding name' (LambdaForm [] N _ _)) = (name', GlobalStorage)
+      withBestStorage (Binding name _) = (name, PointerStorage)
+      storages = map withBestStorage bindings
+  withStorages storages m
+
 writeDefinitionsFor :: Expr -> CWriter ()
 writeDefinitionsFor = \case
-  (Let bindings e) -> do
-    forM_ bindings (\(Binding name lf) -> genLambdaForm name lf)
-    writeDefinitionsFor e
+  (Let bindings e) ->
+    withBindingStorages bindings <| do
+      forM_ bindings (\(Binding name lf) -> genLambdaForm name lf)
+      writeDefinitionsFor e
   (Case e _ alts) -> do
     writeDefinitionsFor e
     genAlts alts
@@ -188,19 +205,33 @@ genAlts alts = do
         forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
 
 genLambdaForm :: String -> LambdaForm -> CWriter ()
-genLambdaForm name (LambdaForm bound _ args expr) = do
+genLambdaForm myName (LambdaForm bound _ args expr) =
   -- We know that all of the arguments will be pointers
-  withStorages (zip args (repeat PointerStorage)) <| do
-    insideFunction name (writeDefinitionsFor expr)
-    writeLine ""
-    path <- getFullPath name
-    writeLine ("void* " ++ convertPath path ++ "(void) {")
-    indent
-    withAllocatedArguments (handle expr)
-    unindent
-    writeLine "}"
-    writeLine ("InfoTable " ++ tableFor path ++ " = { &" ++ convertPath path ++ ", NULL, NULL };")
+  withMyOwnLocation
+    <| withStorages (zip args (repeat PointerStorage))
+    <| do
+      insideFunction myName (writeDefinitionsFor expr)
+      writeLine ""
+      myPath <- getFullPath myName
+      writeLine (printf "void* %s(void) {" (convertPath myPath))
+      indent
+      withAllocatedArguments (handle expr)
+      unindent
+      writeLine "}"
+      -- Only write the info table if this isn't a globally stored function
+      storageOf myName >>= \case
+        GlobalStorage -> return ()
+        _ -> writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
   where
+    withMyOwnLocation :: CWriter a -> CWriter a
+    withMyOwnLocation m =
+      storageOf myName >>= \case
+        GlobalStorage -> do
+          myPath <- getFullPath myName
+          withLocation myName (GlobalFunction myPath) m
+        PointerStorage -> withLocation myName CurrentNode m
+        badStorage -> error (printf "the function %s cannot be stored inside %s" myName (show badStorage))
+
     locationsForBound :: [String] -> CWriter [(String, Location)]
     locationsForBound args' = do
       -- If the variable is bound, we must already have a storage for it
@@ -251,12 +282,12 @@ genLambdaForm name (LambdaForm bound _ args expr) = do
     handle :: Expr -> CWriter ()
     handle (Error s) = do
       writeLine "puts(\"Error:\");"
-      writeLine ("puts(" ++ show s ++ ");")
+      writeLine (printf "puts(\"%s\")" s)
       writeLine "return NULL;"
     handle (Primitive p) = do
       case p of
-        PrimInt i -> writeLine ("RegInt = " ++ show i ++ ";")
-        PrimString s -> writeLine ("RegString = " ++ show s ++ ";")
+        PrimInt i -> writeLine (printf "RegInt = %d;" i)
+        PrimString s -> writeLine (printf "RegString = \"%s\";" s)
       writeLine "return SB_pop();"
     handle _ = writeLine "return NULL;"
 
@@ -266,14 +297,16 @@ generate (STG bindings entry) = do
   let topLevelNames = map (\(Binding name _) -> name) bindings
       globalStorages = zip topLevelNames (repeat GlobalStorage)
       globalLocations = map (\name -> (name, GlobalFunction (ident name))) topLevelNames
+  entryPath <- getFullPath "$entry"
   withLocations globalLocations <| withStorages globalStorages <| do
     forM_ bindings (\(Binding name form) -> genLambdaForm name form)
-    genLambdaForm "$entry" entry
-  entryPath <- getFullPath "$entry"
+    withLocation "$entry" (GlobalFunction entryPath)
+      <| withStorage "$entry" GlobalStorage
+      <| genLambdaForm "$entry" entry
   writeLine ""
   writeLine "int main() {"
   indent
-  writeLine ("CodeLabel label = &" ++ convertPath entryPath ++ ";")
+  writeLine (printf "CodeLabel label = &%s;" (convertPath entryPath))
   writeLine "while (label != NULL) {"
   indent
   writeLine "label = label();"
