@@ -27,7 +27,7 @@ const char *H_concat(const char *s1, const char *s2) {
   // Don't copy the null terminator
   memcpy(H, s1, len1);
   // Copy the null terminator as well
-  memcpy(H, s2, len2 + 1);
+  memcpy(H + len1, s2, len2 + 1);
   const char *ret = H;
   H = next_H;
   return ret;
