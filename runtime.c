@@ -110,6 +110,7 @@ typedef struct InfoTable {
 // Magic numbers, to a certain degree
 int64_t RegInt = 0xBAD;
 int64_t RegTag = 0xBAD;
+int64_t RegConstrArgs = 0xBAD;
 
 const char *RegString = NULL;
 

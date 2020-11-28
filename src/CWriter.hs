@@ -202,7 +202,7 @@ genAlts deadNames alts = do
   writeLine ("void* " ++ convertPath path ++ "(void) {")
   indent
   locations <- mapM resurrectName deadNames
-  withLocations locations (handle alts)
+  insideFunction "$alts" <| withLocations locations <| handle alts
   unindent
   writeLine "}"
   where
@@ -267,10 +267,10 @@ genAlts deadNames alts = do
     handle (IntAlts as default') = do
       writeLine "switch (RegInt) {"
       indent
-      forM_ as <| \(i, e) -> do
-        writeLine (printf "case %d: {" i)
+      forM_ (zip [(0 :: Int) ..] as) <| \(i, (target, e)) -> do
+        writeLine (printf "case %d: {" target)
         indent
-        genExpr e
+        insideFunction (show i) (genExpr e)
         writeLine "break;"
         unindent
         writeLine "}"
@@ -279,53 +279,57 @@ genAlts deadNames alts = do
         Just e -> do
           writeLine "default: {"
           indent
-          genExpr e
+          insideFunction "$default" (genExpr e)
           unindent
           writeLine "}"
       unindent
       writeLine "}"
     handle (StringAlts as default') = do
-      genIfElse as
+      genIfElse (zip [0 ..] as)
       case default' of
         Nothing -> writeLine "}"
         Just e -> do
           writeLine "} else {"
           indent
-          genExpr e
+          insideFunction "$default" (genExpr e)
           unindent
           writeLine "}"
       where
-        genIfElse :: [(String, Expr)] -> CWriter ()
+        genIfElse :: [(Int, (String, Expr))] -> CWriter ()
         genIfElse [] = return ()
-        genIfElse ((firstS, firstE) : xs) = do
+        genIfElse ((i, (firstS, firstE)) : xs) = do
           writeLine (printf "if (RegString == %s) {" (show firstS))
           indent
-          genExpr firstE
+          insideFunction (show i) (genExpr firstE)
           unindent
-          forM_ xs <| \(s, e) -> do
+          forM_ xs <| \(i', (s, e)) -> do
             writeLine (printf "} else if (RegString == %s) {" (show s))
             indent
-            genExpr e
+            insideFunction (show i') (genExpr e)
             unindent
     handle (ConstrAlts as default') = do
       writeLine "switch (RegTag) {"
       indent
-      forM_ as <| \((tag, names), e) -> do
+      forM_ (zip [(0 :: Int) ..] as) <| \(i, ((tag, names), e)) -> do
         writeLine (printf "case %d: {" tag)
         indent
         -- We know that all the constructor arguments are boxed, and on the stack, in straightforward order
         located <- mapM grabNameFromStack names
-        withLocations located <| withStorages (zip names (repeat PointerStorage)) <| genExpr e
+        insideFunction (show i)
+          <| withLocations located
+          <| withStorages (zip names (repeat PointerStorage))
+          <| genExpr e
+        writeLine "break;"
         unindent
         writeLine "}"
-      case default' of
-        Nothing -> return ()
-        Just e -> do
-          writeLine "default: {"
-          indent
-          genExpr e
-          unindent
-          writeLine "}"
+      writeLine "default: {"
+      indent
+      -- Pop all the arguments that we're not going to use
+      writeLine "SA -= RegConstrArgs;"
+      insideFunction "$default" <| forM_ default' genExpr
+      writeLine "break;"
+      unindent
+      writeLine "}"
       unindent
       writeLine "}"
       where
@@ -349,6 +353,14 @@ atomAsString (NameAtom n) =
     TempString tmp -> return tmp
     loc -> error (printf "location %s does not contain string" (show loc))
 atomAsString arg = error (printf "arg %s cannot be used as string" (show arg))
+
+atomAsPointer :: Atom -> CWriter String
+atomAsPointer (NameAtom n) =
+  locationOf n >>= \case
+    Temp tmp -> return tmp
+    GlobalFunction path -> return ("&" ++ tableFor path)
+    loc -> error (printf "location %l does not contain pointer" (show loc))
+atomAsPointer arg = error (printf "arg %s cannot be used as a pointer" (show arg))
 
 genExpr :: Expr -> CWriter ()
 genExpr (Error s) = do
@@ -454,8 +466,14 @@ genExpr (Box IntBox atom) = do
   writeLine "return SB_pop();"
 genExpr (Box StringBox atom) = do
   str1 <- atomAsString atom
-  writeLine (printf "RegString = %s" str1)
+  writeLine (printf "RegString = %s;" str1)
   writeLine "return SB_pop();"
+genExpr (Constructor tag atoms) = do
+  writeLine (printf "RegTag = %d;" tag)
+  writeLine (printf "RegConstrArgs = %d;" (length atoms))
+  forM_ (reverse atoms) <| \atom -> do
+    ptr <- atomAsPointer atom
+    writeLine (printf "SA_push(%s);" ptr)
 genExpr _ = do
   writeLine "panic(\"UNIMPLEMENTED\");"
   writeLine "return NULL;"
@@ -474,10 +492,10 @@ genLambdaForm myName (LambdaForm bound _ args expr) =
       insideFunction myName <| withAllocatedArguments <| genExpr expr
       unindent
       writeLine "}"
-      -- Only write the info table if this isn't a globally stored function
-      storageOf myName >>= \case
-        GlobalStorage -> return ()
-        _ -> writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
+      -- We could theoretically avoid writing the info table if a data constructor
+      -- is never called with this function as a raw argument, but that's a difficult
+      -- check to actually do.
+      writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
   where
     withMyOwnLocation :: CWriter a -> CWriter a
     withMyOwnLocation m =
