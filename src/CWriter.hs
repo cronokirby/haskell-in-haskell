@@ -9,9 +9,17 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes)
 import Ourlude
-import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), Primitive (..), STG (..), Updateable (..))
+import STG
+  ( Alts (..),
+    Atom (..),
+    Binding (..),
+    Expr (..),
+    LambdaForm (..),
+    Primitive (..),
+    STG (..),
+    Updateable (..),
+  )
 import Text.Printf (printf)
 
 -- A type for CCode.
@@ -289,6 +297,38 @@ genLambdaForm myName (LambdaForm bound _ args expr) =
         PrimInt i -> writeLine (printf "RegInt = %d;" i)
         PrimString s -> writeLine (printf "RegString = \"%s\";" s)
       writeLine "return SB_pop();"
+    handle (Apply function atoms) = do
+      forM_ atoms <| \case
+        NameAtom n -> locationOf n >>= \case
+          TempInt _ -> error (printf "function %s cannot be applied to primitive int" function)
+          TempString _ -> error (printf "function %s cannot be applied to primitive string" function)
+          Temp tmp ->
+            writeLine (printf "SA_push(%s);" tmp)
+          GlobalFunction path ->
+            writeLine (printf "SA_push(&%s);" (convertPath path))
+          CurrentNode ->
+            writeLine "SA_push(RegNode);"
+        -- This is an implementation detail of our compiler, really
+        -- In practice Haskell allows functions to accept primitive arguments,
+        -- but we only have primitive values as intermediates
+        PrimitiveAtom p ->
+          error (printf "function %s cannot be applied to primitive %s" function (show p))
+      locationOf function >>= \case
+        TempInt _ -> error (printf "Cannot call function %s with int location" function)
+        TempString _ -> error (printf "Cannot call function %s with string location" function)
+        Temp tmp -> do
+          ret <- fresh 
+          writeLine (printf "RegNode = %s;" tmp)
+          writeLine (printf "InfoTable* %s;" ret)
+          writeLine (printf "memcpy(&%s, RegNode, sizeof(Infotable*));" ret)
+          writeLine (printf "return %s->entry;" ret)
+        CurrentNode -> do
+          ret <- fresh 
+          writeLine (printf "InfoTable* %s;" ret)
+          writeLine (printf "memcpy(&%s, RegNode, sizeof(Infotable*));" ret)
+          writeLine (printf "return %s->entry;" ret)
+        GlobalFunction path -> do
+          writeLine (printf "return &%s;" (convertPath path))
     handle _ = writeLine "return NULL;"
 
 generate :: STG -> CWriter ()
