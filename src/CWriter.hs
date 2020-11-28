@@ -45,6 +45,18 @@ convertPath (IdentPath ps) = reverse ps |> map convertIdentifier |> intercalate 
 tableFor :: IdentPath -> String
 tableFor path = "table_for_" ++ convertPath path
 
+-- A location some variable can be
+data Location
+  -- A temporary variable with some nome
+  = Temp String
+  -- A temporary variable pointing to a pointer
+  | TempPP String
+  -- A temporary variable pointing to an int
+  | TempPInt String
+  -- A temporary variable pointing to a String
+  | TempPString Int
+  deriving (Eq, Show)
+
 newtype Env = Env
   { -- The current function in the environment
     currentFunction :: IdentPath
