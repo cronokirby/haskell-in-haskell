@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -10,18 +11,9 @@ void panic(const char *message) {
 const size_t BASE_HEAP_SIZE = 1 << 16;
 
 // The heap is a pointer to pointers, basically
-void **H;
-void **H_base;
+uint8_t *H;
+uint8_t H_base;
 size_t H_size;
-
-void H_reserve(size_t count) {
-  size_t diff = H - H_base;
-  if (diff < count) {
-    H_base = realloc(H_base, H_size);
-    H = H_base + H_size + diff;
-    H_size *= 2;
-  }
-}
 
 const size_t BASE_STACK_SIZE = 1 << 10;
 
@@ -102,3 +94,5 @@ typedef struct InfoTable {
 int RegInt = 0;
 
 char *RegString = NULL;
+
+uint8_t *RegNode = NULL;

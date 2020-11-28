@@ -46,25 +46,14 @@ convertPath (IdentPath ps) = reverse ps |> map convertIdentifier |> intercalate 
 tableFor :: IdentPath -> String
 tableFor path = "table_for_" ++ convertPath path
 
--- The (C) type that a variable has
-data VarType
+-- The storage type that a variable has
+data VarStorage
   = -- A variable that holds a void*
-    PointerVar
+    PointerStorage
   | -- A variable holding an integer
-    IntVar
+    IntStorage
   | -- A variable holding a char*
-    StringVar
-
--- Represents the information we have about a variable
-data VarInfo = VarInfo
-  { -- The temporary variable that contains this variable
-    tempVar :: String,
-    -- The type that the variable has
-    --
-    -- We need to keep track of this, in order to correctly
-    -- move the variable to the right places, and what not
-    varType :: VarType
-  }
+    StringStorage
 
 -- A location some variable can be
 data Location
@@ -81,12 +70,14 @@ data Location
 data Env = Env
   { -- The current function in the environment
     currentFunction :: IdentPath,
-    -- The information we have about a variable from STG
-    varInfo :: Map.Map String VarInfo
+    -- The information we have about what storage type a variable has
+    varStorages :: Map.Map String VarStorage,
+    -- The information we have about what location a variable is in
+    varLocations :: Map.Map String Location
   }
 
 defaultEnv :: Env
-defaultEnv = Env mempty mempty
+defaultEnv = Env mempty mempty mempty
 
 data CState = CState
   { currentIndent :: Indent,
@@ -124,15 +115,27 @@ writeLine code = do
   tell code
   tell "\n"
 
-lookupVar :: String -> CWriter VarInfo
-lookupVar name = do
-  maybeInfo <- asks (varInfo >>> Map.lookup name)
-  case maybeInfo of
-    -- At this stage, a variable not being bound represents
-    -- some error in the compiler, since user issues should have
-    -- already been thrown by the time we get here
-    Nothing -> error ("Unbound Variable: " ++ name)
-    Just info -> return info
+locationOf :: String -> CWriter Location
+locationOf name = do
+  maybeInfo <- asks (varLocations >>> Map.lookup name)
+  maybe (error ("No location for: " ++ show name)) return maybeInfo
+
+storageOf :: String -> CWriter VarStorage
+storageOf name = do
+  maybeInfo <- asks (varStorages >>> Map.lookup name)
+  maybe (error ("No location for: " ++ show name)) return maybeInfo
+
+withLocation :: String -> Location -> CWriter a -> CWriter a
+withLocation name location = withLocations [(name, location)]
+
+withLocations :: [(String, Location)] -> CWriter a -> CWriter a
+withLocations mp = local (\r -> r {varLocations = Map.fromList mp <> varLocations r})
+
+withStorage :: String -> VarStorage -> CWriter a -> CWriter a
+withStorage name storage = withStorages [(name, storage)]
+
+withStorages :: [(String, VarStorage)] -> CWriter a -> CWriter a
+withStorages mp = local (\r -> r {varStorages = Map.fromList mp <> varStorages r})
 
 insideFunction :: String -> CWriter a -> CWriter a
 insideFunction name m = do
@@ -180,17 +183,37 @@ genAlts alts = do
         forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
 
 genLambdaForm :: String -> LambdaForm -> CWriter ()
-genLambdaForm name (LambdaForm bound u args expr) = do
-  insideFunction name (writeDefinitionsFor expr)
-  writeLine ""
-  path <- getFullPath name
-  writeLine ("void* " ++ convertPath path ++ "(void) {")
-  indent
-  handle expr
-  unindent
-  writeLine "}"
-  writeLine ("InfoTable " ++ tableFor path ++ " = { &" ++ convertPath path ++ ", NULL, NULL };")
+genLambdaForm name (LambdaForm bound _ args expr) = do
+  -- We know that all of the arguments will be pointers
+  withStorages (zip args (repeat PointerStorage)) <| do
+    insideFunction name (writeDefinitionsFor expr)
+    writeLine ""
+    path <- getFullPath name
+    writeLine ("void* " ++ convertPath path ++ "(void) {")
+    indent
+    withAllocatedVariables (handle expr)
+    unindent
+    writeLine "}"
+    writeLine ("InfoTable " ++ tableFor path ++ " = { &" ++ convertPath path ++ ", NULL, NULL };")
   where
+    locationsForBound :: [String] -> CWriter [(String, Location)]
+    locationsForBound = undefined
+
+    locationsForArgs :: [String] -> CWriter [(String, Location)]
+    locationsForArgs =
+      mapM <| \arg -> do
+        tmp <- fresh
+        writeLine ("void* " ++ tmp ++ " = SA_pop();")
+        return (arg, Temp tmp)
+
+    -- This will allocate temporary C variables for all the arguments
+    -- passed to us on the stack, and the closure arguments we have
+    withAllocatedVariables :: CWriter a -> CWriter a
+    withAllocatedVariables m = do
+      boundLocations <- locationsForBound bound
+      argLocations <- locationsForArgs args
+      withLocations (boundLocations <> argLocations) m
+
     handle :: Expr -> CWriter ()
     handle (Error s) = do
       writeLine "puts(\"Error:\");"
