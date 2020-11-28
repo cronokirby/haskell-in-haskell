@@ -124,13 +124,19 @@ data BoxType
 -- we'd lose information about what types are involved, making code
 -- generation more cumbersome
 data Alts
-  = -- Potential branches for integer litterals, then a default expression
+  = -- Potential branches for boxed integer litterals, then a default expression
     IntAlts [(Int, Expr)] (Maybe Expr)
-  | -- Potential branches for string litterals, then a default case
+  | -- Potential branches for boxed string litterals, then a default case
     StringAlts [(String, Expr)] (Maybe Expr)
   | -- Bind a primitive, based on what type it boxes into
     BindPrim BoxType ValName Expr
   | -- Unbox some primitive
+    --
+    -- This can only be done to use that primitive with some builtin function,
+    -- this name cannot otherwise be used like a normal name!
+    --
+    -- If you need to pattern match against an integer or a string, IntAlts and StringAlts
+    -- will do the necessary unboxing (if necessary, already)
     Unbox BoxType ValName Expr
   | -- Potential branches for constructor tags, introducing names,
     -- and then we end, as usual, with a default case
@@ -391,9 +397,7 @@ convertBranches branches scrut = case head branches of
   (S.LitteralPattern (S.IntLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.IntLitteral i)) -> return i) branches
     default' <- findDefaultExpr branches
-    boundName <- fresh
-    primCase <- makeCase (Apply boundName []) (IntAlts branches' default')
-    makeCase scrut (Unbox IntBox boundName primCase)
+    makeCase scrut  (IntAlts branches' default')
   (S.LitteralPattern (S.BoolLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
     default' <- findDefaultExpr branches
@@ -402,9 +406,7 @@ convertBranches branches scrut = case head branches of
   (S.LitteralPattern (S.StringLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.StringLitteral s)) -> return s) branches
     default' <- findDefaultExpr branches
-    boundName <- fresh
-    primCase <- makeCase (Apply boundName []) (StringAlts branches' default')
-    makeCase scrut (Unbox StringBox boundName primCase)
+    makeCase scrut (StringAlts branches' default')
   (S.ConstructorPattern _ _, _) -> do
     branches' <- findPatterns (\(S.ConstructorPattern cstr names) -> (,names) <$> constructorTag cstr) branches
     default' <- findDefaultExpr branches
