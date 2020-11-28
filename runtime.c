@@ -107,7 +107,9 @@ typedef struct InfoTable {
   CodeLabel scavenge;
 } InfoTable;
 
-int64_t RegInt = 0;
+// Magic numbers, to a certain degree
+int64_t RegInt = 0xBAD;
+int64_t Regtag = 0xBAD;
 
 const char *RegString = NULL;
 
