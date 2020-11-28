@@ -260,22 +260,22 @@ saturateConstructorAsAtom name =
 
 builtinName :: S.Builtin -> ValName
 builtinName = \case
-  S.Add -> "prim_+"
-  S.Sub -> "prim_-"
-  S.Mul -> "prim_*"
-  S.Div -> "prim_/"
-  S.Concat -> "prim_++"
-  S.Less -> "prim_<"
-  S.LessEqual -> "prim_<="
-  S.Greater -> "prim_>"
-  S.GreaterEqual -> "prim_>="
-  S.EqualTo -> "prim_=="
-  S.NotEqualTo -> "prim_/="
-  S.Or -> "prim_||"
-  S.And -> "prim_&&"
-  S.Compose -> "prim_."
-  S.Cash -> "prim_$"
-  S.Negate -> "prim_neg"
+  S.Add -> "$add"
+  S.Sub -> "$sub"
+  S.Mul -> "$mul"
+  S.Div -> "$div"
+  S.Concat -> "$concat"
+  S.Less -> "$less"
+  S.LessEqual -> "$less_equal"
+  S.Greater -> "$greater"
+  S.GreaterEqual -> "$greater_equal"
+  S.EqualTo -> "$equal"
+  S.NotEqualTo -> "$not_equal"
+  S.Or -> "$or"
+  S.And -> "$and"
+  S.Compose -> "$compose"
+  S.Cash -> "$cash"
+  S.Negate -> "$neg"
 
 -- Convert an expression into an STG expression
 convertExpr :: S.Expr Scheme -> STGM Expr
