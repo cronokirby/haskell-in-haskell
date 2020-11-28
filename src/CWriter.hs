@@ -334,6 +334,22 @@ genAlts deadNames alts = do
           writeLine (printf "void* %s = SA_pop();" tmp)
           return (name, Temp tmp)
 
+atomAsInt :: Atom -> CWriter String
+atomAsInt (PrimitiveAtom (PrimInt i)) = return (show i)
+atomAsInt (NameAtom n) =
+  locationOf n >>= \case
+    TempInt tmp -> return tmp
+    loc -> error (printf "location %s does not contain int" (show loc))
+atomAsInt arg = error (printf "arg %s cannot be used as int" (show arg))
+
+atomAsString :: Atom -> CWriter String
+atomAsString (PrimitiveAtom (PrimString s)) = return (show s)
+atomAsString (NameAtom n) =
+  locationOf n >>= \case
+    TempString tmp -> return tmp
+    loc -> error (printf "location %s does not contain string" (show loc))
+atomAsString arg = error (printf "arg %s cannot be used as string" (show arg))
+
 genExpr :: Expr -> CWriter ()
 genExpr (Error s) = do
   writeLine "puts(\"Error:\");"
@@ -390,15 +406,15 @@ genExpr (Builtin b atoms) = case b of
   EqualTo -> int2Op "=="
   NotEqualTo -> int2Op "!="
   Negate -> do
-    int1 <- asInt (head atoms)
+    int1 <- atomAsInt (head atoms)
     writeLine (printf "RegInt = -%s;" int1)
     writeLine "return SB_pop();"
   ExitWithInt -> do
-    int1 <- asInt (head atoms)
+    int1 <- atomAsInt (head atoms)
     writeLine (printf "printf(\"%%d\\n\", %s);" int1)
     writeLine "return NULL;"
   ExitWithString -> do
-    str1 <- asInt (head atoms)
+    str1 <- atomAsInt (head atoms)
     writeLine (printf "printf(\"%%s\\n\", %s);" str1)
     writeLine "return NULL;"
   Concat -> do
@@ -406,29 +422,15 @@ genExpr (Builtin b atoms) = case b of
     writeLine (printf "RegString = H_concat(%s, %s);" str1 str2)
     writeLine "return SB_pop();"
   where
-    asInt (PrimitiveAtom (PrimInt i)) = return (show i)
-    asInt (NameAtom n) =
-      locationOf n >>= \case
-        TempInt tmp -> return tmp
-        loc -> error (printf "location %s does not contain int" (show loc))
-    asInt arg = error (printf "arg %s cannot be used as int" (show arg))
-
-    asString (PrimitiveAtom (PrimString s)) = return (show s)
-    asString (NameAtom n) =
-      locationOf n >>= \case
-        TempString tmp -> return tmp
-        loc -> error (printf "location %s does not contain string" (show loc))
-    asString arg = error (printf "arg %s cannot be used as string" (show arg))
-
     grab2Ints [arg1, arg2] = do
-      int1 <- asInt arg1
-      int2 <- asInt arg2
+      int1 <- atomAsInt arg1
+      int2 <- atomAsInt arg2
       return (int1, int2)
     grab2Ints as = error (printf "expected two arguments to %s: got %d" (show b) (length as))
 
     grab2Strings [arg1, arg2] = do
-      str1 <- asString arg1
-      str2 <- asString arg2
+      str1 <- atomAsString arg1
+      str2 <- atomAsString arg2
       return (str1, str2)
     grab2Strings as = error (printf "expected two arguments to %s: got %d" (show b) (length as))
 
@@ -446,6 +448,14 @@ genExpr (Case scrut free _) = do
     GlobalFunction _ -> return ()
   writeLine (printf "SB_push(&%s);" (convertPath altsPath))
   genExpr scrut
+genExpr (Box IntBox atom) = do
+  int1 <- atomAsInt atom
+  writeLine (printf "RegInt = %s;" int1)
+  writeLine "return SB_pop();"
+genExpr (Box StringBox atom) = do
+  str1 <- atomAsString atom
+  writeLine (printf "RegString = %s" str1)
+  writeLine "return SB_pop();"
 genExpr _ = do
   writeLine "panic(\"UNIMPLEMENTED\");"
   writeLine "return NULL;"
