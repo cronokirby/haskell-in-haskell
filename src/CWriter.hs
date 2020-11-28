@@ -6,9 +6,9 @@ module CWriter (writeC) where
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
-import Ourlude
-import STG (Binding (..), LambdaForm (..), STG (..), Expr(..))
 import Data.List (intercalate)
+import Ourlude
+import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), STG (..))
 
 -- A type for CCode.
 --
@@ -36,8 +36,8 @@ convertPath (IdentPath ps) = reverse ps |> map convertIdentifier |> intercalate 
   where
     convertIdentifier :: String -> String
     convertIdentifier name
-      | '$' `elem` name || '#' `elem` name =
-        "gen_" ++ (name |> replace '$' "S_" |> replace '#' "P_")
+      | '$' `elem` name || '#' `elem` name || head name `elem` "0123456789" =
+        "gen_" ++ (name |> replace '$' "S" |> replace '#' "P")
       where
         replace char by str = foldMap (\c -> if c == char then by else [c]) str
     convertIdentifier name = "user_" ++ name
@@ -90,7 +90,35 @@ writeDefinitionsFor = \case
   (Let bindings e) -> do
     forM_ bindings (\(Binding name lf) -> genLambdaForm name lf)
     writeDefinitionsFor e
+  (Case e alts) -> do
+    writeDefinitionsFor e
+    genAlts alts
   _ -> return ()
+
+genAlts :: Alts -> CWriter ()
+genAlts alts = do
+  insideFunction "$alts" (writeDefinitionsForAlts alts)
+  writeLine ""
+  path <- getFullPath "$alts"
+  writeLine ("void* " ++ convertPath path ++ "(void) {")
+  indent
+  writeLine "return NULL;"
+  unindent
+  writeLine "}"
+  where
+    writeDefinitionsForAlts :: Alts -> CWriter ()
+    writeDefinitionsForAlts = \case
+      IntPrim _ e -> writeDefinitionsFor e
+      StringPrim _ e -> writeDefinitionsFor e
+      ConstrAlts as default' -> do
+        forM_ (zip [(0 :: Int) ..] as) (\(i, (_, e)) -> insideFunction (show i) (writeDefinitionsFor e))
+        forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
+      IntAlts as default' -> do
+        forM_ (zip [(0 :: Int) ..] as) (\(i, (_, e)) -> insideFunction (show i) (writeDefinitionsFor e))
+        forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
+      StringAlts as default' -> do
+        forM_ (zip [(0 :: Int) ..] as) (\(i, (_, e)) -> insideFunction (show i) (writeDefinitionsFor e))
+        forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
 
 genLambdaForm :: String -> LambdaForm -> CWriter ()
 genLambdaForm name (LambdaForm bound u args expr) = do

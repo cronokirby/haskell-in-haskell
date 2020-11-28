@@ -10,6 +10,7 @@ module STG
     ValName,
     LambdaForm (..),
     Expr(..),
+    Alts(..),
     stg,
   )
 where
