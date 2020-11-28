@@ -29,26 +29,42 @@ void **SA;
 void **SA_base;
 size_t SA_size;
 
-void SA_reserve(size_t count) {
-  size_t diff = SA - SA_base;
-  if (diff < count) {
-    SA_base = realloc(SA_base, SA_size);
-    SA = SA_base + SA_size + diff;
+void SA_push(void *arg) {
+  if (SA == SA_base + SA_size) {
+    SA_base = realloc(SA_base, SA_size * 2);
+    SA = SA_base + SA_size;
     SA_size *= 2;
   }
+  *SB = arg;
+  ++SA;
 }
 
-void **SB;
+void *SA_pop() {
+  if (SA == SA_base) {
+    panic("Trying to pop from empty SB");
+  }
+  return *(SA--);
+}
+
 void **SB_base;
+void **SB;
 size_t SB_size;
 
-void SB_reserve(size_t count) {
-  size_t diff = SB - SB_base;
-  if (diff < count) {
-    SB_base = realloc(SB_base, SB_size);
-    SB = SB_base + SB_size + diff;
+void SB_push(void *arg) {
+  if (SB == SB_base + SB_size) {
+    SB_base = realloc(SB_base, SB_size * 2);
+    SB = SB_base + SB_size;
     SB_size *= 2;
   }
+  *SB = arg;
+  ++SB;
+}
+
+void *SB_pop() {
+  if (SB == SB_base) {
+    panic("Trying to pop from empty SB");
+  }
+  return *(SB--);
 }
 
 void setup() {
@@ -82,3 +98,7 @@ typedef struct InfoTable {
   CodeLabel evacuate;
   CodeLabel scavenge;
 } InfoTable;
+
+int RegInt = 0;
+
+char *RegString = NULL;

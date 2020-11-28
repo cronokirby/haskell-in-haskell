@@ -11,6 +11,7 @@ module STG
     LambdaForm (..),
     Expr(..),
     Alts(..),
+    Primitive (..),
     stg,
   )
 where

@@ -8,7 +8,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
 import Ourlude
-import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), STG (..))
+import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), Primitive (..), STG (..))
 
 -- A type for CCode.
 --
@@ -53,24 +53,38 @@ newtype Env = Env
 defaultEnv :: Env
 defaultEnv = Env mempty
 
-newtype CWriter a = CWriter (StateT Indent (ReaderT Env (Writer CCode)) a)
-  deriving (Functor, Applicative, Monad, MonadWriter CCode, MonadState Indent, MonadReader Env)
+data CState = CState
+  { currentIndent :: Indent,
+    varCount :: Int
+  }
+
+defaultState :: CState
+defaultState = CState 0 0
+
+newtype CWriter a = CWriter (StateT CState (ReaderT Env (Writer CCode)) a)
+  deriving (Functor, Applicative, Monad, MonadWriter CCode, MonadState CState, MonadReader Env)
 
 runCWriter :: CWriter () -> CCode
-runCWriter (CWriter m) = runStateT m 0 |> (`runReaderT` defaultEnv) |> execWriter
+runCWriter (CWriter m) = runStateT m defaultState |> (`runReaderT` defaultEnv) |> execWriter
 
 indentAmount :: Indent
 indentAmount = 2
 
 indent :: CWriter ()
-indent = modify' (+ indentAmount)
+indent = modify' (\s -> s {currentIndent = currentIndent s + indentAmount})
 
 unindent :: CWriter ()
-unindent = modify' (\x -> max 0 (x - indentAmount))
+unindent = modify' (\s -> s {currentIndent = max 0 (currentIndent s - indentAmount)})
+
+fresh :: CWriter String
+fresh = do
+  count <- gets varCount
+  modify' (\s -> s { varCount = count + 1})
+  return ("x" ++ show count)
 
 writeLine :: CCode -> CWriter ()
 writeLine code = do
-  amount <- get
+  amount <- gets currentIndent
   tell (replicate amount ' ')
   tell code
   tell "\n"
@@ -127,10 +141,22 @@ genLambdaForm name (LambdaForm bound u args expr) = do
   path <- getFullPath name
   writeLine ("void* " ++ convertPath path ++ "(void) {")
   indent
-  writeLine "return NULL;"
+  handle expr
   unindent
   writeLine "}"
   writeLine ("InfoTable " ++ tableFor path ++ " = { &" ++ convertPath path ++ ", NULL, NULL };")
+  where
+    handle :: Expr -> CWriter ()
+    handle (Error s) = do
+      writeLine "puts(\"Error:\");"
+      writeLine ("puts(" ++ show s ++ ");")
+      writeLine "return NULL;"
+    handle (Primitive p) = do
+      case p of
+        PrimInt i -> writeLine ("RegInt = " ++ show i ++ ";")
+        PrimString s -> writeLine ("RegString = " ++ show s ++ ";")
+      writeLine "return SB_pop();"
+    handle _ = writeLine "return NULL;"
 
 generate :: STG -> CWriter ()
 generate (STG bindings entry) = do
