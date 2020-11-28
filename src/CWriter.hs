@@ -488,6 +488,8 @@ genExpr (Constructor tag atoms) = do
   writeLine "return SB_pop();"
 genExpr (Let bindings e) =
   withBindingStorages bindings <| do
+    tableTmp <- fresh
+    writeLine (printf "InfoTable* %s;" tableTmp)
     locations <-
       forM bindings <| \(Binding name (LambdaForm bound _ _ _)) ->
         storageOf name >>= \case
@@ -511,7 +513,8 @@ genExpr (Let bindings e) =
             ptr <- fresh
             writeLine (printf "void* %s = H;" ptr)
             path <- getFullPath name
-            alloc (tableFor path)
+            writeLine (printf "%s = &%s;" tableTmp (tableFor path))
+            writeLine (printf "H_alloc((void*)&%s, sizeof(InfoTable*));" tableTmp)
             forM_ pointers allocName
             forM_ ints allocName
             forM_ strings allocName
