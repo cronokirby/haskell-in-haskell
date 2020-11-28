@@ -72,6 +72,10 @@ data VarStorage
     GlobalStorage
   deriving (Eq, Show)
 
+boxTypeStorage :: BoxType -> VarStorage
+boxTypeStorage IntBox = IntStorage
+boxTypeStorage StringBox = StringStorage
+
 -- A location some variable can be
 data Location
   = -- A temporary variable with some name
@@ -143,7 +147,7 @@ locationOf name = do
 storageOf :: String -> CWriter VarStorage
 storageOf name = do
   maybeInfo <- asks (varStorages >>> Map.lookup name)
-  maybe (ask >>= \r -> traceShow r (return ()) *> error ("No location for: " ++ show name)) return maybeInfo
+  maybe (error ("No storage for: " ++ show name)) return maybeInfo
 
 withLocation :: String -> Location -> CWriter a -> CWriter a
 withLocation name location = withLocations [(name, location)]
@@ -223,11 +227,16 @@ genAlts deadNames alts = do
 
     writeDefinitionsForAlts :: Alts -> CWriter ()
     writeDefinitionsForAlts = \case
-      BindPrim _ _ e -> writeDefinitionsFor e
-      Unbox _ _ e -> writeDefinitionsFor e
+      BindPrim boxType n e -> withStorage n (boxTypeStorage boxType) (writeDefinitionsFor e)
+      Unbox boxType n e -> withStorage n (boxTypeStorage boxType) (writeDefinitionsFor e)
       ConstrAlts as default' -> do
-        forM_ (zip [(0 :: Int) ..] as) (\(i, (_, e)) -> insideFunction (show i) (writeDefinitionsFor e))
+        forM_ (zip [(0 :: Int) ..] as) (uncurry writeDef)
         forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
+        where
+          writeDef i ((_, ns), e) =
+            writeDefinitionsFor e
+              |> insideFunction (show i)
+              |> withStorages (zip ns (repeat PointerStorage))
       IntAlts as default' -> do
         forM_ (zip [(0 :: Int) ..] as) (\(i, (_, e)) -> insideFunction (show i) (writeDefinitionsFor e))
         forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
@@ -402,7 +411,9 @@ genExpr (Builtin b atoms) = case b of
     asInt (NameAtom n) =
       locationOf n >>= \case
         TempInt tmp -> return tmp
-        loc -> error (printf "location %s does not contain int" (show loc))
+        loc -> do
+          ask >>= \r -> traceShow r (return ())
+          error (printf "location %s does not contain int" (show loc))
     asInt arg = error (printf "arg %s cannot be used as int" (show arg))
 
     asString (PrimitiveAtom (PrimString s)) = return (show s)
@@ -438,7 +449,9 @@ genExpr (Case scrut free _) = do
     GlobalFunction _ -> return ()
   writeLine (printf "SB_push(&%s);" (convertPath altsPath))
   genExpr scrut
-genExpr _ = writeLine "return NULL;"
+genExpr _ = do
+  writeLine "panic(\"UNIMPLEMENTED\");"
+  writeLine "return NULL;"
 
 genLambdaForm :: String -> LambdaForm -> CWriter ()
 genLambdaForm myName (LambdaForm bound _ args expr) =

@@ -5,7 +5,7 @@
 module STG
   ( STG (..),
     Binding (..),
-    BoxType(..),
+    BoxType (..),
     Builtin (..),
     Atom (..),
     Litteral (..),
@@ -455,16 +455,16 @@ convertAST (AST _ defs) =
     Nothing -> return (Left NoEntryPoint)
     Just (S.ValueDefinition n _ (Scheme [] IntT) _) -> do
       bindings <- gatherBindings
-      entry <- makeEntry ExitWithInt n
+      entry <- makeEntry IntBox ExitWithInt n
       return (Right (STG bindings entry))
     Just (S.ValueDefinition n _ (Scheme [] StringT) _) -> do
       bindings <- gatherBindings
-      entry <- makeEntry ExitWithString n
+      entry <- makeEntry StringBox ExitWithString n
       return (Right (STG bindings entry))
     Just (S.ValueDefinition _ _ s _) -> return (Left (IncorrectEntryPointType s))
   where
-    makeEntry b n = do
-      theCase <- makeCase (Apply n []) (ConstrAlts [((0, ["#v"]), Builtin b [NameAtom "#v"])] Nothing)
+    makeEntry boxType b n = do
+      theCase <- makeCase (Apply n []) (Unbox boxType "#v" (Builtin b [NameAtom "#v"]))
       return (LambdaForm [] U [] theCase)
 
     gatherBindings =
@@ -598,7 +598,7 @@ builtins =
     unboxedIntBuiltin = rawBuiltin IntBox makeIntBox
 
     unboxedStringBuiltin :: Builtin -> LambdaForm
-    unboxedStringBuiltin = rawBuiltin IntBox makeStringBox
+    unboxedStringBuiltin = rawBuiltin StringBox makeStringBox
 
     boolBuiltin :: Builtin -> LambdaForm
     boolBuiltin =
