@@ -7,6 +7,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
+import qualified Data.Map as Map
 import Ourlude
 import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), Primitive (..), STG (..))
 
@@ -45,25 +46,47 @@ convertPath (IdentPath ps) = reverse ps |> map convertIdentifier |> intercalate 
 tableFor :: IdentPath -> String
 tableFor path = "table_for_" ++ convertPath path
 
+-- The (C) type that a variable has
+data VarType
+  = -- A variable that holds a void*
+    PointerVar
+  | -- A variable holding an integer
+    IntVar
+  | -- A variable holding a char*
+    StringVar
+
+-- Represents the information we have about a variable
+data VarInfo = VarInfo
+  { -- The temporary variable that contains this variable
+    tempVar :: String,
+    -- The type that the variable has
+    --
+    -- We need to keep track of this, in order to correctly
+    -- move the variable to the right places, and what not
+    varType :: VarType
+  }
+
 -- A location some variable can be
 data Location
-  -- A temporary variable with some nome
-  = Temp String
-  -- A temporary variable pointing to a pointer
-  | TempPP String
-  -- A temporary variable pointing to an int
-  | TempPInt String
-  -- A temporary variable pointing to a String
-  | TempPString Int
+  = -- A temporary variable with some nome
+    Temp String
+  | -- A temporary variable pointing to a pointer
+    TempPP String
+  | -- A temporary variable pointing to an int
+    TempPInt String
+  | -- A temporary variable pointing to a String
+    TempPString String
   deriving (Eq, Show)
 
-newtype Env = Env
+data Env = Env
   { -- The current function in the environment
-    currentFunction :: IdentPath
+    currentFunction :: IdentPath,
+    -- The information we have about a variable from STG
+    varInfo :: Map.Map String VarInfo
   }
 
 defaultEnv :: Env
-defaultEnv = Env mempty
+defaultEnv = Env mempty mempty
 
 data CState = CState
   { currentIndent :: Indent,
@@ -91,7 +114,7 @@ unindent = modify' (\s -> s {currentIndent = max 0 (currentIndent s - indentAmou
 fresh :: CWriter String
 fresh = do
   count <- gets varCount
-  modify' (\s -> s { varCount = count + 1})
+  modify' (\s -> s {varCount = count + 1})
   return ("x" ++ show count)
 
 writeLine :: CCode -> CWriter ()
@@ -100,6 +123,16 @@ writeLine code = do
   tell (replicate amount ' ')
   tell code
   tell "\n"
+
+lookupVar :: String -> CWriter VarInfo
+lookupVar name = do
+  maybeInfo <- asks (varInfo >>> Map.lookup name)
+  case maybeInfo of
+    -- At this stage, a variable not being bound represents
+    -- some error in the compiler, since user issues should have
+    -- already been thrown by the time we get here
+    Nothing -> error ("Unbound Variable: " ++ name)
+    Just info -> return info
 
 insideFunction :: String -> CWriter a -> CWriter a
 insideFunction name m = do
