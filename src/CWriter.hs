@@ -9,7 +9,6 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
 import qualified Data.Map as Map
-import Debug.Trace
 import Ourlude
 import STG
   ( Alts (..),
@@ -216,10 +215,10 @@ genAlts deadNames alts = do
           return (name, Temp tmp)
         IntStorage -> do
           writeLine (printf "int64_t %s = SB_pop_int();" tmp)
-          return (name, TempInt name)
+          return (name, TempInt tmp)
         StringStorage -> do
           writeLine (printf "const char* %s = SB_pop_str();" tmp)
-          return (name, TempString name)
+          return (name, TempString tmp)
         -- We should know of the location then, if it's a global function
         GlobalStorage -> do
           location <- locationOf name
@@ -405,15 +404,13 @@ genExpr (Builtin b atoms) = case b of
   Concat -> do
     (str1, str2) <- grab2Strings atoms
     writeLine (printf "RegString = H_concat(%s, %s);" str1 str2)
-    writeLine "return SB_pop()"
+    writeLine "return SB_pop();"
   where
     asInt (PrimitiveAtom (PrimInt i)) = return (show i)
     asInt (NameAtom n) =
       locationOf n >>= \case
         TempInt tmp -> return tmp
-        loc -> do
-          ask >>= \r -> traceShow r (return ())
-          error (printf "location %s does not contain int" (show loc))
+        loc -> error (printf "location %s does not contain int" (show loc))
     asInt arg = error (printf "arg %s cannot be used as int" (show arg))
 
     asString (PrimitiveAtom (PrimString s)) = return (show s)
