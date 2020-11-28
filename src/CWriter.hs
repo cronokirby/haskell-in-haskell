@@ -376,7 +376,7 @@ atomAsPointer arg = error (printf "arg %s cannot be used as a pointer" (show arg
 genExpr :: Expr -> CWriter ()
 genExpr (Error s) = do
   writeLine "puts(\"Error:\");"
-  writeLine (printf "puts(\"%s\")" s)
+  writeLine (printf "puts(\"%s\");" s)
   writeLine "return NULL;"
 genExpr (Primitive p) = do
   case p of
@@ -421,7 +421,7 @@ genExpr (Builtin b atoms) = case b of
   Add -> int2Op "+"
   Sub -> int2Op "-"
   Div -> int2Op "/"
-  Mul -> int2Op "/"
+  Mul -> int2Op "*"
   Less -> int2Op "<"
   LessEqual -> int2Op "<="
   Greater -> int2Op ">"
