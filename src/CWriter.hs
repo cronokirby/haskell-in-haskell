@@ -9,6 +9,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
 import qualified Data.Map as Map
+import Debug.Trace
 import Ourlude
 import STG
   ( Alts (..),
@@ -141,7 +142,7 @@ writeLine code = do
 locationOf :: String -> CWriter Location
 locationOf name = do
   maybeInfo <- asks (varLocations >>> Map.lookup name)
-  maybe (error ("No location for: " ++ show name)) return maybeInfo
+  maybe (ask >>= \r -> traceShow r (return ()) *> error ("No location for: " ++ show name)) return maybeInfo
 
 storageOf :: String -> CWriter VarStorage
 storageOf name = do
@@ -485,19 +486,50 @@ genExpr (Constructor tag atoms) = do
     ptr <- atomAsPointer atom
     writeLine (printf "SA_push(%s);" ptr)
   writeLine "return SB_pop();"
-genExpr _ = do
-  writeLine "panic(\"UNIMPLEMENTED\");"
-  writeLine "return NULL;"
+genExpr (Let bindings e) =
+  withBindingStorages bindings <| do
+    locations <-
+      forM bindings <| \(Binding name (LambdaForm bound _ _ _)) ->
+        storageOf name >>= \case
+          GlobalStorage -> do
+            path <- getFullPath name
+            return (name, GlobalFunction path)
+          PointerStorage -> do
+            storages <- forM bound (\b -> (b,) <$> storageOf b)
+            let pluck s = storages |> filter (snd >>> (== s)) |> map fst
+                pointers = pluck PointerStorage
+                ints = pluck IntStorage
+                strings = pluck StringStorage
+                alloc something = writeLine (printf "H_alloc((void*)&%s, sizeof(%s));" something something)
+                allocName =
+                  locationOf >=> \case
+                    Temp t -> alloc t
+                    TempInt t -> alloc t
+                    TempString t -> alloc t
+                    CurrentNode -> alloc "RegNode"
+                    GlobalFunction p -> alloc (convertPath p)
+            ptr <- fresh
+            writeLine (printf "void* %s = H;" ptr)
+            path <- getFullPath name
+            alloc (tableFor path)
+            forM_ pointers allocName
+            forM_ ints allocName
+            forM_ strings allocName
+            return (name, Temp ptr)
+          s -> error (printf "storage %s isn't valid for a closure" (show s))
+    withLocations locations <| genExpr e
 
 genLambdaForm :: String -> LambdaForm -> CWriter ()
-genLambdaForm myName (LambdaForm bound _ args expr) =
+genLambdaForm myName (LambdaForm bound _ args expr) = do
+  myPath <- getFullPath myName
+  -- Pre declare this function in case it's recursive
+  writeLine ""
+  writeLine (printf "void* %s(void);" (convertPath myPath))
   -- We know that all of the arguments will be pointers
   withMyOwnLocation
     <| withStorages (zip args (repeat PointerStorage))
     <| do
       insideFunction myName (writeDefinitionsFor expr)
-      writeLine ""
-      myPath <- getFullPath myName
       writeLine (printf "void* %s(void) {" (convertPath myPath))
       indent
       insideFunction myName <| withAllocatedArguments <| genExpr expr
@@ -579,6 +611,7 @@ generate (STG bindings entry) = do
   writeLine ""
   writeLine "int main() {"
   indent
+  writeLine "setup();"
   writeLine (printf "CodeLabel label = &%s;" (convertPath entryPath))
   writeLine "while (label != NULL) {"
   indent

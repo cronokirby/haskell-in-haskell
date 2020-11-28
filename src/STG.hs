@@ -177,8 +177,8 @@ instance FreeNames Expr where
   freeNames (Builtin _ atoms) = freeNames atoms
   freeNames (Case e _ alts) = freeNames e <> freeNames alts
   freeNames (Let bindings e) =
-    let names = foldMap (\(Binding name _) -> Set.singleton name) bindings
-     in Set.difference (freeNames e) names
+    let (names, insideBindings) = foldMap (\(Binding name e') -> (Set.singleton name, freeNames e')) bindings
+     in Set.difference (freeNames e <> insideBindings) names
   freeNames _ = mempty
 
 instance FreeNames Alts where
@@ -397,7 +397,7 @@ convertBranches branches scrut = case head branches of
   (S.LitteralPattern (S.IntLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.IntLitteral i)) -> return i) branches
     default' <- findDefaultExpr branches
-    makeCase scrut  (IntAlts branches' default')
+    makeCase scrut (IntAlts branches' default')
   (S.LitteralPattern (S.BoolLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
     default' <- findDefaultExpr branches
