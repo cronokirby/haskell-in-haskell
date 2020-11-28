@@ -35,7 +35,7 @@ convertPath (IdentPath ps) = reverse ps |> foldMap convertIdentifier
     convertIdentifier :: String -> String
     convertIdentifier name
       | '$' `elem` name || '#' `elem` name =
-        "gen_" ++ (name |> replace '$' "_S_" |> replace '#' "_P_")
+        "gen_" ++ (name |> replace '$' "S_" |> replace '#' "P_")
       where
         replace char by str = foldMap (\c -> if c == char then by else [c]) str
     convertIdentifier name = "user_" ++ name
