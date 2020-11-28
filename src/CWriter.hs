@@ -1,5 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 module CWriter (writeC) where
 
@@ -10,6 +11,7 @@ import Data.List (intercalate)
 import qualified Data.Map as Map
 import Ourlude
 import STG (Alts (..), Binding (..), Expr (..), LambdaForm (..), Primitive (..), STG (..))
+import Text.Printf (printf)
 
 -- A type for CCode.
 --
@@ -56,17 +58,16 @@ data VarStorage
     StringStorage
   | -- A variable holding a global storage
     GlobalStorage
+  deriving (Eq, Show)
 
 -- A location some variable can be
 data Location
-  = -- A temporary variable with some nome
+  = -- A temporary variable with some name
     Temp String
-  | -- A temporary variable pointing to a pointer
-    TempPP String
   | -- A temporary variable pointing to an int
-    TempPInt String
+    TempInt String
   | -- A temporary variable pointing to a String
-    TempPString String
+    TempString String
   | -- Global function with a certain identifier path
     GlobalFunction IdentPath
   deriving (Eq, Show)
@@ -195,25 +196,54 @@ genLambdaForm name (LambdaForm bound _ args expr) = do
     path <- getFullPath name
     writeLine ("void* " ++ convertPath path ++ "(void) {")
     indent
-    withAllocatedVariables (handle expr)
+    withAllocatedArguments (handle expr)
     unindent
     writeLine "}"
     writeLine ("InfoTable " ++ tableFor path ++ " = { &" ++ convertPath path ++ ", NULL, NULL };")
   where
     locationsForBound :: [String] -> CWriter [(String, Location)]
-    locationsForBound = undefined
+    locationsForBound args' = do
+      -- If the variable is bound, we must already have a storage for it
+      storages <- forM args' (\arg -> (arg,) <$> storageOf arg)
+      let pluck s = storages |> filter (snd >>> (== s)) |> map fst
+          pointers = pluck PointerStorage
+          ints = pluck IntStorage
+          strings = pluck StringStorage
+          globals = pluck GlobalStorage
+      pointerLocs <-
+        forM (zip [(0 :: Int) ..] pointers) <| \(i, arg) -> do
+          tmp <- fresh
+          writeLine (printf "void* %s;" tmp)
+          writeLine (printf "memcpy(&%s, RegNode + sizeof(InfoTable*) + sizeof(void*) * %d, sizeof(void*));" tmp i)
+          return (arg, Temp tmp)
+      let pointerCount = length pointers
+      intLocs <-
+        forM (zip [(0 :: Int) ..] ints) <| \(i, arg) -> do
+          tmp <- fresh
+          writeLine (printf "int64_t %s;" tmp)
+          writeLine (printf "memcpy(&%s, RegNode + sizeof(InfoTable*) + sizeof(void*) * %d + sizeof(int64_t) * %d, sizeof(int64_t));" tmp pointerCount i)
+          return (arg, TempInt tmp)
+      let intCount = length ints
+      stringLocs <-
+        forM (zip [(0 :: Int) ..] strings) <| \(i, arg) -> do
+          tmp <- fresh
+          writeLine (printf "char* %s;" tmp)
+          writeLine (printf "memcpy(&%s, RegNode + sizeof(InfoTable*) + sizeof(void*) * %d + sizeof(int64_t) * %d + sizeof(char*) * %d, sizeof(int64_t));" tmp pointerCount intCount i)
+          return (arg, TempString tmp)
+      globalLocs <- forM globals (\arg -> (arg,) <$> locationOf arg)
+      return (pointerLocs <> intLocs <> stringLocs <> globalLocs)
 
     locationsForArgs :: [String] -> CWriter [(String, Location)]
     locationsForArgs =
       mapM <| \arg -> do
         tmp <- fresh
-        writeLine ("void* " ++ tmp ++ " = SA_pop();")
+        writeLine (printf "void* %s = SA_pop();" tmp)
         return (arg, Temp tmp)
 
     -- This will allocate temporary C variables for all the arguments
     -- passed to us on the stack, and the closure arguments we have
-    withAllocatedVariables :: CWriter a -> CWriter a
-    withAllocatedVariables m = do
+    withAllocatedArguments :: CWriter a -> CWriter a
+    withAllocatedArguments m = do
       boundLocations <- locationsForBound bound
       argLocations <- locationsForArgs args
       withLocations (boundLocations <> argLocations) m

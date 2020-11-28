@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void panic(const char *message) {
   puts("PANIC:");
@@ -12,7 +13,7 @@ const size_t BASE_HEAP_SIZE = 1 << 16;
 
 // The heap is a pointer to pointers, basically
 uint8_t *H;
-uint8_t H_base;
+uint8_t *H_base;
 size_t H_size;
 
 const size_t BASE_STACK_SIZE = 1 << 10;
@@ -27,7 +28,7 @@ void SA_push(void *arg) {
     SA = SA_base + SA_size;
     SA_size *= 2;
   }
-  *SB = arg;
+  *SA = arg;
   ++SA;
 }
 
