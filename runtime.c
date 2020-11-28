@@ -11,12 +11,27 @@ void panic(const char *message) {
 
 const size_t BASE_HEAP_SIZE = 1 << 16;
 
-// The heap is a pointer to pointers, basically
-uint8_t *H;
-uint8_t *H_base;
+void *H;
+void *H_base;
 size_t H_size;
 
 const size_t BASE_STACK_SIZE = 1 << 10;
+
+const char *H_concat(const char *s1, const char *s2) {
+  size_t len1 = strlen(s1);
+  size_t len2 = strlen(s2);
+  void *next_H = H + len1 + len2 + 1;
+  if (next_H >= H_base) {
+    panic("Heap overflow!");
+  }
+  // Don't copy the null terminator
+  memcpy(H, s1, len1);
+  // Copy the null terminator as well
+  memcpy(H, s2, len2 + 1);
+  const char *ret = H;
+  H = next_H;
+  return ret;
+}
 
 void **SA;
 void **SA_base;
@@ -92,8 +107,8 @@ typedef struct InfoTable {
   CodeLabel scavenge;
 } InfoTable;
 
-int RegInt = 0;
+int64_t RegInt = 0;
 
-char *RegString = NULL;
+const char *RegString = NULL;
 
-uint8_t *RegNode = NULL;
+void *RegNode = NULL;

@@ -14,6 +14,7 @@ import STG
   ( Alts (..),
     Atom (..),
     Binding (..),
+    Builtin (..),
     Expr (..),
     LambdaForm (..),
     Primitive (..),
@@ -298,16 +299,18 @@ genLambdaForm myName (LambdaForm bound _ args expr) =
         PrimString s -> writeLine (printf "RegString = \"%s\";" s)
       writeLine "return SB_pop();"
     handle (Apply function atoms) = do
-      forM_ atoms <| \case
-        NameAtom n -> locationOf n >>= \case
-          TempInt _ -> error (printf "function %s cannot be applied to primitive int" function)
-          TempString _ -> error (printf "function %s cannot be applied to primitive string" function)
-          Temp tmp ->
-            writeLine (printf "SA_push(%s);" tmp)
-          GlobalFunction path ->
-            writeLine (printf "SA_push(&%s);" (convertPath path))
-          CurrentNode ->
-            writeLine "SA_push(RegNode);"
+      -- Reverse order, so that we can pop in argument order, and get our args
+      forM_ (reverse atoms) <| \case
+        NameAtom n ->
+          locationOf n >>= \case
+            TempInt _ -> error (printf "function %s cannot be applied to primitive int" function)
+            TempString _ -> error (printf "function %s cannot be applied to primitive string" function)
+            Temp tmp ->
+              writeLine (printf "SA_push(%s);" tmp)
+            GlobalFunction path ->
+              writeLine (printf "SA_push(&%s);" (convertPath path))
+            CurrentNode ->
+              writeLine "SA_push(RegNode);"
         -- This is an implementation detail of our compiler, really
         -- In practice Haskell allows functions to accept primitive arguments,
         -- but we only have primitive values as intermediates
@@ -317,18 +320,76 @@ genLambdaForm myName (LambdaForm bound _ args expr) =
         TempInt _ -> error (printf "Cannot call function %s with int location" function)
         TempString _ -> error (printf "Cannot call function %s with string location" function)
         Temp tmp -> do
-          ret <- fresh 
+          ret <- fresh
           writeLine (printf "RegNode = %s;" tmp)
           writeLine (printf "InfoTable* %s;" ret)
-          writeLine (printf "memcpy(&%s, RegNode, sizeof(Infotable*));" ret)
+          writeLine (printf "memcpy(&%s, RegNode, sizeof(InfoTable*));" ret)
           writeLine (printf "return %s->entry;" ret)
         CurrentNode -> do
-          ret <- fresh 
+          ret <- fresh
           writeLine (printf "InfoTable* %s;" ret)
-          writeLine (printf "memcpy(&%s, RegNode, sizeof(Infotable*));" ret)
+          writeLine (printf "memcpy(&%s, RegNode, sizeof(InfoTable*));" ret)
           writeLine (printf "return %s->entry;" ret)
         GlobalFunction path -> do
           writeLine (printf "return &%s;" (convertPath path))
+    handle (Builtin b atoms) = case b of
+      Add -> int2Op "+"
+      Sub -> int2Op "-"
+      Div -> int2Op "/"
+      Mul -> int2Op "/"
+      Less -> int2Op "<"
+      LessEqual -> int2Op "<="
+      Greater -> int2Op ">"
+      GreaterEqual -> int2Op ">="
+      EqualTo -> int2Op "=="
+      NotEqualTo -> int2Op "!="
+      Negate -> do
+        int1 <- asInt (head atoms)
+        writeLine (printf "RegInt = -%s;" int1)
+        writeLine "return SB_pop();"
+      ExitWithInt -> do
+        int1 <- asInt (head atoms)
+        writeLine (printf "printf(\"%%d\\n\", %s);" int1)
+        writeLine "return NULL;"
+      ExitWithString -> do
+        str1 <- asInt (head atoms)
+        writeLine (printf "printf(\"%%s\\n\", %s);" str1)
+        writeLine "return NULL;"
+      Concat -> do
+        (str1, str2) <- grab2Strings atoms
+        writeLine (printf "RegString = H_concat(%s, %s);" str1 str2)
+        writeLine "return SB_pop()"
+      where
+        asInt (PrimitiveAtom (PrimInt i)) = return (show i)
+        asInt (NameAtom n) =
+          locationOf n >>= \case
+            TempInt tmp -> return tmp
+            loc -> error (printf "location %s does not contain int" (show loc))
+        asInt arg = error (printf "arg %s cannot be used as int" (show arg))
+
+        asString (PrimitiveAtom (PrimString s)) = return (show s)
+        asString (NameAtom n) =
+          locationOf n >>= \case
+            TempString tmp -> return tmp
+            loc -> error (printf "location %s does not contain string" (show loc))
+        asString arg = error (printf "arg %s cannot be used as string" (show arg))
+
+        grab2Ints [arg1, arg2] = do
+          int1 <- asInt arg1
+          int2 <- asInt arg2
+          return (int1, int2)
+        grab2Ints as = error (printf "expected two arguments to %s: got %d" (show b) (length as))
+
+        grab2Strings [arg1, arg2] = do
+          str1 <- asString arg1
+          str2 <- asString arg2
+          return (str1, str2)
+        grab2Strings as = error (printf "expected two arguments to %s: got %d" (show b) (length as))
+
+        int2Op op = do
+          (int1, int2) <- grab2Ints atoms
+          writeLine (printf "RegInt = %s %s %s;" int1 op int2)
+          writeLine "return SB_pop();"
     handle _ = writeLine "return NULL;"
 
 generate :: STG -> CWriter ()

@@ -5,6 +5,7 @@
 module STG
   ( STG (..),
     Binding (..),
+    Builtin (..),
     Atom (..),
     Litteral (..),
     ValName,
@@ -12,7 +13,7 @@ module STG
     Expr (..),
     Alts (..),
     Primitive (..),
-    Updateable(..),
+    Updateable (..),
     stg,
   )
 where
