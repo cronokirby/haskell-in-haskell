@@ -5,6 +5,7 @@
 module STG
   ( STG (..),
     Binding (..),
+    BoxType(..),
     Builtin (..),
     Atom (..),
     Litteral (..),
@@ -93,6 +94,8 @@ data Expr
     -- The constructor must be fully saturated, i.e. its arity
     -- should match the number of atoms here.
     Constructor Tag [Atom]
+  | -- Box some atom into a heap value
+    Box BoxType Atom
   | -- Apply a fully saturated builtin to a given sequence of atoms
     Builtin Builtin [Atom]
   | -- Inspect an expression, and handle the different cases.
@@ -102,6 +105,11 @@ data Expr
     Case Expr [ValName] Alts
   | -- A series of bidnings appearing before an expression
     Let [Binding] Expr
+  deriving (Eq, Show)
+
+data BoxType
+  = IntBox
+  | StringBox
   deriving (Eq, Show)
 
 -- Represents different branches of shallow alternatives.
@@ -120,10 +128,10 @@ data Alts
     IntAlts [(Int, Expr)] (Maybe Expr)
   | -- Potential branches for string litterals, then a default case
     StringAlts [(String, Expr)] (Maybe Expr)
-  | -- Match a primitive integer against a value
-    IntPrim ValName Expr
-  | -- Match a primitive string against a value
-    StringPrim ValName Expr
+  | -- Bind a primitive, based on what type it boxes into
+    BindPrim BoxType ValName Expr
+  | -- Unbox some primitive
+    Unbox BoxType ValName Expr
   | -- Potential branches for constructor tags, introducing names,
     -- and then we end, as usual, with a default case
     ConstrAlts [((Tag, [ValName]), Expr)] (Maybe Expr)
@@ -173,8 +181,8 @@ instance FreeNames Alts where
   freeNames (ConstrAlts alts e) =
     let inAlts = foldMap (\((_, names), e') -> Set.difference (freeNames e') (Set.fromList names)) alts
      in freeNames e <> inAlts
-  freeNames (IntPrim n e) = Set.delete n (freeNames e)
-  freeNames (StringPrim n e) = Set.delete n (freeNames e)
+  freeNames (BindPrim _ n e) = Set.delete n (freeNames e)
+  freeNames (Unbox _ n e) = Set.delete n (freeNames e)
 
 instance FreeNames LambdaForm where
   freeNames (LambdaForm _ _ names e) = Set.difference (freeNames e) (Set.fromList names)
@@ -552,19 +560,14 @@ builtins =
           ( Case
               (Apply "$0" [])
               []
-              ( ConstrAlts
-                  [ ( (0, ["#0"]),
-                      makeIntBox (Builtin Negate [NameAtom "#0"])
-                    )
-                  ]
-                  Nothing
+              ( Unbox IntBox "#0" (makeIntBox (Builtin Negate [NameAtom "#0"]))
               )
           )
       )
   ]
   where
-    rawBuiltin :: (Expr -> Expr) -> Builtin -> LambdaForm
-    rawBuiltin f b =
+    rawBuiltin :: BoxType -> (Expr -> Expr) -> Builtin -> LambdaForm
+    rawBuiltin boxType f b =
       LambdaForm
         []
         N
@@ -572,41 +575,34 @@ builtins =
         ( Case
             (Apply "$0" [])
             ["$1"]
-            ( ConstrAlts
-                [ ( (0, ["#0"]),
-                    Case
-                      (Apply "$1" [])
-                      ["#0"]
-                      ( ConstrAlts
-                          [ ( (0, ["#1"]),
-                              f (Builtin b [NameAtom "#0", NameAtom "#1"])
-                            )
-                          ]
-                          Nothing
-                      )
-                  )
-                ]
-                Nothing
+            ( Unbox
+                boxType
+                "#0"
+                ( Case
+                    (Apply "$1" [])
+                    ["#0"]
+                    (Unbox boxType "#1" (f (Builtin b [NameAtom "#0", NameAtom "#1"])))
+                )
             )
         )
 
     makeIntBox :: Expr -> Expr
     makeIntBox e =
-      Case e [] (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
+      Case e [] (BindPrim IntBox "#v" (Box IntBox (NameAtom "#v")))
 
     makeStringBox :: Expr -> Expr
     makeStringBox e =
-      Case e [] (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
+      Case e [] (BindPrim StringBox "#v" (Box StringBox (NameAtom "#v")))
 
     unboxedIntBuiltin :: Builtin -> LambdaForm
-    unboxedIntBuiltin = rawBuiltin makeIntBox
+    unboxedIntBuiltin = rawBuiltin IntBox makeIntBox
 
     unboxedStringBuiltin :: Builtin -> LambdaForm
-    unboxedStringBuiltin = rawBuiltin makeStringBox
+    unboxedStringBuiltin = rawBuiltin IntBox makeStringBox
 
     boolBuiltin :: Builtin -> LambdaForm
     boolBuiltin =
-      rawBuiltin <| \e ->
+      rawBuiltin IntBox <| \e ->
         Case
           e
           []

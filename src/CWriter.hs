@@ -15,6 +15,7 @@ import STG
   ( Alts (..),
     Atom (..),
     Binding (..),
+    BoxType (..),
     Builtin (..),
     Expr (..),
     LambdaForm (..),
@@ -222,8 +223,8 @@ genAlts deadNames alts = do
 
     writeDefinitionsForAlts :: Alts -> CWriter ()
     writeDefinitionsForAlts = \case
-      IntPrim _ e -> writeDefinitionsFor e
-      StringPrim _ e -> writeDefinitionsFor e
+      BindPrim _ _ e -> writeDefinitionsFor e
+      Unbox _ _ e -> writeDefinitionsFor e
       ConstrAlts as default' -> do
         forM_ (zip [(0 :: Int) ..] as) (\(i, (_, e)) -> insideFunction (show i) (writeDefinitionsFor e))
         forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
@@ -234,19 +235,27 @@ genAlts deadNames alts = do
         forM_ (zip [(0 :: Int) ..] as) (\(i, (_, e)) -> insideFunction (show i) (writeDefinitionsFor e))
         forM_ default' (insideFunction "$default" <<< writeDefinitionsFor)
 
-    handle :: Alts -> CWriter ()
-    handle (IntPrim name e) = do
+    handleIntRegister :: String -> Expr -> CWriter ()
+    handleIntRegister name e = do
       tmp <- fresh
       writeLine (printf "int64_t %s = RegInt;" tmp)
       withStorage name IntStorage
         <| withLocation name (TempInt tmp)
         <| genExpr e
-    handle (StringPrim name e) = do
+
+    handleStringRegister :: String -> Expr -> CWriter ()
+    handleStringRegister name e = do
       tmp <- fresh
       writeLine (printf "const char* %s = RegString;" tmp)
       withStorage name StringStorage
         <| withLocation name (TempString tmp)
         <| genExpr e
+
+    handle :: Alts -> CWriter ()
+    handle (BindPrim IntBox name e) = handleIntRegister name e
+    handle (Unbox IntBox name e) = handleIntRegister name e
+    handle (BindPrim StringBox name e) = handleStringRegister name e
+    handle (Unbox StringBox name e) = handleStringRegister name e
     handle (IntAlts as default') = do
       writeLine "switch (RegInt) {"
       indent
