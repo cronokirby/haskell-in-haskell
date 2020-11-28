@@ -54,7 +54,8 @@ void *SA_pop() {
   if (SA == SA_base) {
     panic("Trying to pop from empty SB");
   }
-  return *(SA--);
+  --SA;
+  return *SA;
 }
 
 char *SB_base;
