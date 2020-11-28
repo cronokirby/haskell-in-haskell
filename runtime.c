@@ -11,8 +11,8 @@ void panic(const char *message) {
 
 const size_t BASE_HEAP_SIZE = 1 << 16;
 
-void *H;
-void *H_base;
+char *H;
+char *H_base;
 size_t H_size;
 
 const size_t BASE_STACK_SIZE = 1 << 10;
@@ -20,7 +20,7 @@ const size_t BASE_STACK_SIZE = 1 << 10;
 const char *H_concat(const char *s1, const char *s2) {
   size_t len1 = strlen(s1);
   size_t len2 = strlen(s2);
-  void *next_H = H + len1 + len2 + 1;
+  char *next_H = H + len1 + len2 + 1;
   if (next_H >= H_base) {
     panic("Heap overflow!");
   }
@@ -54,25 +54,65 @@ void *SA_pop() {
   return *(SA--);
 }
 
-void **SB_base;
-void **SB;
+char *SB_base;
+char *SB;
 size_t SB_size;
 
-void SB_push(void *arg) {
-  if (SB == SB_base + SB_size) {
+void SB_reserve(size_t size) {
+  size_t allocated = SB - SB_base;
+  if (allocated + size > SB_size) {
     SB_base = realloc(SB_base, SB_size * 2);
-    SB = SB_base + SB_size;
+    SB = SB_base + allocated;
     SB_size *= 2;
   }
-  *SB = arg;
-  ++SB;
+}
+
+void SB_push(void *arg) {
+  SB_reserve(sizeof(arg));
+  memcpy(SB, &arg, sizeof(arg));
+  SB += sizeof(arg);
+}
+
+void SB_push_int(int64_t arg) {
+  SB_reserve(sizeof(arg));
+  memcpy(SB, &arg, sizeof(arg));
+  SB += sizeof(arg);
+}
+
+void SB_push_str(const char *arg) {
+  SB_reserve(sizeof(arg));
+  memcpy(SB, &arg, sizeof(arg));
+  SB += sizeof(arg);
 }
 
 void *SB_pop() {
-  if (SB == SB_base) {
-    panic("Trying to pop from empty SB");
+  void *ret;
+  SB -= sizeof(void *);
+  if (SB < SB_base) {
+    panic("SB underflow!");
   }
-  return *(SB--);
+  memcpy(&ret, SB, sizeof(void *));
+  return ret;
+}
+
+int64_t SB_pop_int() {
+  int64_t ret;
+  SB -= sizeof(ret);
+  if (SB < SB_base) {
+    panic("SB underflow!");
+  }
+  memcpy(&ret, SB, sizeof(ret));
+  return ret;
+}
+
+const char *SB_pop_str() {
+  const char *ret;
+  SB -= sizeof(ret);
+  if (SB < SB_base) {
+    panic("SB underflow!");
+  }
+  memcpy(&ret, SB, sizeof(ret));
+  return ret;
 }
 
 void setup() {

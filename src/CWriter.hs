@@ -274,20 +274,25 @@ genAlts deadNames alts = do
         writeLine "break;"
         unindent
         writeLine "}"
+      writeLine "default: {"
+      indent
       case default' of
-        Nothing -> return ()
+        Nothing -> do
+          writeLine "panic(\"UNREACHABLE\");"
         Just e -> do
-          writeLine "default: {"
-          indent
           insideFunction "$default" (genExpr e)
-          unindent
-          writeLine "}"
       unindent
       writeLine "}"
+      unindent
+      writeLine "}"
+      writeLine "return NULL;"
     handle (StringAlts as default') = do
       genIfElse (zip [0 ..] as)
       case default' of
-        Nothing -> writeLine "}"
+        Nothing -> do
+          writeLine "}"
+          writeLine "panic(\"UNREACHABLE\");"
+          writeLine "return NULL;"
         Just e -> do
           writeLine "} else {"
           indent
@@ -325,13 +330,18 @@ genAlts deadNames alts = do
       writeLine "default: {"
       indent
       -- Pop all the arguments that we're not going to use
-      writeLine "SA -= RegConstrArgs;"
-      insideFunction "$default" <| forM_ default' genExpr
+      insideFunction "$default" <| case default' of
+        Nothing -> do
+          writeLine "panic(\"UNREACHABLE\");"
+        Just e -> do
+          writeLine "SA -= RegConstrArgs;"
+          genExpr e
       writeLine "break;"
       unindent
       writeLine "}"
       unindent
       writeLine "}"
+      writeLine "return NULL;"
       where
         grabNameFromStack name = do
           tmp <- fresh
@@ -423,7 +433,7 @@ genExpr (Builtin b atoms) = case b of
     writeLine "return SB_pop();"
   ExitWithInt -> do
     int1 <- atomAsInt (head atoms)
-    writeLine (printf "printf(\"%%d\\n\", %s);" int1)
+    writeLine (printf "printf(\"%%ld\\n\", %s);" int1)
     writeLine "return NULL;"
   ExitWithString -> do
     str1 <- atomAsInt (head atoms)
