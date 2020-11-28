@@ -464,7 +464,7 @@ genLambdaForm myName (LambdaForm bound _ args expr) =
       myPath <- getFullPath myName
       writeLine (printf "void* %s(void) {" (convertPath myPath))
       indent
-      withAllocatedArguments (genExpr expr)
+      insideFunction myName <| withAllocatedArguments <| genExpr expr
       unindent
       writeLine "}"
       -- Only write the info table if this isn't a globally stored function

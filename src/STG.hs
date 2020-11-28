@@ -256,11 +256,11 @@ gatherApplications expression = go expression []
 litteralToAtom :: Litteral -> STGM ([Binding], Atom)
 litteralToAtom (StringLitteral s) = do
   name <- fresh
-  let l = LambdaForm [] U [] (Constructor 0 [PrimitiveAtom (PrimString s)])
+  let l = LambdaForm [] U [] (Box StringBox (PrimitiveAtom (PrimString s)))
   return ([Binding name l], NameAtom name)
 litteralToAtom (IntLitteral i) = do
   name <- fresh
-  let l = LambdaForm [] U [] (Constructor 0 [PrimitiveAtom (PrimInt i)])
+  let l = LambdaForm [] U [] (Box IntBox (PrimitiveAtom (PrimInt i)))
   return ([Binding name l], NameAtom name)
 litteralToAtom (BoolLitteral b) = do
   name <- fresh
@@ -359,8 +359,8 @@ convertExpr =
     handle :: S.Expr Scheme -> STGM Expr
     handle (S.LittExpr l) =
       return <| case l of
-        StringLitteral s -> Constructor 0 [PrimitiveAtom (PrimString s)]
-        IntLitteral i -> Constructor 0 [PrimitiveAtom (PrimInt i)]
+        StringLitteral s -> Box StringBox (PrimitiveAtom (PrimString s))
+        IntLitteral i -> Box IntBox (PrimitiveAtom (PrimInt i))
         BoolLitteral b -> Constructor (if b then 1 else 0) []
     handle (S.NameExpr n) = do
       wasConstructor <- S.isConstructor n
@@ -393,7 +393,7 @@ convertBranches branches scrut = case head branches of
     default' <- findDefaultExpr branches
     boundName <- fresh
     primCase <- makeCase (Apply boundName []) (IntAlts branches' default')
-    makeCase scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing)
+    makeCase scrut (Unbox IntBox boundName primCase)
   (S.LitteralPattern (S.BoolLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
     default' <- findDefaultExpr branches
@@ -404,7 +404,7 @@ convertBranches branches scrut = case head branches of
     default' <- findDefaultExpr branches
     boundName <- fresh
     primCase <- makeCase (Apply boundName []) (StringAlts branches' default')
-    makeCase scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing)
+    makeCase scrut (Unbox StringBox boundName primCase)
   (S.ConstructorPattern _ _, _) -> do
     branches' <- findPatterns (\(S.ConstructorPattern cstr names) -> (,names) <$> constructorTag cstr) branches
     default' <- findDefaultExpr branches
