@@ -2,7 +2,17 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TupleSections #-}
 
-module STG (STG (..), Binding (..), Atom (..), Litteral (..), ValName, stg) where
+module STG
+  ( STG (..),
+    Binding (..),
+    Atom (..),
+    Litteral (..),
+    ValName,
+    LambdaForm (..),
+    Expr(..),
+    stg,
+  )
+where
 
 import Control.Applicative (liftA2)
 import Control.Monad.Reader

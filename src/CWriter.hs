@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 
 module CWriter (writeC) where
 
@@ -6,7 +7,8 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
 import Ourlude
-import STG (Binding (..), STG (..))
+import STG (Binding (..), LambdaForm (..), STG (..), Expr(..))
+import Data.List (intercalate)
 
 -- A type for CCode.
 --
@@ -30,7 +32,7 @@ ident name = IdentPath [name]
 
 -- Convert an identifier path to a C identifier
 convertPath :: IdentPath -> String
-convertPath (IdentPath ps) = reverse ps |> foldMap convertIdentifier
+convertPath (IdentPath ps) = reverse ps |> map convertIdentifier |> intercalate "_"
   where
     convertIdentifier :: String -> String
     convertIdentifier name
@@ -83,10 +85,18 @@ getFullPath name = do
   current <- asks currentFunction
   return (current <> ident name)
 
-genLambdaForm :: String -> CWriter ()
-genLambdaForm name = do
-  path <- getFullPath name
+writeDefinitionsFor :: Expr -> CWriter ()
+writeDefinitionsFor = \case
+  (Let bindings e) -> do
+    forM_ bindings (\(Binding name lf) -> genLambdaForm name lf)
+    writeDefinitionsFor e
+  _ -> return ()
+
+genLambdaForm :: String -> LambdaForm -> CWriter ()
+genLambdaForm name (LambdaForm bound u args expr) = do
+  insideFunction name (writeDefinitionsFor expr)
   writeLine ""
+  path <- getFullPath name
   writeLine ("void* " ++ convertPath path ++ "(void) {")
   indent
   writeLine "return NULL;"
@@ -95,10 +105,10 @@ genLambdaForm name = do
   writeLine ("InfoTable " ++ tableFor path ++ " = { &" ++ convertPath path ++ ", NULL, NULL };")
 
 generate :: STG -> CWriter ()
-generate (STG bindings _) = do
+generate (STG bindings entry) = do
   writeLine "#include \"runtime.c\""
-  forM_ bindings (\(Binding name _) -> genLambdaForm name)
-  genLambdaForm "$entry"
+  forM_ bindings (\(Binding name form) -> genLambdaForm name form)
+  genLambdaForm "$entry" entry
   entryPath <- getFullPath "$entry"
   writeLine ""
   writeLine "int main() {"
