@@ -9,8 +9,8 @@ module STG
     Litteral (..),
     ValName,
     LambdaForm (..),
-    Expr(..),
-    Alts(..),
+    Expr (..),
+    Alts (..),
     Primitive (..),
     stg,
   )
@@ -97,7 +97,7 @@ data Expr
     --
     -- We don't take an atom here, because building up a thunk we
     -- immediately evaluate would be a bit pointless
-    Case Expr Alts
+    Case Expr [ValName] Alts
   | -- A series of bidnings appearing before an expression
     Let [Binding] Expr
   deriving (Eq, Show)
@@ -140,6 +140,42 @@ data Updateable = N | U deriving (Eq, Show)
 -- We first have a list of free variables occurring in the body,
 -- the updateable flag, then the list of parameters, and then the body
 data LambdaForm = LambdaForm [ValName] Updateable [ValName] Expr deriving (Eq, Show)
+
+class FreeNames a where
+  freeNames :: a -> Set.Set ValName
+
+instance FreeNames a => FreeNames [a] where
+  freeNames = foldMap freeNames
+
+instance FreeNames a => FreeNames (Maybe a) where
+  freeNames Nothing = mempty
+  freeNames (Just a) = freeNames a
+
+instance FreeNames Atom where
+  freeNames (NameAtom n) = Set.singleton n
+  freeNames _ = mempty
+
+instance FreeNames Expr where
+  freeNames (Apply name atoms) = Set.singleton name <> freeNames atoms
+  freeNames (Constructor _ atoms) = freeNames atoms
+  freeNames (Builtin _ atoms) = freeNames atoms
+  freeNames (Case e _ alts) = freeNames e <> freeNames alts
+  freeNames (Let bindings e) =
+    let names = foldMap (\(Binding name _) -> Set.singleton name) bindings
+     in Set.difference (freeNames e) names
+  freeNames _ = mempty
+
+instance FreeNames Alts where
+  freeNames (IntAlts alts e) = freeNames e <> freeNames (map snd alts)
+  freeNames (StringAlts alts e) = freeNames e <> freeNames (map snd alts)
+  freeNames (ConstrAlts alts e) =
+    let inAlts = foldMap (\((_, names), e') -> Set.difference (freeNames e') (Set.fromList names)) alts
+     in freeNames e <> inAlts
+  freeNames (IntPrim n e) = Set.delete n (freeNames e)
+  freeNames (StringPrim n e) = Set.delete n (freeNames e)
+
+instance FreeNames LambdaForm where
+  freeNames (LambdaForm _ _ names e) = Set.difference (freeNames e) (Set.fromList names)
 
 -- Represents a binding from a name to a lambda form
 --
@@ -191,6 +227,15 @@ fresh = do
 -- Lookup the tag associated with a constructor's name
 constructorTag :: ConstructorName -> STGM Tag
 constructorTag name = S.lookupConstructor name |> fmap S.constructorNumber
+
+getFreeNames :: FreeNames a => a -> STGM [ValName]
+getFreeNames a =
+  asks (topLevelNames >>> Set.difference (freeNames a) >>> Set.toList)
+
+makeCase :: Expr -> Alts -> STGM Expr
+makeCase scrut alts = do
+  free <- getFreeNames alts
+  return (Case scrut free alts)
 
 gatherApplications :: S.Expr Scheme -> (S.Expr Scheme, [S.Expr Scheme])
 gatherApplications expression = go expression []
@@ -337,23 +382,23 @@ convertBranches branches scrut = case head branches of
     branches' <- findPatterns (\(S.LitteralPattern (S.IntLitteral i)) -> return i) branches
     default' <- findDefaultExpr branches
     boundName <- fresh
-    let primCase = Case (Apply boundName []) (IntAlts branches' default')
-    return (Case scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing))
+    primCase <- makeCase (Apply boundName []) (IntAlts branches' default')
+    makeCase scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing)
   (S.LitteralPattern (S.BoolLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
     default' <- findDefaultExpr branches
     let constrBranches = map (first (\b -> (if b then 1 else 0, []))) branches'
-    return (Case scrut (ConstrAlts constrBranches default'))
+    makeCase scrut (ConstrAlts constrBranches default')
   (S.LitteralPattern (S.StringLitteral _), _) -> do
     branches' <- findPatterns (\(S.LitteralPattern (S.StringLitteral s)) -> return s) branches
     default' <- findDefaultExpr branches
     boundName <- fresh
-    let primCase = Case (Apply boundName []) (StringAlts branches' default')
-    return (Case scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing))
+    primCase <- makeCase (Apply boundName []) (StringAlts branches' default')
+    makeCase scrut (ConstrAlts [((0, [boundName]), primCase)] Nothing)
   (S.ConstructorPattern _ _, _) -> do
     branches' <- findPatterns (\(S.ConstructorPattern cstr names) -> (,names) <$> constructorTag cstr) branches
     default' <- findDefaultExpr branches
-    return (Case scrut (ConstrAlts branches' default'))
+    makeCase scrut (ConstrAlts branches' default')
   (S.Wildcard, e) -> convertExpr e
   where
     findDefaultExpr :: [(S.Pattern, S.Expr Scheme)] -> STGM (Maybe Expr)
@@ -365,44 +410,8 @@ convertBranches branches scrut = case head branches of
 -- Gather the free names appearing in an expression
 attachFreeNames :: LambdaForm -> STGM LambdaForm
 attachFreeNames lambda@(LambdaForm _ u names expr) = do
-  topLevel <- asks topLevelNames
-  let free = Set.difference (inLambda lambda) topLevel |> Set.toList
+  free <- getFreeNames lambda
   return (LambdaForm free (if null names then u else N) names expr)
-  where
-    inLambda :: LambdaForm -> Set.Set ValName
-    inLambda (LambdaForm _ _ ns e) =
-      Set.difference (inExpr e) (Set.fromList ns)
-
-    inExpr :: Expr -> Set.Set ValName
-    inExpr (Apply n atoms) = Set.singleton n <> foldMap inAtom atoms
-    inExpr (Constructor _ atoms) = foldMap inAtom atoms
-    inExpr (Builtin _ atoms) = foldMap inAtom atoms
-    inExpr (Let bindings e) =
-      let free = inExpr e <> foldMap inBinding bindings
-       in Set.difference free (bindingNames bindings)
-    inExpr (Case scrut alts) = inExpr scrut <> inAlts alts
-    inExpr _ = Set.empty
-
-    inAlts :: Alts -> Set.Set ValName
-    inAlts (IntAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
-    inAlts (StringAlts branches def) = foldMap (snd >>> inExpr) branches <> foldMap inExpr def
-    inAlts (ConstrAlts branches def) = foldMap inCstr branches <> foldMap inExpr def
-    inAlts (IntPrim boundName expr') = Set.delete boundName (inExpr expr')
-    inAlts (StringPrim boundName expr') = Set.delete boundName (inExpr expr')
-
-    inCstr :: ((Tag, [ValName]), Expr) -> Set.Set ValName
-    inCstr ((_, names'), e) = Set.difference (inExpr e) (Set.fromList names')
-
-    inAtom :: Atom -> Set.Set ValName
-    inAtom PrimitiveAtom {} = Set.empty
-    inAtom (NameAtom n) = Set.singleton n
-
-    bindingNames :: [Binding] -> Set.Set ValName
-    bindingNames = map (\(Binding n _) -> n) >>> Set.fromList
-
-    inBinding :: Binding -> Set.Set ValName
-    inBinding (Binding n lf) =
-      Set.delete n (inLambda lf)
 
 -- Convert an expression to a lambda form
 --
@@ -436,13 +445,17 @@ convertAST (AST _ defs) =
     Nothing -> return (Left NoEntryPoint)
     Just (S.ValueDefinition n _ (Scheme [] IntT) _) -> do
       bindings <- gatherBindings
-      return (Right (STG bindings (entry ExitWithInt n)))
+      entry <- makeEntry ExitWithInt n
+      return (Right (STG bindings entry))
     Just (S.ValueDefinition n _ (Scheme [] StringT) _) -> do
       bindings <- gatherBindings
-      return (Right (STG bindings (entry ExitWithString n)))
+      entry <- makeEntry ExitWithString n
+      return (Right (STG bindings entry))
     Just (S.ValueDefinition _ _ s _) -> return (Left (IncorrectEntryPointType s))
   where
-    entry b n = LambdaForm [] U [] (Case (Apply n []) (ConstrAlts [((0, ["#v"]), Builtin b [NameAtom "#v"])] Nothing))
+    makeEntry b n = do
+      theCase <- makeCase (Apply n []) (ConstrAlts [((0, ["#v"]), Builtin b [NameAtom "#v"])] Nothing)
+      return (LambdaForm [] U [] theCase)
 
     gatherBindings =
       defs |> convertValueDefinitions |> fmap (builtins ++)
@@ -486,6 +499,7 @@ builtins =
           ["$0", "$1"]
           ( Case
               (Apply "$0" [])
+              ["$1"]
               ( ConstrAlts
                   [ ((1, []), Constructor 1 []),
                     ((0, []), Apply "$1" [])
@@ -502,6 +516,7 @@ builtins =
           ["$0", "$1"]
           ( Case
               (Apply "$0" [])
+              ["$1"]
               ( ConstrAlts
                   [ ((0, []), Constructor 0 []),
                     ((1, []), Apply "$1" [])
@@ -534,6 +549,7 @@ builtins =
           ["$0"]
           ( Case
               (Apply "$0" [])
+              []
               ( ConstrAlts
                   [ ( (0, ["#0"]),
                       makeIntBox (Builtin Negate [NameAtom "#0"])
@@ -553,10 +569,12 @@ builtins =
         ["$0", "$1"]
         ( Case
             (Apply "$0" [])
+            ["$1"]
             ( ConstrAlts
                 [ ( (0, ["#0"]),
                     Case
                       (Apply "$1" [])
+                      ["#0"]
                       ( ConstrAlts
                           [ ( (0, ["#1"]),
                               f (Builtin b [NameAtom "#0", NameAtom "#1"])
@@ -572,11 +590,11 @@ builtins =
 
     makeIntBox :: Expr -> Expr
     makeIntBox e =
-      Case e (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
+      Case e [] (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
 
     makeStringBox :: Expr -> Expr
     makeStringBox e =
-      Case e (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
+      Case e [] (IntPrim "#v" (Constructor 0 [NameAtom "#v"]))
 
     unboxedIntBuiltin :: Builtin -> LambdaForm
     unboxedIntBuiltin = rawBuiltin makeIntBox
@@ -589,6 +607,7 @@ builtins =
       rawBuiltin <| \e ->
         Case
           e
+          []
           ( IntAlts
               [(0, Constructor 0 []), (1, Constructor 1 [])]
               Nothing

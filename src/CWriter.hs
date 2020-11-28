@@ -104,7 +104,7 @@ writeDefinitionsFor = \case
   (Let bindings e) -> do
     forM_ bindings (\(Binding name lf) -> genLambdaForm name lf)
     writeDefinitionsFor e
-  (Case e alts) -> do
+  (Case e _ alts) -> do
     writeDefinitionsFor e
     genAlts alts
   _ -> return ()
