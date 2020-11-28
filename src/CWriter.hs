@@ -474,6 +474,7 @@ genExpr (Constructor tag atoms) = do
   forM_ (reverse atoms) <| \atom -> do
     ptr <- atomAsPointer atom
     writeLine (printf "SA_push(%s);" ptr)
+  writeLine "return SB_pop();"
 genExpr _ = do
   writeLine "panic(\"UNIMPLEMENTED\");"
   writeLine "return NULL;"
