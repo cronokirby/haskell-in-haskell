@@ -9,7 +9,6 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
 import qualified Data.Map as Map
-import Debug.Trace
 import Ourlude
 import STG
   ( Alts (..),
@@ -142,7 +141,7 @@ writeLine code = do
 locationOf :: String -> CWriter Location
 locationOf name = do
   maybeInfo <- asks (varLocations >>> Map.lookup name)
-  maybe (ask >>= \r -> traceShow r (return ()) *> error ("No location for: " ++ show name)) return maybeInfo
+  maybe (error ("No location for: " ++ show name)) return maybeInfo
 
 storageOf :: String -> CWriter VarStorage
 storageOf name = do
@@ -437,7 +436,7 @@ genExpr (Builtin b atoms) = case b of
     writeLine (printf "printf(\"%%ld\\n\", %s);" int1)
     writeLine "return NULL;"
   ExitWithString -> do
-    str1 <- atomAsInt (head atoms)
+    str1 <- atomAsString (head atoms)
     writeLine (printf "printf(\"%%s\\n\", %s);" str1)
     writeLine "return NULL;"
   Concat -> do
