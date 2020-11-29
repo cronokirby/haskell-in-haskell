@@ -68,13 +68,14 @@ def main():
             print(err)
             continue
         if expected == actual:
-            print(f'{name}: PASS')
+            print(f'\033[1m{name}\033[0m:\t\033[1m\033[32mPASS\033[0m')
         else:
-            print(f'{name}: FAIL')
-            print('Expected:')
+            print(f'\033[1m{name}\033[0m:\t\033[1m\033[31mFAIL\033[0m')
+            print('Expected:\033[1m')
             print(expected)
-            print('\nBut Found:')
+            print('\033[0m\nBut Found:\033[1m')
             print(actual)
+            print('\033[0m')
 
 
 if __name__ == '__main__':
