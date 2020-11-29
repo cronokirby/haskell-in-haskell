@@ -21,7 +21,7 @@ void H_alloc(void *stuff, size_t size) {
   size_t allocated = H - H_base;
   if (allocated + size > H_size) {
     // TODO: Trigger GC here
-    panic("Heap overflow!");
+    panic("Heap Overflow!");
   }
   memcpy(H, stuff, size);
   H += size;
@@ -120,21 +120,21 @@ const char *SB_pop_str() {
 }
 
 void setup() {
-  H_base = malloc(sizeof(void *) * BASE_HEAP_SIZE);
+  H_base = malloc(sizeof(char) * BASE_HEAP_SIZE);
   if (H_base == NULL) {
     panic("Failed to initialize heap");
   }
   H = H_base;
   H_size = BASE_HEAP_SIZE;
 
-  SA_base = malloc(sizeof(void *) * BASE_STACK_SIZE);
+  SA_base = malloc(sizeof(void*) * BASE_STACK_SIZE);
   if (SA_base == NULL) {
     panic("Failed to initialize stack A");
   }
   SA = SA_base;
   SA_size = BASE_STACK_SIZE;
 
-  SB_base = malloc(sizeof(void *) * BASE_STACK_SIZE);
+  SB_base = malloc(sizeof(char) * BASE_STACK_SIZE);
   if (SB_base == NULL) {
     panic("Failed to initialize stack A");
   }
