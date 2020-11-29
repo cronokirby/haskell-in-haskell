@@ -58,7 +58,7 @@ def main():
     run them in order, checking that their expected output matches
     what gets printed.
     '''
-    for name in file_names():
+    for name in sorted(list(file_names())):
         expected = get_expected(name).strip()
         try:
             actual = get_output(name).strip()
