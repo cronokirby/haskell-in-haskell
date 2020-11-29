@@ -26,8 +26,11 @@ def gen_executable(file_name):
     '''
     Generate an executable for a given file
     '''
-    subprocess.check_output(f"cabal run haskell-in-haskell -- compile {file_name} .output.c", shell=True)
-    subprocess.check_output("gcc -std=c99 .output.c", shell=True)
+    out = subprocess.check_output(f"cabal run haskell-in-haskell -- compile {file_name} .output.c", shell=True).decode('utf-8')
+    if 'Error' in out:
+        raise Exception('\n'.join(out.split('\n')[1:]))
+    subprocess.run("gcc -std=c99 .output.c", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
 
 
 def get_output(file_name):
@@ -57,7 +60,13 @@ def main():
     '''
     for name in file_names():
         expected = get_expected(name).strip()
-        actual = get_output(name).strip()
+        try:
+            actual = get_output(name).strip()
+        except BaseException as err:
+            print(f'{name}: FAIL')
+            print('Exception:')
+            print(err)
+            continue
         if expected == actual:
             print(f'{name}: PASS')
         else:

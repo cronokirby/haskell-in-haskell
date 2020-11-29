@@ -10,6 +10,7 @@ import qualified Parser
 import qualified STG
 import qualified Simplifier
 import System.Environment (getArgs)
+import System.Exit (exitFailure)
 import Text.Pretty.Simple (pPrint, pPrintString)
 import qualified Typer
 import Types (Scheme)
@@ -48,7 +49,9 @@ makeStage name r = Stage name (r >>> stageEither name)
 -- Execute a stage by printing out the result or errors
 execStage :: Show b => Stage a b -> a -> IO ()
 execStage (Stage name r) a = case r a of
-  Left err -> printStagedError err
+  Left err -> do
+    printStagedError err
+    exitFailure
   Right b -> do
     putStrLn (name ++ ":")
     pPrint b
@@ -86,7 +89,7 @@ readStage "stg" _ =
 readStage "compile" (Just outputFile) =
   lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage >-> writeCStage |> outputStage |> Just
   where
-    outputStage (Stage name r) a = case r a of
+    outputStage (Stage _ r) a = case r a of
       Left err -> printStagedError err
       Right output -> writeFile outputFile output
 readStage _ _ = Nothing
