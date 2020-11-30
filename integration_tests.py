@@ -29,7 +29,7 @@ def gen_executable(file_name):
     out = subprocess.check_output(f"cabal run haskell-in-haskell -- compile {file_name} .output.c", shell=True).decode('utf-8')
     if 'Error' in out:
         raise Exception('\n'.join(out.split('\n')[1:]))
-    subprocess.run("gcc -std=c99 .output.c", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    subprocess.run("gcc -std=c99 -fsanitize=address -fsanitize=undefined .output.c", shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 
 
