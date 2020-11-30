@@ -284,7 +284,7 @@ atomize expression = case expression of
   e -> do
     name <- fresh
     l <- exprToLambda e
-    return ([Binding name l], NameAtom name)
+    return ([Binding name (removeBindingName name l)], NameAtom name)
 
 atomToExpr :: Atom -> Expr
 atomToExpr (PrimitiveAtom l) = Primitive l
@@ -305,9 +305,9 @@ saturateConstructor alwaysSaturate name atoms = do
     else do
       lambdaNames <- replicateM diff fresh
       let root = Constructor tag (atoms ++ map NameAtom lambdaNames)
-      lambda <- attachFreeNames (LambdaForm [] N lambdaNames root)
       bindingName <- fresh
-      return (NeededFilling [Binding bindingName lambda] bindingName)
+      lambda <- attachFreeNames (LambdaForm [] N lambdaNames root)
+      return (NeededFilling [Binding bindingName (removeBindingName bindingName lambda)] bindingName)
 
 saturateConstructorAsExpr :: ConstructorName -> [Atom] -> [Binding] -> STGM Expr
 saturateConstructorAsExpr name atoms bindings =
@@ -425,6 +425,10 @@ attachFreeNames lambda@(LambdaForm _ u names expr) = do
   free <- getFreeNames lambda
   return (LambdaForm free (if null names then u else N) names expr)
 
+removeBindingName :: ValName -> LambdaForm -> LambdaForm
+removeBindingName name (LambdaForm free u names expr) =
+  LambdaForm (filter (/= name) free) u names expr
+
 -- Convert an expression to a lambda form
 --
 -- This will always create a lambda, although with no
@@ -445,7 +449,7 @@ exprToLambda expr = do
 -- Convert a definition into an STG binding
 convertDef :: ValueDefinition Scheme -> STGM Binding
 convertDef (ValueDefinition name _ _ e) =
-  Binding name <$> exprToLambda e
+  Binding name <<< removeBindingName name <$> exprToLambda e
 
 -- Convert the value definitions composing a program into STG
 convertValueDefinitions :: [ValueDefinition Scheme] -> STGM [Binding]
