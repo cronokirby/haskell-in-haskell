@@ -204,8 +204,7 @@ genAlts deadNames alts = do
   path <- getFullPath "$alts"
   writeLine ("void* " ++ convertPath path ++ "(void) {")
   indent
-  locations <- mapM resurrectName deadNames
-  insideFunction "$alts" <| withLocations locations <| handle alts
+  insideFunction "$alts" <| handle alts
   unindent
   writeLine "}"
   where
@@ -226,6 +225,11 @@ genAlts deadNames alts = do
         GlobalStorage -> do
           location <- locationOf name
           return (name, location)
+
+    withDeadResurrected :: CWriter a -> CWriter a
+    withDeadResurrected m = do
+      locations <- mapM resurrectName deadNames
+      withLocations locations m
 
     writeDefinitionsForAlts :: Alts -> CWriter ()
     writeDefinitionsForAlts = \case
@@ -263,11 +267,11 @@ genAlts deadNames alts = do
         <| genExpr e
 
     handle :: Alts -> CWriter ()
-    handle (BindPrim IntBox name e) = handleIntRegister name e
-    handle (Unbox IntBox name e) = handleIntRegister name e
-    handle (BindPrim StringBox name e) = handleStringRegister name e
-    handle (Unbox StringBox name e) = handleStringRegister name e
-    handle (IntAlts as default') = do
+    handle (BindPrim IntBox name e) = withDeadResurrected <| handleIntRegister name e
+    handle (Unbox IntBox name e) = withDeadResurrected <| handleIntRegister name e
+    handle (BindPrim StringBox name e) = withDeadResurrected <| handleStringRegister name e
+    handle (Unbox StringBox name e) = withDeadResurrected <| handleStringRegister name e
+    handle (IntAlts as default') = withDeadResurrected <| do
       writeLine "switch (RegInt) {"
       indent
       forM_ (zip [(0 :: Int) ..] as) <| \(i, (target, e)) -> do
@@ -289,7 +293,7 @@ genAlts deadNames alts = do
       unindent
       writeLine "}"
       writeLine "return NULL;"
-    handle (StringAlts as default') = do
+    handle (StringAlts as default') = withDeadResurrected <| do
       genIfElse (zip [0 ..] as)
       case default' of
         Nothing -> do
@@ -315,6 +319,8 @@ genAlts deadNames alts = do
             indent
             insideFunction (show i') (genExpr e)
             unindent
+    -- We don't resurrect the names immediately, because we have to pull the arguments
+    -- passed to us on the stack first. 
     handle (ConstrAlts as default') = do
       writeLine "switch (RegTag) {"
       indent
@@ -326,6 +332,7 @@ genAlts deadNames alts = do
         insideFunction (show i)
           <| withLocations located
           <| withStorages (zip names (repeat PointerStorage))
+          <| withDeadResurrected
           <| genExpr e
         writeLine "break;"
         unindent
