@@ -527,6 +527,14 @@ genLambdaForm myName (LambdaForm bound _ args expr) = do
   -- Pre declare this function in case it's recursive
   writeLine ""
   writeLine (printf "void* %s(void);" (convertPath myPath))
+  -- We could theoretically avoid writing the info table if a data constructor
+  -- is never called with this function as a raw argument, but that's a difficult
+  -- check to actually do.
+  writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
+  amGlobal <- (== GlobalStorage) <$> storageOf myName
+  -- When this is a globally stored function, we need a pointer for an info table, to use as a "closure"
+  when amGlobal
+    <| writeLine (printf "InfoTable* %s = &%s;" (staticClosureFor myPath) (tableFor myPath))
   -- We know that all of the arguments will be pointers
   withMyOwnLocation
     <| withStorages (zip args (repeat PointerStorage))
@@ -537,14 +545,6 @@ genLambdaForm myName (LambdaForm bound _ args expr) = do
       insideFunction myName <| withAllocatedArguments <| genExpr expr
       unindent
       writeLine "}"
-      -- We could theoretically avoid writing the info table if a data constructor
-      -- is never called with this function as a raw argument, but that's a difficult
-      -- check to actually do.
-      writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
-      amGlobal <- (== GlobalStorage) <$> storageOf myName
-      -- When this is a globally stored function, we need a pointer for an info table, to use as a "closure"
-      when amGlobal
-        <| writeLine (printf "InfoTable* %s = &%s;" (staticClosureFor myPath) (tableFor myPath))
   where
     withMyOwnLocation :: CWriter a -> CWriter a
     withMyOwnLocation m =
