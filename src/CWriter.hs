@@ -371,7 +371,7 @@ atomAsPointer :: Atom -> CWriter String
 atomAsPointer (NameAtom n) =
   locationOf n >>= \case
     Temp tmp -> return tmp
-    GlobalFunction path -> return ("&" ++ tableFor path)
+    GlobalFunction path -> return ("&" ++ staticClosureFor path)
     loc -> error (printf "location %l does not contain pointer" (show loc))
 atomAsPointer arg = error (printf "arg %s cannot be used as a pointer" (show arg))
 
@@ -387,22 +387,9 @@ genExpr (Primitive p) = do
   writeLine "return SB_pop();"
 genExpr (Apply function atoms) = do
   -- Reverse order, so that we can pop in argument order, and get our args
-  forM_ (reverse atoms) <| \case
-    NameAtom n ->
-      locationOf n >>= \case
-        TempInt _ -> error (printf "function %s cannot be applied to primitive int" function)
-        TempString _ -> error (printf "function %s cannot be applied to primitive string" function)
-        Temp tmp ->
-          writeLine (printf "SA_push(%s);" tmp)
-        GlobalFunction path ->
-          writeLine (printf "SA_push(&%s);" (staticClosureFor path))
-        CurrentNode ->
-          writeLine "SA_push(RegNode);"
-    -- This is an implementation detail of our compiler, really
-    -- In practice Haskell allows functions to accept primitive arguments,
-    -- but we only have primitive values as intermediates
-    PrimitiveAtom p ->
-      error (printf "function %s cannot be applied to primitive %s" function (show p))
+  forM_ (reverse atoms) <| \a -> do
+    ptr <- atomAsPointer a
+    writeLine (printf "SA_push(%s);" ptr)
   locationOf function >>= \case
     TempInt _ -> error (printf "Cannot call function %s with int location" function)
     TempString _ -> error (printf "Cannot call function %s with string location" function)
