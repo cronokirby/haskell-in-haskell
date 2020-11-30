@@ -271,41 +271,43 @@ genAlts deadNames alts = do
     handle (Unbox IntBox name e) = withDeadResurrected <| handleIntRegister name e
     handle (BindPrim StringBox name e) = withDeadResurrected <| handleStringRegister name e
     handle (Unbox StringBox name e) = withDeadResurrected <| handleStringRegister name e
-    handle (IntAlts as default') = withDeadResurrected <| do
-      writeLine "switch (RegInt) {"
-      indent
-      forM_ (zip [(0 :: Int) ..] as) <| \(i, (target, e)) -> do
-        writeLine (printf "case %d: {" target)
+    handle (IntAlts as default') =
+      withDeadResurrected <| do
+        writeLine "switch (RegInt) {"
         indent
-        insideFunction (show i) (genExpr e)
-        writeLine "break;"
-        unindent
-        writeLine "}"
-      writeLine "default: {"
-      indent
-      case default' of
-        Nothing -> do
-          writeLine "panic(\"UNREACHABLE\");"
-        Just e -> do
-          insideFunction "$default" (genExpr e)
-      unindent
-      writeLine "}"
-      unindent
-      writeLine "}"
-      writeLine "return NULL;"
-    handle (StringAlts as default') = withDeadResurrected <| do
-      genIfElse (zip [0 ..] as)
-      case default' of
-        Nothing -> do
-          writeLine "}"
-          writeLine "panic(\"UNREACHABLE\");"
-          writeLine "return NULL;"
-        Just e -> do
-          writeLine "} else {"
+        forM_ (zip [(0 :: Int) ..] as) <| \(i, (target, e)) -> do
+          writeLine (printf "case %d: {" target)
           indent
-          insideFunction "$default" (genExpr e)
+          insideFunction (show i) (genExpr e)
+          writeLine "break;"
           unindent
           writeLine "}"
+        writeLine "default: {"
+        indent
+        case default' of
+          Nothing -> do
+            writeLine "panic(\"UNREACHABLE\");"
+          Just e -> do
+            insideFunction "$default" (genExpr e)
+        unindent
+        writeLine "}"
+        unindent
+        writeLine "}"
+        writeLine "return NULL;"
+    handle (StringAlts as default') =
+      withDeadResurrected <| do
+        genIfElse (zip [0 ..] as)
+        case default' of
+          Nothing -> do
+            writeLine "}"
+            writeLine "panic(\"UNREACHABLE\");"
+            writeLine "return NULL;"
+          Just e -> do
+            writeLine "} else {"
+            indent
+            insideFunction "$default" (genExpr e)
+            unindent
+            writeLine "}"
       where
         genIfElse :: [(Int, (String, Expr))] -> CWriter ()
         genIfElse [] = return ()
@@ -320,7 +322,7 @@ genAlts deadNames alts = do
             insideFunction (show i') (genExpr e)
             unindent
     -- We don't resurrect the names immediately, because we have to pull the arguments
-    -- passed to us on the stack first. 
+    -- passed to us on the stack first.
     handle (ConstrAlts as default') = do
       writeLine "switch (RegTag) {"
       indent
@@ -340,12 +342,14 @@ genAlts deadNames alts = do
       writeLine "default: {"
       indent
       -- Pop all the arguments that we're not going to use
-      insideFunction "$default" <| case default' of
-        Nothing -> do
-          writeLine "panic(\"UNREACHABLE\");"
-        Just e -> do
-          writeLine "SA -= RegConstrArgs;"
-          genExpr e
+      insideFunction "$default"
+        <| withDeadResurrected
+        <| case default' of
+          Nothing -> do
+            writeLine "panic(\"UNREACHABLE\");"
+          Just e -> do
+            writeLine "SA -= RegConstrArgs;"
+            genExpr e
       writeLine "break;"
       unindent
       writeLine "}"
