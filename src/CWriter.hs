@@ -59,6 +59,9 @@ convertPath (IdentPath ps) = reverse ps |> map convertIdentifier |> intercalate 
 tableFor :: IdentPath -> String
 tableFor path = "table_for_" ++ convertPath path
 
+staticClosureFor :: IdentPath -> String
+staticClosureFor path = "static_closure_for_" ++ convertPath path
+
 -- The storage type that a variable has
 data VarStorage
   = -- A variable that holds a void*
@@ -392,7 +395,7 @@ genExpr (Apply function atoms) = do
         Temp tmp ->
           writeLine (printf "SA_push(%s);" tmp)
         GlobalFunction path ->
-          writeLine (printf "SA_push(&%s);" (convertPath path))
+          writeLine (printf "SA_push(&%s);" (staticClosureFor path))
         CurrentNode ->
           writeLine "SA_push(RegNode);"
     -- This is an implementation detail of our compiler, really
@@ -541,6 +544,10 @@ genLambdaForm myName (LambdaForm bound _ args expr) = do
       -- is never called with this function as a raw argument, but that's a difficult
       -- check to actually do.
       writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
+      amGlobal <- (== GlobalStorage) <$> storageOf myName
+      -- When this is a globally stored function, we need a pointer for an info table, to use as a "closure"
+      when amGlobal
+        <| writeLine (printf "InfoTable* %s = &%s;" (staticClosureFor myPath) (tableFor myPath))
   where
     withMyOwnLocation :: CWriter a -> CWriter a
     withMyOwnLocation m =
