@@ -411,6 +411,21 @@ genExpr (Primitive p) = do
     PrimInt i -> writeLine (printf "RegInt = %d;" i)
     PrimString s -> writeLine (printf "RegString = \"%s\";" s)
   writeLine "return SB_pop();"
+genExpr (Box IntBox atom) = do
+  int1 <- atomAsInt atom
+  writeLine (printf "RegInt = %s;" int1)
+  writeLine "return SB_pop();"
+genExpr (Box StringBox atom) = do
+  str1 <- atomAsString atom
+  writeLine (printf "RegString = %s;" str1)
+  writeLine "return SB_pop();"
+genExpr (Constructor tag atoms) = do
+  writeLine (printf "RegTag = %d;" tag)
+  writeLine (printf "RegConstrArgs = %d;" (length atoms))
+  forM_ (reverse atoms) <| \atom -> do
+    ptr <- atomAsPointer atom
+    writeLine (printf "SA_push(%s);" ptr)
+  writeLine "return SB_pop();"
 genExpr (Apply function atoms) = do
   -- Reverse order, so that we can pop in argument order, and get our args
   forM_ (reverse atoms) <| \a -> do
@@ -432,6 +447,16 @@ genExpr (Apply function atoms) = do
       writeLine (printf "return %s->entry;" ret)
     GlobalFunction path -> do
       writeLine (printf "return &%s;" (convertPath path))
+genExpr (Case scrut free _) = do
+  altsPath <- getFullPath "$alts"
+  forM_ (reverse free) <| locationOf >=> \case
+    Temp tmp -> writeLine (printf "SA_push(%s);" tmp)
+    TempInt tmp -> writeLine (printf "SB_push_int(%s);" tmp)
+    TempString tmp -> writeLine (printf "SB_push_str(%s);" tmp)
+    CurrentNode -> writeLine "SB_push(RegNode);"
+    GlobalFunction _ -> return ()
+  writeLine (printf "SB_push(&%s);" (convertPath altsPath))
+  genExpr scrut
 genExpr (Builtin b atoms) = case b of
   Add -> int2Op "+"
   Sub -> int2Op "-"
@@ -476,31 +501,6 @@ genExpr (Builtin b atoms) = case b of
       (int1, int2) <- grab2Ints atoms
       writeLine (printf "RegInt = %s %s %s;" int1 op int2)
       writeLine "return SB_pop();"
-genExpr (Case scrut free _) = do
-  altsPath <- getFullPath "$alts"
-  forM_ (reverse free) <| locationOf >=> \case
-    Temp tmp -> writeLine (printf "SA_push(%s);" tmp)
-    TempInt tmp -> writeLine (printf "SB_push_int(%s);" tmp)
-    TempString tmp -> writeLine (printf "SB_push_str(%s);" tmp)
-    CurrentNode -> writeLine "SB_push(RegNode);"
-    GlobalFunction _ -> return ()
-  writeLine (printf "SB_push(&%s);" (convertPath altsPath))
-  genExpr scrut
-genExpr (Box IntBox atom) = do
-  int1 <- atomAsInt atom
-  writeLine (printf "RegInt = %s;" int1)
-  writeLine "return SB_pop();"
-genExpr (Box StringBox atom) = do
-  str1 <- atomAsString atom
-  writeLine (printf "RegString = %s;" str1)
-  writeLine "return SB_pop();"
-genExpr (Constructor tag atoms) = do
-  writeLine (printf "RegTag = %d;" tag)
-  writeLine (printf "RegConstrArgs = %d;" (length atoms))
-  forM_ (reverse atoms) <| \atom -> do
-    ptr <- atomAsPointer atom
-    writeLine (printf "SA_push(%s);" ptr)
-  writeLine "return SB_pop();"
 genExpr (Let bindings e) =
   withBindingStorages bindings <| do
     locations <-
