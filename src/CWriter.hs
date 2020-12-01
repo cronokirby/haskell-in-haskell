@@ -9,6 +9,8 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List (intercalate)
 import qualified Data.Map as Map
+import Data.Maybe (catMaybes)
+import Debug.Trace
 import Ourlude
 import STG
   ( Alts (..),
@@ -144,7 +146,7 @@ writeLine code = do
 locationOf :: String -> CWriter Location
 locationOf name = do
   maybeInfo <- asks (varLocations >>> Map.lookup name)
-  maybe (error ("No location for: " ++ show name)) return maybeInfo
+  maybe (ask >>= \r -> traceShow r <| error ("No location for: " ++ show name)) return maybeInfo
 
 storageOf :: String -> CWriter VarStorage
 storageOf name = do
@@ -186,10 +188,24 @@ withBindingStorages bindings m = do
       storages = map withBestStorage bindings
   withStorages storages m
 
+withBindingGlobals :: [Binding] -> CWriter a -> CWriter a
+withBindingGlobals bindings m = do
+  locations <-
+    fmap catMaybes <| forM bindings <| \(Binding name _) -> do
+      storage <- storageOf name
+      case storage of
+        GlobalStorage -> do
+          path <- getFullPath name
+          return (Just (name, GlobalFunction path))
+        _ -> return Nothing
+  withLocations locations m
+
 writeDefinitionsFor :: Expr -> CWriter ()
 writeDefinitionsFor = \case
   (Let bindings e) ->
-    withBindingStorages bindings <| do
+    -- We need to additionally allocate paths for the globals bound here, before
+    -- being able to write definitions
+    withBindingStorages bindings <| withBindingGlobals bindings <| do
       forM_ bindings (\(Binding name lf) -> genLambdaForm name lf)
       writeDefinitionsFor e
   (Case e free alts) -> do
