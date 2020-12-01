@@ -47,8 +47,8 @@ makeStage name r = Stage name (r >>> stageEither name)
 (>->) (Stage _ r1) (Stage n2 r2) = Stage n2 (r1 >=> r2)
 
 -- Execute a stage by printing out the result or errors
-execStage :: Show b => Stage a b -> a -> IO ()
-execStage (Stage name r) a = case r a of
+printStage :: Show b => Stage a b -> a -> IO ()
+printStage (Stage name r) a = case r a of
   Left err -> do
     printStagedError err
     exitFailure
@@ -71,21 +71,21 @@ typerStage = makeStage "Typer" Typer.typer
 stgStage :: Stage (Simplifier.AST Scheme) STG.STG
 stgStage = makeStage "STG" STG.stg
 
-writeCStage :: Stage (STG.STG) String
-writeCStage = makeStage "Output C" (\stg -> (Right (CWriter.writeC stg)) :: Either () String)
+writeCStage :: Stage STG.STG String
+writeCStage = makeStage "Output C" (\stg -> Right (CWriter.writeC stg) :: Either () String)
 
 -- Read out which stages to execute based on a string
 readStage :: String -> Maybe String -> Maybe (String -> IO ())
 readStage "lex" _ =
-  lexerStage |> execStage |> Just
+  lexerStage |> printStage |> Just
 readStage "parse" _ =
-  lexerStage >-> parserStage |> execStage |> Just
+  lexerStage >-> parserStage |> printStage |> Just
 readStage "simplify" _ =
-  lexerStage >-> parserStage >-> simplifierStage |> execStage |> Just
+  lexerStage >-> parserStage >-> simplifierStage |> printStage |> Just
 readStage "type" _ =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage |> execStage |> Just
+  lexerStage >-> parserStage >-> simplifierStage >-> typerStage |> printStage |> Just
 readStage "stg" _ =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage |> execStage |> Just
+  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage |> printStage |> Just
 readStage "compile" (Just outputFile) =
   lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage >-> writeCStage |> outputStage |> Just
   where
