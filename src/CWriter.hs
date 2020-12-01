@@ -10,7 +10,6 @@ import Control.Monad.Writer
 import Data.List (intercalate)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
-import Debug.Trace
 import Ourlude
 import STG
   ( Alts (..),
@@ -146,7 +145,7 @@ writeLine code = do
 locationOf :: String -> CWriter Location
 locationOf name = do
   maybeInfo <- asks (varLocations >>> Map.lookup name)
-  maybe (ask >>= \r -> traceShow r <| error ("No location for: " ++ show name)) return maybeInfo
+  maybe (error ("No location for: " ++ show name)) return maybeInfo
 
 storageOf :: String -> CWriter VarStorage
 storageOf name = do
