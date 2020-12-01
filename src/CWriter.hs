@@ -536,42 +536,30 @@ genExpr (Let bindings e) =
           s -> error (printf "storage %s isn't valid for a closure" (show s))
     withLocations locations <| genExpr e
 
-makeStaticClosure :: IdentPath -> CWriter ()
-makeStaticClosure path =
-  writeLine (printf "InfoTable* %s = &%s;" (staticClosureFor path) (tableFor path))
-
-makeInfoTable :: IdentPath -> CWriter ()
-makeInfoTable path =
-  writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor path) (convertPath path))
-
-declareFunction :: IdentPath -> CWriter ()
-declareFunction path =
-  writeLine (printf "void* %s(void);" (convertPath path))
-
-implementingFunctionFor :: IdentPath -> CWriter () -> CWriter ()
-implementingFunctionFor path m = do
-  writeLine (printf "void* %s(void) {" (convertPath path))
-  indent
-  m
-  unindent
-  writeLine "}"
-
 genLambdaForm :: String -> LambdaForm -> CWriter ()
-genLambdaForm myName (LambdaForm bound _ args expr) =
-  insideFunction myName <| do
-    myPath <- asks currentFunction
-    -- Pre declare this function in case it's recursive
-    writeLine ""
-    declareFunction myPath
-    makeInfoTable myPath
-    amGlobal <- (== GlobalStorage) <$> storageOf myName
-    -- When this is a globally stored function, we need a pointer for an info table, to use as a "closure"
-    when amGlobal (makeStaticClosure myPath)
-    -- We know that all of the arguments will be pointers
-    let argStorages = zip args (repeat PointerStorage)
-    withMyOwnLocation <| withStorages argStorages <| do
-      writeDefinitionsFor expr
-      implementingFunctionFor myPath <| withAllocatedArguments (genExpr expr)
+genLambdaForm myName (LambdaForm bound _ args expr) = do
+  myPath <- getFullPath myName
+  -- Pre declare this function in case it's recursive
+  writeLine ""
+  writeLine (printf "void* %s(void);" (convertPath myPath))
+  -- We could theoretically avoid writing the info table if a data constructor
+  -- is never called with this function as a raw argument, but that's a difficult
+  -- check to actually do.
+  writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
+  amGlobal <- (== GlobalStorage) <$> storageOf myName
+  -- When this is a globally stored function, we need a pointer for an info table, to use as a "closure"
+  when amGlobal
+    <| writeLine (printf "InfoTable* %s = &%s;" (staticClosureFor myPath) (tableFor myPath))
+  -- We know that all of the arguments will be pointers
+  withMyOwnLocation
+    <| withStorages (zip args (repeat PointerStorage))
+    <| do
+      insideFunction myName (writeDefinitionsFor expr)
+      writeLine (printf "void* %s(void) {" (convertPath myPath))
+      indent
+      insideFunction myName <| withAllocatedArguments <| genExpr expr
+      unindent
+      writeLine "}"
   where
     withMyOwnLocation :: CWriter a -> CWriter a
     withMyOwnLocation m =
