@@ -545,7 +545,7 @@ genLambdaForm myName (LambdaForm bound _ args expr) = do
   -- We could theoretically avoid writing the info table if a data constructor
   -- is never called with this function as a raw argument, but that's a difficult
   -- check to actually do.
-  writeLine (printf "InfoTable %s = { &%s, NULL, NULL };" (tableFor myPath) (convertPath myPath))
+  writeLine (printf "InfoTable %s = { &%s, &null_evac, &null_scavenge };" (tableFor myPath) (convertPath myPath))
   amGlobal <- (== GlobalStorage) <$> storageOf myName
   -- When this is a globally stored function, we need a pointer for an info table, to use as a "closure"
   when amGlobal
