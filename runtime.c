@@ -31,8 +31,8 @@ const char *H_concat(const char *s1, const char *s2) {
   size_t len1 = strlen(s1);
   size_t len2 = strlen(s2);
   const char *ret = H;
-  H_alloc((void*)s1, len1);
-  H_alloc((void*)s2, len2 + 1);
+  H_alloc((void *)s1, len1);
+  H_alloc((void *)s2, len2 + 1);
   return ret;
 }
 
@@ -127,7 +127,7 @@ void setup() {
   H = H_base;
   H_size = BASE_HEAP_SIZE;
 
-  SA_base = malloc(sizeof(void*) * BASE_STACK_SIZE);
+  SA_base = malloc(sizeof(void *) * BASE_STACK_SIZE);
   if (SA_base == NULL) {
     panic("Failed to initialize stack A");
   }
@@ -145,10 +145,19 @@ void setup() {
 // A CodeLabel is a pointer to a function returning a void*
 typedef void *(*CodeLabel)(void);
 
+// An evac function takes a base pointer to the closure, and returns
+// a pointer with the new location of the closure
+typedef void *(*EvacFunction)(void *);
+
+// A scavenge function is just called with a base pointer
+typedef void (*ScavengeFunction)(void *);
+
 typedef struct InfoTable {
-  CodeLabel entry;
-  CodeLabel evacuate;
-  CodeLabel scavenge;
+  // Entry holds either a codelabel, or an indirection to a new location,
+  // during garbage collection
+  void *entry;
+  EvacFunction evacuate;
+  ScavengeFunction scavenge;
 } InfoTable;
 
 // Magic numbers, to a certain degree
