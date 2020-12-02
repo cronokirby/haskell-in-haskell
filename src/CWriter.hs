@@ -327,12 +327,12 @@ genAlts deadNames alts = do
         genIfElse :: [(Int, (String, Expr))] -> CWriter ()
         genIfElse [] = return ()
         genIfElse ((i, (firstS, firstE)) : xs) = do
-          writeLine (printf "if (RegString == %s) {" (show firstS))
+          writeLine (printf "if (strcmp(RegString, %s) == 0) {" (show firstS))
           indent
           insideFunction (show i) (genExpr firstE)
           unindent
           forM_ xs <| \(i', (s, e)) -> do
-            writeLine (printf "} else if (RegString == %s) {" (show s))
+            writeLine (printf "} else if (strcmp(RegString, %s) == 0) {" (show s))
             indent
             insideFunction (show i') (genExpr e)
             unindent
