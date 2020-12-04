@@ -398,7 +398,8 @@ atomAsPointer (NameAtom n) =
   locationOf n >>= \case
     Temp tmp -> return tmp
     GlobalFunction path -> return ("&" ++ staticClosureFor path)
-    loc -> error (printf "location %l does not contain pointer" (show loc))
+    CurrentNode -> return "RegNode"
+    loc -> error (printf "location %s does not contain pointer" (show loc))
 atomAsPointer arg = error (printf "arg %s cannot be used as a pointer" (show arg))
 
 genExpr :: Expr -> CWriter ()

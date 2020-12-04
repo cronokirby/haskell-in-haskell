@@ -35,7 +35,7 @@ newtype Lexer a = Lexer {runLexer :: String -> Either LexerError (a, String)}
 
 -- We can map over the result of a lexer, without changing what strings are recognized
 instance Functor Lexer where
-  fmap f (Lexer l) = Lexer (l >>> fmap (\(a, s) -> (f a, s)))
+  fmap f (Lexer l) = Lexer (l >>> fmap (first f))
 
 -- We can squash two lexers together, getting a lexer that recognizes the first input,
 -- followed by the second input
@@ -191,7 +191,7 @@ token = keyword <|> operator <|> litteral <|> name
         intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
 
         stringLitt :: Lexer (Token, String)
-        stringLitt = char '"' *> (const <$> many (satisfies (/= '"')) <*> char '"') |> fmap (\x -> (StringLitt x, x))
+        stringLitt = char '"' *> (many (satisfies (/= '"')) <* char '"') |> fmap (\x -> (StringLitt x, x))
 
         boolLitt :: Lexer (Token, String)
         boolLitt = (BoolLitt True `with` string "True") <|> (BoolLitt False `with` string "False")
