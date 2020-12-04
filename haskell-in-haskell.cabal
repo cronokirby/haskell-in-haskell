@@ -10,7 +10,7 @@ extra-source-files:  CHANGELOG.md, README.md
 
 executable haskell-in-haskell
   main-is:             Main.hs
-  build-depends:       base >=4.13 && <4.14
+  build-depends:       base >=4.13 && <5
                      , haskell-in-haskell
                      , pretty-simple >=4.0 && <4.1
   default-language:    Haskell2010
@@ -23,5 +23,6 @@ library
   default-language:    Haskell2010
   default-extensions:  NoImplicitPrelude
   exposed-modules:     Ourlude
+                     , Lexer
   ghc-options:         -Wall
   hs-source-dirs:      src
