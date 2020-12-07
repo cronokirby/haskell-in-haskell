@@ -226,7 +226,7 @@ rawLexer = some (whitespace <|> comment <|> fmap (uncurry RawToken) token)
   where
     whitespace = blankspace <|> newline
     blankspace = Blankspace <$> some (satisfies (\x -> isSpace x && x /= '\n'))
-    comment = Comment <$> (string "--" *> some (satisfies (/= '\n')))
+    comment = Comment <$> (string "--" *> many (satisfies (/= '\n')))
     newline = Newline <$ char '\n'
 
 -- Represents a position some token can have in the middle of a line.
