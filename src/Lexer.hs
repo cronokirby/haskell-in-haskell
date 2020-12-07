@@ -8,7 +8,7 @@ import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT)
 import Control.Monad.State (State, gets, modify', runState)
 import Data.Char (isAlphaNum, isDigit, isLower, isSpace, isUpper)
 import Data.List (foldl', foldl1')
-import Data.Maybe (listToMaybe)
+import Data.Maybe (listToMaybe, maybeToList)
 import Ourlude
 
 -- Represents the kind of error that can occur
@@ -237,19 +237,22 @@ data LinePosition = Start | Middle deriving (Eq, Show)
 -- Some type annotated with a position
 data Positioned a = Positioned a LinePosition Int deriving (Show)
 
+type PosState = (LinePosition, Int)
+
 -- Take tokens and whitespace, and return positioned tokens, with whitespace filtered out
 position :: [RawToken] -> [Positioned Token]
 position = foldl' go ((Start, 0), []) >>> snd >>> reverse
   where
-    eat :: (LinePosition, Int) -> RawToken -> ((LinePosition, Int), Maybe (Positioned Token))
-    eat _ Newline = ((Start, 0), Nothing)
-    eat _ (Comment _) = ((Start, 0), Nothing)
-    eat (pos, col) (Blankspace s) = ((pos, col + length s), Nothing)
-    eat (pos, col) (RawToken t s) = ((Middle, col + length s), Just (Positioned t pos col))
-    go :: ((LinePosition, Int), [Positioned Token]) -> RawToken -> ((LinePosition, Int), [Positioned Token])
-    go (p, acc) raw = case eat p raw of
-      (p', Just tok) -> (p', tok : acc)
-      (p', Nothing) -> (p', acc)
+    eat :: PosState -> RawToken -> (PosState, Maybe (Positioned Token))
+    eat (pos, col) = \case
+      Newline -> ((Start, 0), Nothing)
+      Comment _ -> ((Start, 0), Nothing)
+      Blankspace s -> ((pos, col + length s), Nothing)
+      RawToken t s -> ((Middle, col + length s), Just (Positioned t pos col))
+    go :: (PosState, [Positioned Token]) -> RawToken -> (PosState, [Positioned Token])
+    go (p, acc) raw =
+      let (p', produced) = eat p raw
+      in (p', maybeToList produced <> acc)
 
 -- A layout is either one explicitly declared by the user, or implicitly declared at a certain column
 data Layout = Explicit | Implicit Int
