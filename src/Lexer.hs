@@ -284,10 +284,7 @@ pushLayout l = modify' (\s -> s {layouts = l : layouts s})
 --
 -- This has no effect if our stack is empty.
 popLayout :: LayoutM ()
-popLayout = modify' (\s -> s {layouts = pop (layouts s)})
-  where
-    pop [] = []
-    pop (_ : xs) = xs
+popLayout = modify' (\s -> s {layouts = drop 1 (layouts s)})
 
 -- Get the current layout, if it exists.
 currentLayout :: LayoutM (Maybe Layout)
