@@ -154,13 +154,25 @@ void H_garbage_collect(size_t requested_size) {
   }
 
   size_t allocated = H_new - H_new_base;
-  // TODO: GC Stuff
   free(H_base);
   H = H_new;
   H_base = H_new_base;
   // We might have allocated too much mem at this point, but this is a
   // reasonable way to shrink the heap if we compact more than 50%
   H_size = allocated * 2;
+}
+
+void *H_relocate(void *src, size_t size) {
+  void *ret = H_new;
+  memcpy(H_new, src, size);
+  H_new += size;
+  return ret;
+}
+
+char *H_relocate_string(char *src) {
+  size_t size = strlen(src);
+  // Copy all the characters, and the null byte
+  return H_relocate(src, size + 1);
 }
 
 void H_alloc(void *stuff, size_t size) {
