@@ -60,6 +60,9 @@ convertPath (IdentPath ps) = reverse ps |> map convertIdentifier |> intercalate 
 tableFor :: IdentPath -> String
 tableFor path = "table_for_" ++ convertPath path
 
+evacFor :: IdentPath -> String
+evacFor path = "evac_for_" ++ convertPath path
+
 staticClosureFor :: IdentPath -> String
 staticClosureFor path = "static_closure_for_" ++ convertPath path
 
@@ -537,17 +540,27 @@ genExpr (Let bindings e) =
           s -> error (printf "storage %s isn't valid for a closure" (show s))
     withLocations locations <| genExpr e
 
+genEvac :: IdentPath -> LambdaForm -> CWriter ()
+genEvac path (LambdaForm _ _ _ _) = do
+  writeLine (printf "void* %s(void* base) {" (evacFor path))
+  indent
+  writeLine "return base;"
+  unindent
+  writeLine "}"
+
 genLambdaForm :: String -> LambdaForm -> CWriter ()
-genLambdaForm myName (LambdaForm bound _ args expr) = do
+genLambdaForm myName lf@(LambdaForm bound _ args expr) = do
   myPath <- getFullPath myName
+  amGlobal <- (== GlobalStorage) <$> storageOf myName
   -- Pre declare this function in case it's recursive
   writeLine ""
   writeLine (printf "void* %s(void);" (convertPath myPath))
+  unless amGlobal <| genEvac myPath lf
   -- We could theoretically avoid writing the info table if a data constructor
   -- is never called with this function as a raw argument, but that's a difficult
   -- check to actually do.
-  writeLine (printf "InfoTable %s = { &%s, &null_evac };" (tableFor myPath) (convertPath myPath))
-  amGlobal <- (== GlobalStorage) <$> storageOf myName
+  let evacFunction = if amGlobal then "null_evac" else evacFor myPath
+  writeLine (printf "InfoTable %s = { &%s, &%s };" (tableFor myPath) (convertPath myPath) evacFunction)
   -- When this is a globally stored function, we need a pointer for an info table, to use as a "closure"
   when amGlobal
     <| writeLine (printf "InfoTable* %s = &%s;" (staticClosureFor myPath) (tableFor myPath))
