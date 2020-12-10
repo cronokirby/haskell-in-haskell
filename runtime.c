@@ -20,19 +20,11 @@ void *null_evac(void *base) {
   return base;
 }
 
-// A scavenge function is just called with a base pointer
-typedef void (*ScavengeFunction)(void *);
-
-void null_scavenge(void *base) {
-  return;
-}
-
 typedef struct InfoTable {
   // Entry holds either a codelabel, or an indirection to a new location,
   // during garbage collection
   void *entry;
   EvacFunction evacuate;
-  ScavengeFunction scavenge;
 } InfoTable;
 
 // Magic numbers, to a certain degree
@@ -150,7 +142,7 @@ void H_garbage_collect(size_t requested_size) {
     void *base = *p;
     InfoTable *table;
     memcpy(&table, base, sizeof(InfoTable *));
-    table->scavenge(base);
+    *p = table->evacuate(base);
   }
 
   size_t allocated = H_new - H_new_base;
