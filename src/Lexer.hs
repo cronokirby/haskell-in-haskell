@@ -218,11 +218,15 @@ token = keyword <|> operator <|> litteral <|> name
             <|> (BoolTypeName `with` string "Bool")
 
 -- A raw token is either a "real" token, or some whitespace that we actually want to ignore
-data RawToken = Blankspace String | Comment String | Newline | RawToken Token String
+data RawToken
+  = Blankspace String
+  | Comment String
+  | Newline
+  | NormalToken Token String
 
 -- A Lexer for raw tokens
 rawLexer :: Lexer [RawToken]
-rawLexer = some (whitespace <|> comment <|> fmap (uncurry RawToken) token)
+rawLexer = some (whitespace <|> comment <|> fmap (uncurry NormalToken) token)
   where
     whitespace = blankspace <|> newline
     blankspace = Blankspace <$> some (satisfies (\x -> isSpace x && x /= '\n'))
@@ -248,11 +252,11 @@ position = foldl' go ((Start, 0), []) >>> snd >>> reverse
       Newline -> ((Start, 0), Nothing)
       Comment _ -> ((Start, 0), Nothing)
       Blankspace s -> ((pos, col + length s), Nothing)
-      RawToken t s -> ((Middle, col + length s), Just (Positioned t pos col))
+      NormalToken t s -> ((Middle, col + length s), Just (Positioned t pos col))
     go :: (PosState, [Positioned Token]) -> RawToken -> (PosState, [Positioned Token])
     go (p, acc) raw =
       let (p', produced) = eat p raw
-      in (p', maybeToList produced <> acc)
+       in (p', maybeToList produced <> acc)
 
 -- A layout is either one explicitly declared by the user, or implicitly declared at a certain column
 data Layout = Explicit | Implicit Int
