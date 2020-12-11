@@ -21,10 +21,8 @@ void *null_evac(void *base) {
 }
 
 typedef struct InfoTable {
-  // Entry holds either a codelabel, or an indirection to a new location,
-  // during garbage collection
-  void *entry;
-  EvacFunction evacuate;
+  CodeLabel entry;
+  EvacFunction evac;
 } InfoTable;
 
 // Magic numbers, to a certain degree
@@ -121,7 +119,7 @@ const char *SB_pop_str() {
   return ret;
 }
 
-const size_t BASE_HEAP_SIZE = 1 << 16;
+const size_t BASE_HEAP_SIZE = 1 << 8;
 
 char *H;
 char *H_base;
@@ -132,6 +130,7 @@ char *H_new_base;
 size_t H_new_size;
 
 void H_garbage_collect(size_t requested_size) {
+  printf("Garbage Collection required with requested_size %lu", requested_size);
   H_new_base = malloc(requested_size * 2);
   if (H_new_base == NULL) {
     panic("Failed to add new heap when garbage collecting");
@@ -142,7 +141,7 @@ void H_garbage_collect(size_t requested_size) {
     void *base = *p;
     InfoTable *table;
     memcpy(&table, base, sizeof(InfoTable *));
-    *p = table->evacuate(base);
+    *p = table->evac(base);
   }
 
   size_t allocated = H_new - H_new_base;
@@ -170,8 +169,7 @@ char *H_relocate_string(char *src) {
 void H_alloc(void *stuff, size_t size) {
   size_t allocated = H - H_base;
   if (allocated + size > H_size) {
-    // TODO: Trigger GC here
-    panic("Heap Overflow!");
+    H_garbage_collect(allocated + size);
   }
   memcpy(H, stuff, size);
   H += size;

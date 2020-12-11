@@ -541,12 +541,53 @@ genExpr (Let bindings e) =
     withLocations locations <| genExpr e
 
 genEvac :: IdentPath -> LambdaForm -> CWriter ()
-genEvac path (LambdaForm _ _ _ _) = do
+genEvac path (LambdaForm bound _ _ _) = do
   writeLine (printf "void* %s(void* base) {" (evacFor path))
   indent
-  writeLine "return base;"
+
+  (pointerCount, intCount) <- countStorages
+
+  forM_ [0 .. pointerCount - 1] evacClosure
+  ret <- moveMyself
+  forM_ [0 .. pointerCount - 1] movePointer
+  forM_ [0 .. intCount - 1] (moveInt pointerCount)
+
+  writeLine (printf "return %s;" ret)
+
   unindent
   writeLine "}"
+  where
+    countStorages :: CWriter (Int, Int)
+    countStorages = do
+      storages <- mapM storageOf bound
+      let count s = storages |> filter (== s) |> length
+      return (count PointerStorage, count IntStorage)
+
+    -- Move the closure's info table pointer to a new location
+    moveMyself :: CWriter String
+    moveMyself = do
+      ret <- fresh
+      writeLine (printf "void* %s = H_relocate(base, sizeof(InfoTable*));" ret)
+      return ret
+
+    evacClosure :: Int -> CWriter ()
+    evacClosure i = do
+      table <- fresh
+      theirBase <- fresh
+      writeLine (printf "void *%s;" theirBase)
+      writeLine (printf "memcpy(&%s, base + sizeof(InfoTable*) + sizeof(void*) * %d, sizeof(void*));" theirBase i)
+      writeLine (printf "InfoTable *%s;" table)
+      writeLine (printf "memcpy(&%s, %s, sizeof(InfoTable*));" table theirBase)
+      tmp <- fresh
+      writeLine (printf "void* %s = %s->evac(%s);" tmp table theirBase)
+      writeLine (printf "memcpy(base + sizeof(InfoTable*) + sizeof(void*) * %d, &%s, sizeof(void*));" i tmp)
+
+    movePointer :: Int -> CWriter ()
+    movePointer i = writeLine (printf "H_relocate(base + sizeof(InfoTable*) + sizeof(void*) * %d, sizeof(void*));" i)
+
+    moveInt :: Int -> Int -> CWriter ()
+    moveInt pointerCount i =
+      writeLine (printf "H_relocate(base + sizeof(InfoTable*) + sizeof(void*) * %d + sizeof(int64_t) * %d, sizeof(void*));" pointerCount i)
 
 genLambdaForm :: String -> LambdaForm -> CWriter ()
 genLambdaForm myName lf@(LambdaForm bound _ args expr) = do
