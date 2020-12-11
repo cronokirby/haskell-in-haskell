@@ -119,7 +119,7 @@ const char *SB_pop_str() {
   return ret;
 }
 
-const size_t BASE_HEAP_SIZE = 1 << 8;
+const size_t BASE_HEAP_SIZE = 1 << 16;
 
 char *H;
 char *H_base;
