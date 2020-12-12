@@ -121,9 +121,9 @@ data Token
   | FSlashEqual -- `/=`
   | VBarVBar -- `||`
   | AmpersandAmpersand -- `&&`
-  | IntLitt Int -- An Int litteral
-  | StringLitt String -- A String litteral
-  | BoolLitt Bool -- A Bool litteral
+  | IntLit Int -- An Int litteral
+  | StringLit String -- A String litteral
+  | BoolLit Bool -- A Bool litteral
   | IntTypeName -- The typename `Int`
   | StringTypeName -- The typename `String`
   | BoolTypeName -- The typename `Bool`
@@ -185,16 +185,16 @@ token = keyword <|> operator <|> litteral <|> name
         ]
 
     litteral :: Lexer (Token, String)
-    litteral = intLitt <|> stringLitt <|> boolLitt
+    litteral = intLit <|> stringLit <|> boolLit
       where
-        intLitt :: Lexer (Token, String)
-        intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))
+        intLit :: Lexer (Token, String)
+        intLit = some (satisfies isDigit) |> fmap (\x -> (IntLit (read x), x))
 
-        stringLitt :: Lexer (Token, String)
-        stringLitt = char '"' *> (many (satisfies (/= '"')) <* char '"') |> fmap (\x -> (StringLitt x, x))
+        stringLit :: Lexer (Token, String)
+        stringLit = char '"' *> (many (satisfies (/= '"')) <* char '"') |> fmap (\x -> (StringLit x, x))
 
-        boolLitt :: Lexer (Token, String)
-        boolLitt = (BoolLitt True `with` string "True") <|> (BoolLitt False `with` string "False")
+        boolLit :: Lexer (Token, String)
+        boolLit = (BoolLit True `with` string "True") <|> (BoolLit False `with` string "False")
 
     name :: Lexer (Token, String)
     name = primName <|> upperName <|> lowerName
