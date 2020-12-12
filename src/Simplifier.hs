@@ -71,7 +71,7 @@ data Expr t
   = LetExpr [ValueDefinition t] (Expr t)
   | CaseExpr (Expr t) [(Pattern, Expr t)]
   | Error String
-  | LittExpr Literal
+  | LitExpr Literal
   | Builtin Builtin
   | NameExpr Name
   | ApplyExpr (Expr t) (Expr t)
@@ -408,7 +408,7 @@ convertExpr (P.IfExpr cond thenn elsse) = do
         ]
     )
 convertExpr (P.NameExpr name) = return (NameExpr name)
-convertExpr (P.LittExpr litt) = return (LittExpr litt)
+convertExpr (P.LitExpr litt) = return (LitExpr litt)
 convertExpr (P.LambdaExpr names body) = do
   body' <- convertExpr body
   return (foldr (`LambdaExpr` ()) body' names)

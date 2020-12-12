@@ -275,7 +275,7 @@ literalToAtom (BoolLiteral b) = do
 
 atomize :: S.Expr Scheme -> STGM ([Binding], Atom)
 atomize expression = case expression of
-  S.LittExpr l -> literalToAtom l
+  S.LitExpr l -> literalToAtom l
   S.NameExpr n -> do
     wasConstructor <- S.isConstructor n
     if not wasConstructor
@@ -363,7 +363,7 @@ convertExpr =
           NameAtom n -> makeLet (argBindings ++ eBindings) (Apply n atoms)
   where
     handle :: S.Expr Scheme -> STGM Expr
-    handle (S.LittExpr l) =
+    handle (S.LitExpr l) =
       return <| case l of
         StringLiteral s -> Box StringBox (PrimitiveAtom (PrimString s))
         IntLiteral i -> Box IntBox (PrimitiveAtom (PrimInt i))

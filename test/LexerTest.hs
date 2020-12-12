@@ -15,9 +15,9 @@ tests =
     [ testCase "lexing keywords" (shouldLex "in data type if then else case" [OpenBrace, In, Data, Type, If, Then, Else, Case, CloseBrace]),
       testCase "lexing operators" (shouldLex "() ; :: -> | \\ / + ++ - * = . > >= < <= == /= && || $" operators),
       testCase "lexing names" (shouldLex "foo32' A34'" [OpenBrace, LowerName "foo32'", UpperName "A34'", CloseBrace]),
-      testCase "lexing integer literals" (shouldLex "-42 32" [OpenBrace, Dash, IntLitt 42, IntLitt 32, CloseBrace]),
-      testCase "lexing string literals" (shouldLex "\"foo bar\"" [OpenBrace, StringLitt "foo bar", CloseBrace]),
-      testCase "lexing bool literals" (shouldLex "True False" [OpenBrace, BoolLitt True, BoolLitt False, CloseBrace]),
+      testCase "lexing integer literals" (shouldLex "-42 32" [OpenBrace, Dash, IntLit 42, IntLit 32, CloseBrace]),
+      testCase "lexing string literals" (shouldLex "\"foo bar\"" [OpenBrace, StringLit "foo bar", CloseBrace]),
+      testCase "lexing bool literals" (shouldLex "True False" [OpenBrace, BoolLit True, BoolLit False, CloseBrace]),
       testCase "lexing comments" (shouldLex "if -- comment\n if" [OpenBrace, If, If, CloseBrace]),
       layoutTests
     ]

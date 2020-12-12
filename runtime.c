@@ -25,6 +25,15 @@ typedef struct InfoTable {
   EvacFunction evac;
 } InfoTable;
 
+void *already_evac(void *base) {
+  void* ret;
+  memcpy(&ret, base + sizeof(InfoTable*), sizeof(void*));
+  printf("already evacuated: %p, to: %p", base, ret);
+  return ret;
+}
+
+InfoTable already_evac_table = { NULL, &already_evac };
+
 // Magic numbers, to a certain degree
 int64_t RegInt = 0xBAD;
 int64_t RegTag = 0xBAD;
@@ -119,7 +128,7 @@ const char *SB_pop_str() {
   return ret;
 }
 
-const size_t BASE_HEAP_SIZE = 1 << 16;
+const size_t BASE_HEAP_SIZE = 1 << 8;
 
 char *H;
 char *H_base;
@@ -130,18 +139,30 @@ char *H_new_base;
 size_t H_new_size;
 
 void H_garbage_collect(size_t requested_size) {
-  printf("Garbage Collection required with requested_size %lu", requested_size);
+  printf("Garbage Collection! requested: %lu\n", requested_size);
+  printf("H_base: %p, H: %p, H_size: %lu\n", H_base, H, H_size);
   H_new_base = malloc(requested_size * 2);
   if (H_new_base == NULL) {
     panic("Failed to add new heap when garbage collecting");
   }
   H_new = H_new_base;
+  printf("H_new_base: %p, H_new: %p\n", H_new_base, H_new);
+
+  puts("SA:");
+  for (void **p = SA_base; p <= SA; ++p) {
+    void *base = *p;
+    InfoTable *table;
+    memcpy(&table, base, sizeof(InfoTable *));
+    printf("%p, table: %p\n", base, table);
+  }
 
   for (void **p = SA_base; p <= SA; ++p) {
     void *base = *p;
     InfoTable *table;
     memcpy(&table, base, sizeof(InfoTable *));
+    printf("evacuating %p with table: %p\n", base, table);
     *p = table->evac(base);
+    printf("Old: %p, New: %p\n", base, *p);
   }
 
   size_t allocated = H_new - H_new_base;
@@ -157,6 +178,7 @@ void *H_relocate(void *src, size_t size) {
   void *ret = H_new;
   memcpy(H_new, src, size);
   H_new += size;
+  printf("H_relocate(%p, %lu) -> %p\n", src, size, ret);
   return ret;
 }
 

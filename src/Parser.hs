@@ -99,7 +99,7 @@ data Expr
   | IfExpr Expr Expr Expr
   | LambdaExpr [ValName] Expr
   | NameExpr Name
-  | LittExpr Literal
+  | LitExpr Literal
   | NegateExpr Expr
   | ApplyExpr Expr [Expr]
   | CaseExpr Expr [(Pattern, Expr)]
@@ -257,7 +257,7 @@ appExpr = some factor |> fmap extract
 factor :: Parser Expr
 factor = littExpr <|> nameExpr <|> parensed expr
   where
-    littExpr = fmap LittExpr literal
+    littExpr = fmap LitExpr literal
     nameExpr = fmap NameExpr name
 
 lowerName :: Parser Name
@@ -288,19 +288,19 @@ name :: Parser Name
 name = valName <|> constructorName
 
 literal :: Parser Literal
-literal = intLitt <|> stringLitt <|> boolLitt
+literal = intLit <|> stringLit <|> boolLit
   where
-    intLitt =
+    intLit =
       pluck <| \case
-        IntLitt i -> Just (IntLiteral i)
+        IntLit i -> Just (IntLiteral i)
         _ -> Nothing
-    stringLitt =
+    stringLit =
       pluck <| \case
-        StringLitt s -> Just (StringLiteral s)
+        StringLit s -> Just (StringLiteral s)
         _ -> Nothing
-    boolLitt =
+    boolLit =
       pluck <| \case
-        BoolLitt b -> Just (BoolLiteral b)
+        BoolLit b -> Just (BoolLiteral b)
         _ -> Nothing
 
 data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)

@@ -265,9 +265,9 @@ inferExpr expr = case expr of
   Error err -> do
     tv <- TVar <$> fresh
     return (mempty, [], tv, Error err)
-  LittExpr litt ->
+  LitExpr litt ->
     let t = littType litt
-     in return (mempty, [], t, LittExpr litt)
+     in return (mempty, [], t, LitExpr litt)
   ApplyExpr e1 e2 -> do
     (as1, cs1, t1, e1') <- inferExpr e1
     (as2, cs2, t2, e2') <- inferExpr e2
@@ -461,7 +461,7 @@ schemeFor t = do
 typeExpr :: Expr Type -> Typer (Expr Scheme)
 typeExpr expr = case expr of
   Error err -> return (Error err)
-  LittExpr litt -> return (LittExpr litt)
+  LitExpr litt -> return (LitExpr litt)
   NameExpr n -> return (NameExpr n)
   Builtin b -> return (Builtin b)
   ApplyExpr e1 e2 -> ApplyExpr <$> typeExpr e1 <*> typeExpr e2
