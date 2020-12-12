@@ -25,19 +25,19 @@ tests =
         "parsing basic definitions"
         ( shouldParse
             "{ x :: Int; x = 3 }"
-            (AST [ValueDefinition (TypeAnnotation "x" IntT), ValueDefinition (NameDefinition "x" [] (LittExpr (IntLitteral 3)))])
+            (AST [ValueDefinition (TypeAnnotation "x" IntT), ValueDefinition (NameDefinition "x" [] (LittExpr (IntLiteral 3)))])
         ),
       testCase
         "parsing let definitions"
         ( shouldParse
             "x = \n  let\n    y = 3\n  in y"
-            (AST [ValueDefinition (NameDefinition "x" [] (LetExpr [NameDefinition "y" [] (LittExpr (IntLitteral 3))] (NameExpr "y")))])
+            (AST [ValueDefinition (NameDefinition "x" [] (LetExpr [NameDefinition "y" [] (LittExpr (IntLiteral 3))] (NameExpr "y")))])
         ),
       testCase
         "parsing where definitions"
         ( shouldParse
             "x = y where y = 3"
-            (AST [ValueDefinition (NameDefinition "x" [] (WhereExpr (NameExpr "y") [NameDefinition "y" [] (LittExpr (IntLitteral 3))]))])
+            (AST [ValueDefinition (NameDefinition "x" [] (WhereExpr (NameExpr "y") [NameDefinition "y" [] (LittExpr (IntLiteral 3))]))])
         ),
       testCase
         "parsing binary expressions"
@@ -84,8 +84,8 @@ tests =
                         []
                         ( CaseExpr
                             (NameExpr "x")
-                            [ (WildcardPattern, LittExpr (IntLitteral 3)),
-                              (ConstructorPattern "A" [ConstructorPattern "B" [NamePattern "y"], NamePattern "y"], LittExpr (IntLitteral 3)),
+                            [ (WildcardPattern, LittExpr (IntLiteral 3)),
+                              (ConstructorPattern "A" [ConstructorPattern "B" [NamePattern "y"], NamePattern "y"], LittExpr (IntLiteral 3)),
                               (NamePattern "y", NameExpr "y")
                             ]
                         )
@@ -95,9 +95,9 @@ tests =
         ),
       testCase
         "parsing negation"
-        (shouldParse "x = -3" (AST [ValueDefinition (NameDefinition "x" [] (NegateExpr (LittExpr (IntLitteral 3))))])),
+        (shouldParse "x = -3" (AST [ValueDefinition (NameDefinition "x" [] (NegateExpr (LittExpr (IntLiteral 3))))])),
       testCase
-        "litteral patterns"
+        "literal patterns"
         ( shouldParse
             "x = case x of { \"foo\" -> x }"
             ( AST
@@ -105,7 +105,7 @@ tests =
                     ( NameDefinition
                         "x"
                         []
-                        (CaseExpr (NameExpr "x") [(LitteralPattern (StringLitteral "foo"), NameExpr "x")])
+                        (CaseExpr (NameExpr "x") [(LiteralPattern (StringLiteral "foo"), NameExpr "x")])
                     )
                 ]
             )
@@ -280,7 +280,7 @@ tests =
             "x _ (A x) = 3"
             ( AST
                 [ ValueDefinition
-                    ( NameDefinition "x" [WildcardPattern, ConstructorPattern "A" [NamePattern "x"]] (LittExpr (IntLitteral 3))
+                    ( NameDefinition "x" [WildcardPattern, ConstructorPattern "A" [NamePattern "x"]] (LittExpr (IntLiteral 3))
                     )
                 ]
             )

@@ -551,6 +551,7 @@ genEvac path (LambdaForm bound _ _ _) = do
   ret <- moveMyself
   forM_ [0 .. pointerCount - 1] movePointer
   forM_ [0 .. intCount - 1] (moveInt pointerCount)
+  replaceMyself ret
 
   writeLine (printf "return %s;" ret)
 
@@ -588,6 +589,13 @@ genEvac path (LambdaForm bound _ _ _) = do
     moveInt :: Int -> Int -> CWriter ()
     moveInt pointerCount i =
       writeLine (printf "H_relocate(base + sizeof(InfoTable*) + sizeof(void*) * %d + sizeof(int64_t) * %d, sizeof(void*));" pointerCount i)
+
+    replaceMyself :: String -> CWriter ()
+    replaceMyself ret = do
+      tmp <- fresh
+      writeLine (printf "void* %s = &already_evac_table;" tmp)
+      writeLine (printf "memcpy(base, &%s, sizeof(InfoTable*));" tmp)
+      writeLine (printf "memcpy(base + sizeof(InfoTable*), &%s, sizeof(void*));" ret)
 
 genLambdaForm :: String -> LambdaForm -> CWriter ()
 genLambdaForm myName lf@(LambdaForm bound _ args expr) = do

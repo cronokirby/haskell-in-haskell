@@ -8,7 +8,7 @@ module STG
     BoxType (..),
     Builtin (..),
     Atom (..),
-    Litteral (..),
+    Literal (..),
     ValName,
     LambdaForm (..),
     Expr (..),
@@ -28,7 +28,7 @@ import Ourlude
 import Simplifier
   ( AST (..),
     ConstructorName,
-    Litteral (..),
+    Literal (..),
     ValName,
     ValueDefinition (..),
   )
@@ -69,7 +69,7 @@ data Builtin
 -- With STG, we want to limit the complexity of expressions that appear
 -- inside other applications, to make compilation much easier.
 data Atom
-  = -- A litteral value
+  = -- A literal value
     PrimitiveAtom Primitive
   | -- A reference to a name
     NameAtom ValName
@@ -119,14 +119,14 @@ data BoxType
 --
 -- Alternatives always have a default expression.
 --
--- We split alternatives for different litterals, mainly to simplify
--- code generation. If we used a single alternative for all litterals,
+-- We split alternatives for different literals, mainly to simplify
+-- code generation. If we used a single alternative for all literals,
 -- we'd lose information about what types are involved, making code
 -- generation more cumbersome
 data Alts
-  = -- Potential branches for boxed integer litterals, then a default expression
+  = -- Potential branches for boxed integer literals, then a default expression
     IntAlts [(Int, Expr)] (Maybe Expr)
-  | -- Potential branches for boxed string litterals, then a default case
+  | -- Potential branches for boxed string literals, then a default case
     StringAlts [(String, Expr)] (Maybe Expr)
   | -- Bind a primitive, based on what type it boxes into
     BindPrim BoxType ValName Expr
@@ -259,23 +259,23 @@ gatherApplications expression = go expression []
     go (S.ApplyExpr f e) acc = go f (e : acc)
     go e acc = (e, acc)
 
-litteralToAtom :: Litteral -> STGM ([Binding], Atom)
-litteralToAtom (StringLitteral s) = do
+literalToAtom :: Literal -> STGM ([Binding], Atom)
+literalToAtom (StringLiteral s) = do
   name <- fresh
   let l = LambdaForm [] U [] (Box StringBox (PrimitiveAtom (PrimString s)))
   return ([Binding name l], NameAtom name)
-litteralToAtom (IntLitteral i) = do
+literalToAtom (IntLiteral i) = do
   name <- fresh
   let l = LambdaForm [] U [] (Box IntBox (PrimitiveAtom (PrimInt i)))
   return ([Binding name l], NameAtom name)
-litteralToAtom (BoolLitteral b) = do
+literalToAtom (BoolLiteral b) = do
   name <- fresh
   let l = LambdaForm [] N [] (Constructor (if b then 1 else 0) [])
   return ([Binding name l], NameAtom name)
 
 atomize :: S.Expr Scheme -> STGM ([Binding], Atom)
 atomize expression = case expression of
-  S.LittExpr l -> litteralToAtom l
+  S.LittExpr l -> literalToAtom l
   S.NameExpr n -> do
     wasConstructor <- S.isConstructor n
     if not wasConstructor
@@ -365,9 +365,9 @@ convertExpr =
     handle :: S.Expr Scheme -> STGM Expr
     handle (S.LittExpr l) =
       return <| case l of
-        StringLitteral s -> Box StringBox (PrimitiveAtom (PrimString s))
-        IntLitteral i -> Box IntBox (PrimitiveAtom (PrimInt i))
-        BoolLitteral b -> Constructor (if b then 1 else 0) []
+        StringLiteral s -> Box StringBox (PrimitiveAtom (PrimString s))
+        IntLiteral i -> Box IntBox (PrimitiveAtom (PrimInt i))
+        BoolLiteral b -> Constructor (if b then 1 else 0) []
     handle (S.NameExpr n) = do
       wasConstructor <- S.isConstructor n
       if not wasConstructor
@@ -394,17 +394,17 @@ convertExpr =
 
 convertBranches :: [(S.Pattern, S.Expr Scheme)] -> Expr -> STGM Expr
 convertBranches branches scrut = case head branches of
-  (S.LitteralPattern (S.IntLitteral _), _) -> do
-    branches' <- findPatterns (\(S.LitteralPattern (S.IntLitteral i)) -> return i) branches
+  (S.LiteralPattern (S.IntLiteral _), _) -> do
+    branches' <- findPatterns (\(S.LiteralPattern (S.IntLiteral i)) -> return i) branches
     default' <- findDefaultExpr branches
     makeCase scrut (IntAlts branches' default')
-  (S.LitteralPattern (S.BoolLitteral _), _) -> do
-    branches' <- findPatterns (\(S.LitteralPattern (S.BoolLitteral b)) -> return b) branches
+  (S.LiteralPattern (S.BoolLiteral _), _) -> do
+    branches' <- findPatterns (\(S.LiteralPattern (S.BoolLiteral b)) -> return b) branches
     default' <- findDefaultExpr branches
     let constrBranches = map (first (\b -> (if b then 1 else 0, []))) branches'
     makeCase scrut (ConstrAlts constrBranches default')
-  (S.LitteralPattern (S.StringLitteral _), _) -> do
-    branches' <- findPatterns (\(S.LitteralPattern (S.StringLitteral s)) -> return s) branches
+  (S.LiteralPattern (S.StringLiteral _), _) -> do
+    branches' <- findPatterns (\(S.LiteralPattern (S.StringLiteral s)) -> return s) branches
     default' <- findDefaultExpr branches
     makeCase scrut (StringAlts branches' default')
   (S.ConstructorPattern _ _, _) -> do

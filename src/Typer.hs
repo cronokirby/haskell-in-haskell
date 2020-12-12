@@ -36,7 +36,7 @@ import Simplifier
     ConstructorName,
     Expr (..),
     HasTypeInformation (..),
-    Litteral (..),
+    Literal (..),
     Name,
     Pattern (..),
     ResolutionError,
@@ -249,11 +249,11 @@ builtinScheme b =
     Negate -> IntT :-> IntT
     _ -> error "Already handled"
 
--- Get the type of a given litteral
-littType :: Litteral -> Type
-littType (IntLitteral _) = IntT
-littType (StringLitteral _) = StringT
-littType (BoolLitteral _) = BoolT
+-- Get the type of a given literal
+littType :: Literal -> Type
+littType (IntLiteral _) = IntT
+littType (StringLiteral _) = StringT
+littType (BoolLiteral _) = BoolT
 
 -- Run constraint generation over a given expression.
 --
@@ -324,7 +324,7 @@ inferPatternDef scrutinee (pat, e) = do
     inspectPattern :: Type -> Pattern -> Infer ([Constraint], Map.Map ValName Type, Set.Set TypeVar)
     inspectPattern scrutinee' pat' = case pat' of
       Wildcard -> return ([], Map.empty, Set.empty)
-      LitteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty, Set.empty)
+      LiteralPattern litt -> return ([SameType scrutinee (littType litt)], Map.empty, Set.empty)
       ConstructorPattern cstr pats -> do
         patVars <- forM pats (const fresh)
         let patTypes = map TVar patVars

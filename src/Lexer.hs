@@ -121,9 +121,9 @@ data Token
   | FSlashEqual -- `/=`
   | VBarVBar -- `||`
   | AmpersandAmpersand -- `&&`
-  | IntLitt Int -- An Int litteral
-  | StringLitt String -- A String litteral
-  | BoolLitt Bool -- A Bool litteral
+  | IntLitt Int -- An Int literal
+  | StringLitt String -- A String literal
+  | BoolLitt Bool -- A Bool literal
   | IntTypeName -- The typename `Int`
   | StringTypeName -- The typename `String`
   | BoolTypeName -- The typename `Bool`
@@ -133,7 +133,7 @@ data Token
 
 -- Lex out one of the tokens in our language
 token :: Lexer (Token, String)
-token = keyword <|> operator <|> litteral <|> name
+token = keyword <|> operator <|> literal <|> name
   where
     with :: Functor f => b -> f a -> f (b, a)
     with b = fmap (b,)
@@ -184,8 +184,8 @@ token = keyword <|> operator <|> litteral <|> name
           AmpersandAmpersand `with` string "&&"
         ]
 
-    litteral :: Lexer (Token, String)
-    litteral = intLitt <|> stringLitt <|> boolLitt
+    literal :: Lexer (Token, String)
+    literal = intLitt <|> stringLitt <|> boolLitt
       where
         intLitt :: Lexer (Token, String)
         intLitt = some (satisfies isDigit) |> fmap (\x -> (IntLitt (read x), x))

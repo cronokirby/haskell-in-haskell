@@ -5,7 +5,7 @@
 
 module Simplifier
   ( Pattern (..),
-    Litteral (..),
+    Literal (..),
     ConstructorDefinition (..),
     SimplifierError (..),
     AST (..),
@@ -40,7 +40,7 @@ import qualified Data.Map as Map
 import Data.Maybe (catMaybes, isJust)
 import qualified Data.Set as Set
 import Ourlude
-import Parser (ConstructorDefinition (..), ConstructorName, Litteral (..), Name, ValName)
+import Parser (ConstructorDefinition (..), ConstructorName, Literal (..), Name, ValName)
 import qualified Parser as P
 import Types (FreeTypeVars(..), Scheme (..), Type (..), TypeName, TypeVar, closeType)
 
@@ -71,7 +71,7 @@ data Expr t
   = LetExpr [ValueDefinition t] (Expr t)
   | CaseExpr (Expr t) [(Pattern, Expr t)]
   | Error String
-  | LittExpr Litteral
+  | LittExpr Literal
   | Builtin Builtin
   | NameExpr Name
   | ApplyExpr (Expr t) (Expr t)
@@ -80,7 +80,7 @@ data Expr t
 
 data Pattern
   = Wildcard
-  | LitteralPattern Litteral
+  | LiteralPattern Literal
   | ConstructorPattern ConstructorName [ValName]
   deriving (Eq, Show)
 
@@ -403,8 +403,8 @@ convertExpr (P.IfExpr cond thenn elsse) = do
   return
     ( CaseExpr
         cond'
-        [ (LitteralPattern (BoolLitteral True), thenn'),
-          (LitteralPattern (BoolLitteral False), elsse')
+        [ (LiteralPattern (BoolLiteral True), thenn'),
+          (LiteralPattern (BoolLiteral False), elsse')
         ]
     )
 convertExpr (P.NameExpr name) = return (NameExpr name)
@@ -515,8 +515,8 @@ gatherBranches :: [P.Pattern] -> [Branch]
 gatherBranches = foldMap pluckHead >>> Set.toList
   where
     pluckHead :: P.Pattern -> Set.Set Branch
-    pluckHead (P.LitteralPattern l) =
-      Set.singleton (LitteralBranch l)
+    pluckHead (P.LiteralPattern l) =
+      Set.singleton (LiteralBranch l)
     pluckHead (P.ConstructorPattern name pats) =
       Set.singleton (ConstructorBranch name (length pats))
     pluckHead _ = Set.empty
@@ -565,14 +565,14 @@ branchMatrix branch (Matrix rows) =
   rows |> map (\(Row pats a) -> (`Row` a) <$> newPats pats) |> catMaybes |> Matrix
   where
     matches :: Branch -> P.Pattern -> Maybe [P.Pattern]
-    matches (LitteralBranch l) (P.LitteralPattern l') | l == l' = Just []
+    matches (LiteralBranch l) (P.LiteralPattern l') | l == l' = Just []
     matches (ConstructorBranch name _) (P.ConstructorPattern name' pats)
       | name == name' =
         Just pats
     matches _ _ = Nothing
 
     makeWildCards :: Branch -> [P.Pattern]
-    makeWildCards (LitteralBranch _) = []
+    makeWildCards (LiteralBranch _) = []
     makeWildCards (ConstructorBranch _ arity) = replicate arity P.WildcardPattern
 
     newPats :: [P.Pattern] -> Maybe [P.Pattern]
@@ -608,7 +608,7 @@ data Branch
   = -- A branch for a constructor of a certain arity
     ConstructorBranch ConstructorName Int
   | -- A branch for a value of literal type
-    LitteralBranch Litteral
+    LiteralBranch Literal
   deriving (Eq, Ord, Show)
 
 -- Build up a decision tree from a pattern matrix
@@ -640,7 +640,7 @@ foldTree patCount theTree = do
   where
     handleBranch :: [String] -> (Branch, Tree (Expr t)) -> Simplifier (Pattern, Expr t)
     handleBranch names (branch, tree) = case branch of
-      LitteralBranch l -> (LitteralPattern l,) <$> go names tree
+      LiteralBranch l -> (LiteralPattern l,) <$> go names tree
       ConstructorBranch cstr arity -> do
         newNames <- replicateM arity fresh
         expr <- go (newNames ++ names) tree

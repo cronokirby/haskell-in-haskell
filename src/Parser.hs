@@ -99,16 +99,16 @@ data Expr
   | IfExpr Expr Expr Expr
   | LambdaExpr [ValName] Expr
   | NameExpr Name
-  | LittExpr Litteral
+  | LittExpr Literal
   | NegateExpr Expr
   | ApplyExpr Expr [Expr]
   | CaseExpr Expr [(Pattern, Expr)]
   deriving (Eq, Show)
 
-data Litteral
-  = IntLitteral Int
-  | StringLitteral String
-  | BoolLitteral Bool
+data Literal
+  = IntLiteral Int
+  | StringLiteral String
+  | BoolLiteral Bool
   deriving (Eq, Ord, Show)
 
 data BinOp
@@ -132,7 +132,7 @@ data BinOp
 data Pattern
   = WildcardPattern
   | NamePattern ValName
-  | LitteralPattern Litteral
+  | LiteralPattern Literal
   | ConstructorPattern ConstructorName [Pattern]
   deriving (Eq, Show)
 
@@ -205,7 +205,7 @@ unspacedPattern = simplePattern <|> parensed onePattern
     singleConstructor = fmap (`ConstructorPattern` []) constructorName
     wildCardPattern = WildcardPattern <$ token Underscore
     varPattern = fmap NamePattern valName
-    littPattern = fmap LitteralPattern litteral
+    littPattern = fmap LiteralPattern literal
 
 binExpr :: Parser Expr
 binExpr = cashExpr
@@ -257,7 +257,7 @@ appExpr = some factor |> fmap extract
 factor :: Parser Expr
 factor = littExpr <|> nameExpr <|> parensed expr
   where
-    littExpr = fmap LittExpr litteral
+    littExpr = fmap LittExpr literal
     nameExpr = fmap NameExpr name
 
 lowerName :: Parser Name
@@ -287,20 +287,20 @@ constructorName = upperName
 name :: Parser Name
 name = valName <|> constructorName
 
-litteral :: Parser Litteral
-litteral = intLitt <|> stringLitt <|> boolLitt
+literal :: Parser Literal
+literal = intLitt <|> stringLitt <|> boolLitt
   where
     intLitt =
       pluck <| \case
-        IntLitt i -> Just (IntLitteral i)
+        IntLitt i -> Just (IntLiteral i)
         _ -> Nothing
     stringLitt =
       pluck <| \case
-        StringLitt s -> Just (StringLitteral s)
+        StringLitt s -> Just (StringLiteral s)
         _ -> Nothing
     boolLitt =
       pluck <| \case
-        BoolLitt b -> Just (BoolLitteral b)
+        BoolLitt b -> Just (BoolLiteral b)
         _ -> Nothing
 
 data ParseError = FailedParse | AmbiguousParse [(AST, [Token])] deriving (Show)
