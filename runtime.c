@@ -200,10 +200,12 @@ void H_bump(size_t size) {
   H += size;
 }
 
-void H_alloc(void *stuff, size_t size) {
+void* H_alloc(void *stuff, size_t size) {
   H_check_gc_for(size);
   memcpy(H, stuff, size);
+  void* ret = H;
   H += size;
+  return ret;
 }
 
 const char *H_concat(const char *s1, const char *s2) {

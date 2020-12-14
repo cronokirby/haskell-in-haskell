@@ -542,8 +542,7 @@ genExpr (Let bindings e) =
                     TempString t -> alloc t
                     CurrentNode -> alloc "RegNode"
                     GlobalFunction p -> alloc (convertPath p)
-            ptr <- makeTempPointer
-            writeLine (printf "void* %s = H;" ptr)
+            ptr <- fresh
             -- We need to push all the temporary pointers to the stack, in case we do garbage collection
             -- This is kind of inefficient, since we should only do this if we *actually* garbage collect
             ptrs <- gets pointerTemps
@@ -552,7 +551,7 @@ genExpr (Let bindings e) =
             path <- getFullPath name
             tableTmp <- fresh
             writeLine (printf "InfoTable* %s = &%s;" tableTmp (tableFor path))
-            writeLine (printf "H_alloc((void*)&%s, sizeof(InfoTable*));" tableTmp)
+            writeLine (printf "void* %s = H_alloc((void*)&%s, sizeof(InfoTable*));" ptr tableTmp)
 
             forM_ pointers allocName
             forM_ ints allocName
