@@ -570,7 +570,6 @@ genEvac :: IdentPath -> LambdaForm -> CWriter ()
 genEvac path (LambdaForm bound _ _ _) = do
   writeLine (printf "void* %s(void* base) {" (evacFor path))
   indent
-  writeLine "printf(\"start %s, base: %p\\n\", __func__, base);"
 
   (pointerCount, intCount) <- countStorages
 
@@ -580,7 +579,6 @@ genEvac path (LambdaForm bound _ _ _) = do
   forM_ [0 .. intCount - 1] (moveInt pointerCount)
   replaceMyself ret
 
-  writeLine (printf "printf(\"finish %%s, %%p -> %%p\\n\", __func__, base, %s);" ret)
   writeLine (printf "return %s;" ret)
 
   unindent
