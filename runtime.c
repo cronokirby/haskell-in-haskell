@@ -17,6 +17,7 @@ typedef void *(*CodeLabel)(void);
 typedef void *(*EvacFunction)(void *);
 
 void *null_evac(void *base) {
+  printf("%s, %p -> %p\n", __func__, base, base);
   return base;
 }
 
@@ -28,7 +29,7 @@ typedef struct InfoTable {
 void *already_evac(void *base) {
   void* ret;
   memcpy(&ret, base + sizeof(InfoTable*), sizeof(void*));
-  printf("already evacuated: %p, to: %p", base, ret);
+  printf("%s, %p -> %p\n", __func__, base, ret);
   return ret;
 }
 
@@ -162,7 +163,6 @@ void H_garbage_collect(size_t requested_size) {
     memcpy(&table, base, sizeof(InfoTable *));
     printf("evacuating %p with table: %p\n", base, table);
     *p = table->evac(base);
-    printf("Old: %p, New: %p\n", base, *p);
   }
 
   size_t allocated = H_new - H_new_base;
@@ -188,11 +188,20 @@ char *H_relocate_string(char *src) {
   return H_relocate(src, size + 1);
 }
 
-void H_alloc(void *stuff, size_t size) {
+void H_check_gc_for(size_t size) {
   size_t allocated = H - H_base;
   if (allocated + size > H_size) {
     H_garbage_collect(allocated + size);
   }
+}
+
+void H_bump(size_t size) {
+  H_check_gc_for(size);
+  H += size;
+}
+
+void H_alloc(void *stuff, size_t size) {
+  H_check_gc_for(size);
   memcpy(H, stuff, size);
   H += size;
 }

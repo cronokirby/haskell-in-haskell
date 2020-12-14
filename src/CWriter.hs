@@ -536,6 +536,10 @@ genExpr (Let bindings e) =
             forM_ pointers allocName
             forM_ ints allocName
             forM_ strings allocName
+            -- If nothing has been written, we need to reserve space for the the evacuated
+            -- location of this closure, for GC purposes
+            when (null (pointers ++ ints ++ strings)) <|
+              writeLine "H_bump(sizeof(void*));"
             return (name, Temp ptr)
           s -> error (printf "storage %s isn't valid for a closure" (show s))
     withLocations locations <| genExpr e
@@ -544,6 +548,7 @@ genEvac :: IdentPath -> LambdaForm -> CWriter ()
 genEvac path (LambdaForm bound _ _ _) = do
   writeLine (printf "void* %s(void* base) {" (evacFor path))
   indent
+  writeLine "printf(\"start %s, base: %p\\n\", __func__, base);"
 
   (pointerCount, intCount) <- countStorages
 
@@ -553,6 +558,7 @@ genEvac path (LambdaForm bound _ _ _) = do
   forM_ [0 .. intCount - 1] (moveInt pointerCount)
   replaceMyself ret
 
+  writeLine (printf "printf(\"finish %%s, %%p -> %%p\\n\", __func__, base, %s);" ret)
   writeLine (printf "return %s;" ret)
 
   unindent
