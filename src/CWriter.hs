@@ -111,11 +111,13 @@ defaultEnv = Env mempty mempty mempty
 
 data CState = CState
   { currentIndent :: Indent,
-    varCount :: Int
+    varCount :: Int,
+    pointerTemps :: [String]
   }
+  deriving (Show)
 
 defaultState :: CState
-defaultState = CState 0 0
+defaultState = CState 0 0 []
 
 newtype CWriter a = CWriter (StateT CState (ReaderT Env (Writer CCode)) a)
   deriving (Functor, Applicative, Monad, MonadWriter CCode, MonadState CState, MonadReader Env)
@@ -167,10 +169,21 @@ withStorage name storage = withStorages [(name, storage)]
 withStorages :: [(String, VarStorage)] -> CWriter a -> CWriter a
 withStorages mp = local (\r -> r {varStorages = Map.fromList mp <> varStorages r})
 
+makeTempPointer :: CWriter String
+makeTempPointer = do
+  name <- fresh
+  modify' (\s -> s {pointerTemps = name : pointerTemps s})
+  return name
+
 insideFunction :: String -> CWriter a -> CWriter a
 insideFunction name m = do
   fullPath <- getFullPath name
-  local (\r -> r {currentFunction = fullPath}) m
+  -- This is a bit of a hack, but kind of necessary to keep the temps value
+  oldTemps <- gets pointerTemps
+  modify' (\s -> s {pointerTemps = []})
+  ret <- local (\r -> r {currentFunction = fullPath}) m
+  modify' (\s -> s {pointerTemps = oldTemps})
+  return ret
 
 getFullPath :: String -> CWriter IdentPath
 getFullPath name = do
@@ -228,15 +241,17 @@ genAlts deadNames alts = do
   where
     resurrectName :: String -> CWriter (String, Location)
     resurrectName name = do
-      tmp <- fresh
       storageOf name >>= \case
         PointerStorage -> do
+          tmp <- makeTempPointer
           writeLine (printf "void* %s = SA_pop();" tmp)
           return (name, Temp tmp)
         IntStorage -> do
+          tmp <- fresh
           writeLine (printf "int64_t %s = SB_pop_int();" tmp)
           return (name, TempInt tmp)
         StringStorage -> do
+          tmp <- fresh
           writeLine (printf "const char* %s = SB_pop_str();" tmp)
           return (name, TempString tmp)
         -- We should know of the location then, if it's a global function
@@ -376,7 +391,7 @@ genAlts deadNames alts = do
       writeLine "return NULL;"
       where
         grabNameFromStack name = do
-          tmp <- fresh
+          tmp <- makeTempPointer
           writeLine (printf "void* %s = SA_pop();" tmp)
           return (name, Temp tmp)
 
@@ -527,19 +542,27 @@ genExpr (Let bindings e) =
                     TempString t -> alloc t
                     CurrentNode -> alloc "RegNode"
                     GlobalFunction p -> alloc (convertPath p)
-            ptr <- fresh
+            ptr <- makeTempPointer
             writeLine (printf "void* %s = H;" ptr)
+            -- We need to push all the temporary pointers to the stack, in case we do garbage collection
+            -- This is kind of inefficient, since we should only do this if we *actually* garbage collect
+            ptrs <- gets pointerTemps
+            forM_ (reverse ptrs) <| \p -> writeLine (printf "SA_push(%s);" p)
+
             path <- getFullPath name
             tableTmp <- fresh
             writeLine (printf "InfoTable* %s = &%s;" tableTmp (tableFor path))
             writeLine (printf "H_alloc((void*)&%s, sizeof(InfoTable*));" tableTmp)
+
             forM_ pointers allocName
             forM_ ints allocName
             forM_ strings allocName
             -- If nothing has been written, we need to reserve space for the the evacuated
             -- location of this closure, for GC purposes
-            when (null (pointers ++ ints ++ strings)) <|
-              writeLine "H_bump(sizeof(void*));"
+            when (null (pointers ++ ints ++ strings))
+              <| writeLine "H_bump(sizeof(void*));"
+
+            forM_ ptrs <| \p -> writeLine (printf "%s = SA_pop();" p)
             return (name, Temp ptr)
           s -> error (printf "storage %s isn't valid for a closure" (show s))
     withLocations locations <| genExpr e
@@ -650,7 +673,7 @@ genLambdaForm myName lf@(LambdaForm bound _ args expr) = do
           globals = pluck GlobalStorage
       pointerLocs <-
         forM (zip [(0 :: Int) ..] pointers) <| \(i, arg) -> do
-          tmp <- fresh
+          tmp <- makeTempPointer
           writeLine (printf "void* %s;" tmp)
           writeLine (printf "memcpy(&%s, RegNode + sizeof(InfoTable*) + sizeof(void*) * %d, sizeof(void*));" tmp i)
           return (arg, Temp tmp)
@@ -674,7 +697,7 @@ genLambdaForm myName lf@(LambdaForm bound _ args expr) = do
     locationsForArgs :: [String] -> CWriter [(String, Location)]
     locationsForArgs =
       mapM <| \arg -> do
-        tmp <- fresh
+        tmp <- makeTempPointer
         writeLine (printf "void* %s = SA_pop();" tmp)
         return (arg, Temp tmp)
 
