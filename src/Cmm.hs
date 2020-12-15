@@ -22,10 +22,44 @@ import Ourlude
 -- but if we look at the nested tree of functions and their
 -- subfunctions, then we get unique paths.
 data FunctionName
-  -- | A standard function name
-  = StringFunction String
-  -- | A name we can use for the alternatives inside of a function
-  | Alts
+  = -- | A standard function name
+    StringFunction String
+  | -- | A name we can use for the alternatives inside of a function
+    Alts
+
+type Index = Int
+
+-- | Represents what type of storage some variable will need
+--
+-- We can figure this out the first time a variable is used, and then
+-- use that information in nested closures to figure out how they're going
+-- to access this variable that they've captured
+data Storage
+  = -- | This variable will be stored in a pointer
+    PointerStorage
+  | -- | This variable will be stored as an int, with 64 bits
+    IntStorage
+  | -- | This variable will be stored as a string
+    StringStorage
+  | -- | This variable is a global function with a certain index
+    --
+    -- When a variable references a global function, we don't need
+    -- to store it alongside the closure, since it can just reference it
+    -- directly
+    GlobalStorage Index
+
+-- | A location allows us to reference some value concretely
+data Location
+  = -- | This variable is the nth pointer arg passed to us on the stack
+    Arg Index
+  | -- | This variable is the nth pointer bound in this closure
+    Bound Index
+  | -- | This variable is the nth int bound in this closure
+    BoundInt Index
+  | -- | This variable is the nth string bound in this closure
+    BoundString Index
+  | -- | This variable is just a global function
+    Global Index
 
 -- | Represents a function.
 --
@@ -33,5 +67,11 @@ data FunctionName
 -- associated with them, and can also potentially have subfunctions.
 data Function = Function
   { -- | The name of the function
-    functionName :: FunctionName
+    functionName :: FunctionName,
+    -- | If an index is present, then this function corresponds to a certain global index
+    --
+    -- We do things this way, that way we can traverse the function tree to build up
+    -- a table of index functions to fully resolved function names. Trying
+    -- to generate the fully resolved function name at this stage would be annoying.
+    isGlobal :: Maybe Index
   }
