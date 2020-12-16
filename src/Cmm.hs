@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 -- | This module contains the intermediate code generator between STG and C
 --
 -- The reason this exists is primarily to simplify code generation. You could
@@ -14,8 +16,11 @@
 -- analyze those to generate nicer C code.
 module Cmm (Cmm (..), cmm) where
 
+import Control.Monad.Reader
+import Control.Monad.State
+import qualified Data.Map.Strict as Map
 import Ourlude
-import STG (STG (..), Tag)
+import STG (STG (..), Tag, ValName)
 
 -- | Represents a name we can give to a function
 --
@@ -257,6 +262,32 @@ data Function = Function
 
 -- | A bit of CMM ast is nothing more than
 newtype Cmm = Cmm [Function] deriving (Show)
+
+-- | Represents the context we use when generating Cmm
+data Context = Context
+  { -- | A map from names to their corresponding storages
+    storages :: Map.Map ValName Storage
+  }
+  deriving (Show)
+
+-- | A default context to start with
+startingContext :: Context
+startingContext = Context mempty
+
+-- | A computation in which we have access to this context, and can make fresh variables
+newtype ContextM a = ContextM (ReaderT Context (State Int) a)
+  deriving (Functor, Applicative, Monad, MonadReader Context, MonadState Int)
+
+-- | Run a contextful computation
+runContextM :: ContextM a -> a
+runContextM (ContextM m) = m |> (`runReaderT` startingContext) |> (`runState` 0) |> fst
+
+-- | Generate a fresh index, that hasn't been used before
+fresh :: ContextM Index
+fresh = do
+  current <- get
+  modify' (+ 1)
+  return current
 
 cmm :: STG -> Cmm
 cmm _ = Cmm []
