@@ -27,6 +27,7 @@ data FunctionName
     StringFunction String
   | -- | A name we can use for the alternatives inside of a function
     Alts
+  deriving (Show)
 
 type Index = Int
 
@@ -62,6 +63,8 @@ data Location
     BoundString Index
   | -- | This variable is just a global function
     Global Index
+    -- | This variable is a closure we've allocated, using an index to figure out which
+  | Allocated Index
     -- | This variable is the nth dead pointer
     --
     -- Buried locations come from the bound names used inside the branches of a
@@ -149,6 +152,17 @@ data Instruction
   | BuryInt Location
     -- | Bury a string used in a case expression
   | BuryString Location
+    -- | Allocate a table for a function
+    --
+    -- This function is going to be a direct descendant of the function
+    -- in which this instruction appears.
+    --
+    -- The index is used, since we may reference this closure
+  | AllocTable FunctionName Index
+    -- | Allocate an int on the heap
+  | AllocInt Location
+    -- | Allocate a string on the heap
+  | AllocString Location
   deriving (Show)
 
 -- | Represents a function.
