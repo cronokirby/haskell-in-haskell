@@ -104,7 +104,7 @@ data Expr
     -- We don't take an atom here, because building up a thunk we
     -- immediately evaluate would be a bit pointless
     Case Expr [ValName] Alts
-  | -- A series of bidnings appearing before an expression
+  | -- A series of bindings appearing before an expression
     Let [Binding] Expr
   deriving (Eq, Show)
 

@@ -194,6 +194,16 @@ instance Semigroup Allocation where
 instance Monoid Allocation where
   mempty = Allocation 0 0 0 0 []
 
+
+-- | The information we need to evacuate a closure
+data EvacInfo
+  -- | This function does not need to be evacuated
+  = NoEvac
+  -- | This function has the standard evacuation pattern
+  -- This pattern contains a certain number of pointers, ints, and strings
+  | StandardEvac Int Int Int
+  deriving (Show)
+
 -- | Represents a function.
 --
 -- Functions are the units of execution, but have a bunch of "metadata"
@@ -207,5 +217,7 @@ data Function = Function
     -- a table of index functions to fully resolved function names. Trying
     -- to generate the fully resolved function name at this stage would be annoying.
     isGlobal :: Maybe Index
+    -- | The information we need to garbage collection
+    evacInfo :: EvacInfo
   }
   deriving (Show)
