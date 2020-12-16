@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | This module contains the intermediate code generator between STG and C
 --
@@ -20,7 +21,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Map.Strict as Map
 import Ourlude
-import STG (STG (..), Tag, ValName)
+import STG
 
 -- | Represents a name we can give to a function
 --
@@ -32,6 +33,8 @@ data FunctionName
     StringFunction String
   | -- | A name we can use for the alternatives inside of a function
     Alts
+  | -- | A name we use for the entry function
+    Entry
   deriving (Show)
 
 type Index = Int
@@ -260,8 +263,8 @@ data Function = Function
   }
   deriving (Show)
 
--- | A bit of CMM ast is nothing more than
-newtype Cmm = Cmm [Function] deriving (Show)
+-- | A bit of CMM ast is nothing more than a list of functions, and an entry function
+data Cmm = Cmm [Function] Function deriving (Show)
 
 -- | Represents the context we use when generating Cmm
 data Context = Context
@@ -289,5 +292,44 @@ fresh = do
   modify' (+ 1)
   return current
 
+withStorages :: [(ValName, Storage)] -> ContextM a -> ContextM a
+withStorages newStorages = local (\r -> r {storages = Map.fromList newStorages <> storages r})
+
+-- | Get the storage of a given name
+--
+-- We set things up so that a name always has a storage before we ask for it,
+-- because of this, it's an *implementation error* if we can't find the storage for a name.
+getStorage :: ValName -> ContextM Storage
+getStorage name = asks (storages >>> Map.findWithDefault err name)
+  where
+    err = error ("No storage found for: " <> show name)
+
+genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
+genLamdbdaForm name isGlobal' _ = return <|
+  Function name isGlobal' 0 (ArgInfo 0 0 0) (NormalBody (Body mempty[])) []
+
+genBinding :: Binding -> ContextM Function
+genBinding (Binding name form) = do
+  storage <- getStorage name
+  let isGlobal' = case storage of
+       GlobalStorage index -> Just index
+       _ -> Nothing
+  genLamdbdaForm (StringFunction name) isGlobal' form
+
+
+-- | Generate Cmm code from STG, in a contextful way
+genCmm :: STG -> ContextM Cmm
+genCmm (STG bindings entryForm) = do
+  entryIndex <- fresh
+  topLevelStorages <-
+    forM bindings <| \(Binding name _) -> do
+      index <- fresh
+      return (name, GlobalStorage index)
+  withStorages topLevelStorages <| do
+    entry <- genLamdbdaForm Entry (Just entryIndex) entryForm
+    topLevel <- forM bindings genBinding
+    return (Cmm topLevel entry)
+
+-- | Generate Cmm code from STG
 cmm :: STG -> Cmm
-cmm _ = Cmm []
+cmm = genCmm >>> runContextM
