@@ -12,6 +12,7 @@ module STG
     ValName,
     LambdaForm (..),
     Expr (..),
+    Tag,
     Alts (..),
     Primitive (..),
     Updateable (..),

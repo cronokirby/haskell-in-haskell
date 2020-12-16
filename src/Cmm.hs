@@ -15,6 +15,7 @@
 module Cmm where
 
 import Ourlude
+import STG (Tag)
 
 -- | Represents a name we can give to a function
 --
@@ -47,6 +48,7 @@ data Storage
     -- to store it alongside the closure, since it can just reference it
     -- directly
     GlobalStorage Index
+  deriving (Show)
 
 -- | A location allows us to reference some value concretely
 data Location
@@ -60,6 +62,76 @@ data Location
     BoundString Index
   | -- | This variable is just a global function
     Global Index
+  deriving (Show)
+
+-- | Represents a kind of builtin taking two arguments
+data Builtin2
+  = -- | IntR <- a + b
+    Add2
+  | -- | IntR <- a - b
+    Sub2
+  | -- | IntR <- a * b
+    Mul2
+  | -- | IntR <- a / b
+    Div2
+  | -- | IntR <- a < b
+    Less2
+  | -- | IntR <- a <= b
+    LessEqual2
+  | -- | IntR <- a > b
+    Greater2
+  | -- | IntR <- a >= b
+    GreaterEqual2
+  | -- | IntR <- a == b
+    EqualTo2
+  | -- | IntR <- a /= b
+    NotEqualTo2
+  | -- | StringR <- a ++ b
+    Concat2
+  deriving (Show)
+
+-- | Represents a builtin taking only a single argument
+data Builtin1
+  = -- | Print out an int
+    PrintInt1
+  | -- | Print out a string
+    PrintString1
+  | -- | IntR <- -a
+    Negate1
+  deriving (Show)
+
+-- | Represents a single instruction in our IR
+--
+-- The idea is that each of these instructions is a little unit that makes
+-- sense on the weird VM you need for lazy execution, and also translates
+-- directly to a simple bit of C.
+data Instruction
+  = -- | Store a given integer into the integer register
+    StoreInt Int
+  | -- | Store a given string litteral into the string register
+    StoreString String
+  | -- | Store a given tag into the tag register
+    StoreTag Tag
+  | -- | Enter the code stored at a given location
+    --
+    -- For this to be valid, that location needs to actually contain *code*,
+    -- of course. `BoundString` would not be a valid location here, for example.
+    Enter Location
+  | -- | We need to enter the code for the continuation at the top of the stack
+    --
+    -- In practice, this stack will contain the code for the branches
+    -- of a case expression, and this instruction yields control to
+    -- whatever branches need to match on the value we're producing.
+    EnterCaseContinuation
+  | -- | Print that an error happened
+    PrintError String
+  | -- | Apply a builtin expecting two locations
+    Builtin2 Builtin2 Location Location
+  | -- | Apply a builtin expecting a single location
+    Builtin1 Builtin1 Location Location
+    -- | Exit the program
+  | Exit
+  deriving (Show)
 
 -- | Represents a function.
 --
@@ -75,3 +147,4 @@ data Function = Function
     -- to generate the fully resolved function name at this stage would be annoying.
     isGlobal :: Maybe Index
   }
+  deriving (Show)
