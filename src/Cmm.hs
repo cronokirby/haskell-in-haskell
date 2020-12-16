@@ -194,28 +194,34 @@ instance Semigroup Allocation where
 instance Monoid Allocation where
   mempty = Allocation 0 0 0 0 []
 
--- | The information we need to evacuate a closure
-data EvacInfo
-  = -- | This function does not need to be evacuated
-    NoEvac
-  | -- | This function has the standard evacuation pattern
-    -- This pattern contains a certain number of pointers, ints, and strings
-    StandardEvac Int Int Int
-  deriving (Show)
-
 -- | A body has some instructions, and allocation information
 data Body = Body Allocation [Instruction] deriving (Show)
+
+-- | Information we have about the arguments used in some function
+--
+-- We can use this to represent a couple things, namely what
+-- kind of buried arguments a case expression uses, and what bound
+-- arguments are used in a closure.
+data ArgInfo = ArgInfo
+  { -- | How many buried pointers there are
+    buriedPointers :: Int,
+    -- | How many buried ints there are
+    buriedInts :: Int,
+    -- | How many buried strings there are
+    buriedStrings :: Int
+  }
+  deriving (Show)
 
 -- | Represents the body of a function.
 --
 -- This is either some kind of branching, or a normal function bdoy.
 data FunctionBody
   = -- | A case branching on an int
-    IntCaseBody [(Int, Body)]
+    IntCaseBody ArgInfo [(Int, Body)]
   | -- | A case branching on a string
-    StringCaseBody [(String, Body)]
+    StringCaseBody ArgInfo [(String, Body)]
   | -- | A case branching on a tag
-    TagCaseBody [(Tag, Body)]
+    TagCaseBody ArgInfo [(Tag, Body)]
   | -- | Represents a normal function body
     NormalBody Body
   deriving (Show)
@@ -233,8 +239,15 @@ data Function = Function
     -- a table of index functions to fully resolved function names. Trying
     -- to generate the fully resolved function name at this stage would be annoying.
     isGlobal :: Maybe Index,
-    -- | The information we need to garbage collect this function
-    evacInfo :: EvacInfo,
+    -- | Information about the number of pointer arguments
+    --
+    -- Since primitives can't be passed to functions, this just the number of pointers
+    argCount :: Int,
+    -- | Information about the number of bound arguments
+    --
+    -- This also tells us how to garbage collect the closure, along with the information
+    -- about whether or not this function is global.
+    boundArgs :: ArgInfo,
     -- | The actual body of this function
     body :: FunctionBody,
     -- | The functions defined nested inside of this function
