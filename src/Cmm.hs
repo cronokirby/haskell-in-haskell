@@ -63,18 +63,18 @@ data Location
     BoundString Index
   | -- | This variable is just a global function
     Global Index
-    -- | This variable is a closure we've allocated, using an index to figure out which
-  | Allocated Index
-    -- | This variable is the nth dead pointer
+  | -- | This variable is a closure we've allocated, using an index to figure out which
+    Allocated Index
+  | -- | This variable is the nth dead pointer
     --
     -- Buried locations come from the bound names used inside the branches of a
     -- case expression. Since we split cases into two, we need a way to save
     -- and restore this before getting back to the case.
-  | Buried Index
-    -- | The nth dead int. See `Buried` for more information.
-  | BuriedInt Index
-    -- | The nth dead string. See `Buried` for more information.
-  | BuriedString Index
+    Buried Index
+  | -- | The nth dead int. See `Buried` for more information.
+    BuriedInt Index
+  | -- | The nth dead string. See `Buried` for more information.
+    BuriedString Index
   deriving (Show)
 
 -- | Represents a kind of builtin taking two arguments
@@ -142,28 +142,57 @@ data Instruction
     Builtin2 Builtin2 Location Location
   | -- | Apply a builtin expecting a single location
     Builtin1 Builtin1 Location Location
-    -- | Exit the program
-  | Exit
-    -- | Push a pointer onto the argument stack
-  | SAPush Location
-    -- | Bury a pointer used in a case expression
-  | Bury Location
-    -- | Bury an int used in a case expression
-  | BuryInt Location
-    -- | Bury a string used in a case expression
-  | BuryString Location
-    -- | Allocate a table for a function
+  | -- | Exit the program
+    Exit
+  | -- | Push a pointer onto the argument stack
+    SAPush Location
+  | -- | Bury a pointer used in a case expression
+    Bury Location
+  | -- | Bury an int used in a case expression
+    BuryInt Location
+  | -- | Bury a string used in a case expression
+    BuryString Location
+  | -- | Allocate a table for a function
     --
     -- This function is going to be a direct descendant of the function
     -- in which this instruction appears.
     --
     -- The index is used, since we may reference this closure
-  | AllocTable FunctionName Index
-    -- | Allocate an int on the heap
-  | AllocInt Location
-    -- | Allocate a string on the heap
-  | AllocString Location
+    AllocTable FunctionName Index
+  | -- | Allocate an int on the heap
+    AllocInt Location
+  | -- | Allocate a string on the heap
+    AllocString Location
   deriving (Show)
+
+-- | An allocation records information about how much a given expression will allocate
+--
+-- This is useful, because for GC purposes, we want to reserve the amount of memory
+-- we need at the very start of the function, which makes it easier to not
+-- have any stale pointers lying around.
+data Allocation = Allocation
+  { -- | The number of tables for closures allocated
+    tablesAllocated :: Int,
+    -- | The number of pointers inside closures allocated
+    pointersAllocated :: Int,
+    -- | The number of ints inside closures allocated
+    intsAllocated :: Int,
+    -- | The number of points to strings inside closures allocated
+    stringsAllocated :: Int,
+    -- | The raw strings that this function allocates
+    --
+    -- We need to know exactly which strings, becuase how much memory is allocated
+    -- depends on the length of the string.
+    primitiveStringsAllocated :: [String]
+  }
+  deriving (Show)
+
+instance Semigroup Allocation where
+  Allocation t p i s ps <> Allocation t' p' i' s' ps' =
+    Allocation (t + t') (p + p') (i + i') (s + s') (ps <> ps')
+
+instance Monoid Allocation where
+  mempty = Allocation 0 0 0 0 []
 
 -- | Represents a function.
 --
