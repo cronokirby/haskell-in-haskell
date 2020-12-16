@@ -12,10 +12,10 @@
 -- Having a separate stage makes it much easier to generate better C code, since
 -- you can easily translate the STG into simple imperative statements, and then
 -- analyze those to generate nicer C code.
-module Cmm where
+module Cmm (Cmm (..), cmm) where
 
 import Ourlude
-import STG (Tag)
+import STG (STG (..), Tag)
 
 -- | Represents a name we can give to a function
 --
@@ -241,3 +241,9 @@ data Function = Function
     subFunctions :: [Function]
   }
   deriving (Show)
+
+-- | A bit of CMM ast is nothing more than
+newtype Cmm = Cmm [Function] deriving (Show)
+
+cmm :: STG -> Cmm
+cmm _ = Cmm []
