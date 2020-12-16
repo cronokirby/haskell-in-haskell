@@ -62,6 +62,16 @@ data Location
     BoundString Index
   | -- | This variable is just a global function
     Global Index
+    -- | This variable is the nth dead pointer
+    --
+    -- Buried locations come from the bound names used inside the branches of a
+    -- case expression. Since we split cases into two, we need a way to save
+    -- and restore this before getting back to the case.
+  | Buried Index
+    -- | The nth dead int. See `Buried` for more information.
+  | BuriedInt Index
+    -- | The nth dead string. See `Buried` for more information.
+  | BuriedString Index
   deriving (Show)
 
 -- | Represents a kind of builtin taking two arguments
@@ -131,6 +141,14 @@ data Instruction
     Builtin1 Builtin1 Location Location
     -- | Exit the program
   | Exit
+    -- | Push a pointer onto the argument stack
+  | SAPush Location
+    -- | Bury a pointer used in a case expression
+  | Bury Location
+    -- | Bury an int used in a case expression
+  | BuryInt Location
+    -- | Bury a string used in a case expression
+  | BuryString Location
   deriving (Show)
 
 -- | Represents a function.
