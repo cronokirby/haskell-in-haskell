@@ -194,14 +194,30 @@ instance Semigroup Allocation where
 instance Monoid Allocation where
   mempty = Allocation 0 0 0 0 []
 
-
 -- | The information we need to evacuate a closure
 data EvacInfo
-  -- | This function does not need to be evacuated
-  = NoEvac
-  -- | This function has the standard evacuation pattern
-  -- This pattern contains a certain number of pointers, ints, and strings
-  | StandardEvac Int Int Int
+  = -- | This function does not need to be evacuated
+    NoEvac
+  | -- | This function has the standard evacuation pattern
+    -- This pattern contains a certain number of pointers, ints, and strings
+    StandardEvac Int Int Int
+  deriving (Show)
+
+-- | A body has some instructions, and allocation information
+data Body = Body Allocation [Instruction] deriving (Show)
+
+-- | Represents the body of a function.
+--
+-- This is either some kind of branching, or a normal function bdoy.
+data FunctionBody
+  = -- | A case branching on an int
+    IntCaseBody [(Int, Body)]
+  | -- | A case branching on a string
+    StringCaseBody [(String, Body)]
+  | -- | A case branching on a tag
+    TagCaseBody [(Tag, Body)]
+  | -- | Represents a normal function body
+    NormalBody Body
   deriving (Show)
 
 -- | Represents a function.
@@ -216,8 +232,12 @@ data Function = Function
     -- We do things this way, that way we can traverse the function tree to build up
     -- a table of index functions to fully resolved function names. Trying
     -- to generate the fully resolved function name at this stage would be annoying.
-    isGlobal :: Maybe Index
-    -- | The information we need to garbage collection
-    evacInfo :: EvacInfo
+    isGlobal :: Maybe Index,
+    -- | The information we need to garbage collect this function
+    evacInfo :: EvacInfo,
+    -- | The actual body of this function
+    body :: FunctionBody,
+    -- | The functions defined nested inside of this function
+    subFunctions :: [Function]
   }
   deriving (Show)
