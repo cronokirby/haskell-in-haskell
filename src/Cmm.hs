@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 
 -- | This module contains the intermediate code generator between STG and C
@@ -305,17 +306,20 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
     err = error ("No storage found for: " <> show name)
 
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
-genLamdbdaForm name isGlobal' _ = return <|
-  Function name isGlobal' 0 (ArgInfo 0 0 0) (NormalBody (Body mempty[])) []
+genLamdbdaForm functionName isGlobal _ =
+  let argCount = 0
+      boundArgs = ArgInfo 0 0 0
+      body = NormalBody (Body mempty [])
+      subFunctions = []
+   in return Function {..}
 
 genBinding :: Binding -> ContextM Function
 genBinding (Binding name form) = do
   storage <- getStorage name
   let isGlobal' = case storage of
-       GlobalStorage index -> Just index
-       _ -> Nothing
+        GlobalStorage index -> Just index
+        _ -> Nothing
   genLamdbdaForm (StringFunction name) isGlobal' form
-
 
 -- | Generate Cmm code from STG, in a contextful way
 genCmm :: STG -> ContextM Cmm
