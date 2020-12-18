@@ -6,7 +6,7 @@ import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
 import Lexer (Token (..))
 import Ourlude
-import Types (Type(..), TypeName, TypeVar)
+import Types (Type (..), TypeName, TypeVar)
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
@@ -49,10 +49,10 @@ token = (==) >>> satisifies
 sepBy1 :: Parser a -> Parser sep -> Parser [a]
 sepBy1 p sep = liftA2 (:) p (many (sep *> p))
 
-opsL :: (sep -> a -> a -> a) -> Parser a -> Parser sep -> Parser a
-opsL combine p s = liftA2 squash p (many (liftA2 (,) s p))
+opsL :: Parser (a -> a -> a) -> Parser a -> Parser a
+opsL sep p = liftA2 squash p (many (liftA2 (,) sep p))
   where
-    squash = foldl' (\acc (sep, a) -> combine sep acc a)
+    squash = foldl' (\acc (combine, a) -> combine acc a)
 
 opsR :: (sep -> a -> a -> a) -> Parser a -> Parser sep -> Parser a
 opsR combine p s = liftA2 squash p (many (liftA2 (,) s p))
@@ -213,33 +213,26 @@ binExpr = cashExpr
     cashExpr = opsR (const (BinExpr Cash)) orExpr (token Dollar)
     orExpr = opsR (const (BinExpr Or)) andExpr (token VBarVBar)
     andExpr = opsR (const (BinExpr And)) comparisonExpr (token AmpersandAmpersand)
-    comparisonExpr = opsL makeComparison concatExpr tokens
+    comparisonExpr = opsL comparisonOperator concatExpr
       where
-        makeComparison LeftAngle = BinExpr Less
-        makeComparison LeftAngleEqual = BinExpr LessEqual
-        makeComparison RightAngle = BinExpr Greater
-        makeComparison RightAngleEqual = BinExpr GreaterEqual
-        makeComparison EqualEqual = BinExpr EqualTo
-        makeComparison FSlashEqual = BinExpr NotEqualTo
-        makeComparison t = error ("makeComparison: Unexpected Token " ++ show t)
-        tokens =
-          token LeftAngle
-            <|> token LeftAngleEqual
-            <|> token RightAngle
-            <|> token RightAngleEqual
-            <|> token EqualEqual
-            <|> token FSlashEqual
-    concatExpr = opsL (const (BinExpr Concat)) addSubExpr (token PlusPlus)
-    addSubExpr = opsL makeAddSub mulDivExpr (token Plus <|> token Dash)
+        comparisonOperator =
+          (BinExpr Less <$ token LeftAngle)
+            <|> (BinExpr LessEqual <$ token LeftAngleEqual)
+            <|> (BinExpr Greater <$ token RightAngle)
+            <|> (BinExpr GreaterEqual <$ token RightAngleEqual)
+            <|> (BinExpr EqualTo <$ token EqualEqual)
+            <|> (BinExpr NotEqualTo <$ token FSlashEqual)
+    concatExpr = opsL (BinExpr Concat <$ token PlusPlus) addSubExpr
+    addSubExpr = opsL addSubOperator mulDivExpr
       where
-        makeAddSub Plus = BinExpr Add
-        makeAddSub Dash = BinExpr Sub
-        makeAddSub t = error ("makeAddSub: Unexpected Token " ++ show t)
-    mulDivExpr = opsL makeMulDiv composeExpr (token Asterisk <|> token FSlash)
+        addSubOperator =
+          (BinExpr Add <$ token Plus)
+            <|> (BinExpr Sub <$ token Dash)
+    mulDivExpr = opsL mulDivOperator composeExpr
       where
-        makeMulDiv Asterisk = BinExpr Mul
-        makeMulDiv FSlash = BinExpr Div
-        makeMulDiv t = error ("makeMulDiv: Unexpected Token " ++ show t)
+        mulDivOperator =
+          (BinExpr Mul <$ token Asterisk)
+            <|> (BinExpr Div <$ token FSlash)
     composeExpr = opsR (const (BinExpr Compose)) unaryExpr (token Dot)
 
 unaryExpr :: Parser Expr
