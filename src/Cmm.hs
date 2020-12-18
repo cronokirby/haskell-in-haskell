@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 
@@ -21,6 +22,7 @@ module Cmm (Cmm (..), cmm) where
 import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Map.Strict as Map
+import Data.Maybe (maybeToList)
 import Ourlude
 import STG
 
@@ -84,6 +86,8 @@ data Location
     BuriedInt Index
   | -- | The nth dead string. See `Buried` for more information.
     BuriedString Index
+  | -- | This variable will be whatever the current function is
+    CurrentNode
   deriving (Show)
 
 -- | Represents a kind of builtin taking two arguments
@@ -270,13 +274,15 @@ data Cmm = Cmm [Function] Function deriving (Show)
 -- | Represents the context we use when generating Cmm
 data Context = Context
   { -- | A map from names to their corresponding storages
-    storages :: Map.Map ValName Storage
+    storages :: Map.Map ValName Storage,
+    -- | A map from names to their corresponding locations
+    locations :: Map.Map ValName Location
   }
   deriving (Show)
 
 -- | A default context to start with
 startingContext :: Context
-startingContext = Context mempty
+startingContext = Context mempty mempty
 
 -- | A computation in which we have access to this context, and can make fresh variables
 newtype ContextM a = ContextM (ReaderT Context (State Int) a)
@@ -293,8 +299,19 @@ fresh = do
   modify' (+ 1)
   return current
 
+-- | Run a contextual computation with some storages in scope
+--
+-- In case of duplicate keys, the later bindings take precedence
 withStorages :: [(ValName, Storage)] -> ContextM a -> ContextM a
-withStorages newStorages = local (\r -> r {storages = Map.fromList newStorages <> storages r})
+withStorages newStorages =
+  local (\r -> r {storages = Map.fromList newStorages <> storages r})
+
+-- | Run a contextual computation with some locations in scope
+--
+-- In case of duplicate keys, the later bindings take precedence
+withLocations :: [(ValName, Location)] -> ContextM a -> ContextM a
+withLocations newLocations =
+  local (\r -> r {locations = Map.fromList newLocations <> locations r})
 
 -- | Get the storage of a given name
 --
@@ -314,9 +331,26 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
   let argCount = length args
   (boundPtrs, boundInts, boundStrings) <- separateBoundArgs bound
   let boundArgs = ArgInfo (length boundPtrs) (length boundInts) (length boundStrings)
-  (body, subFunctions) <- genFunctionBody expr
+  myLocation <- getMyLocation functionName
+  let locations =
+        maybeToList myLocation
+          <> boundLocations Bound boundPtrs
+          <> boundLocations BoundInt boundInts
+          <> boundLocations BoundString boundStrings
+          <> argLocations args
+  (body, subFunctions) <- withLocations locations (genFunctionBody expr)
   return Function {..}
   where
+    getMyLocation :: FunctionName -> ContextM (Maybe (ValName, Location))
+    getMyLocation = \case
+      StringFunction name -> do
+        storage <- getStorage name
+        return <| Just <| case storage of
+          GlobalStorage index -> (name, Global index)
+          PointerStorage -> (name, CurrentNode)
+          s -> error ("Storage " ++ show s ++ " is not a valid storage for a function")
+      _ -> return Nothing
+
     separateBoundArgs :: [ValName] -> ContextM ([ValName], [ValName], [ValName])
     separateBoundArgs bound' = do
       ptrs <- extract PointerStorage
@@ -326,6 +360,12 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
       where
         extract :: Storage -> ContextM [ValName]
         extract storageType = filterM (getStorage >>> fmap (== storageType)) bound'
+
+    argLocations :: [ValName] -> [(ValName, Location)]
+    argLocations args' = zip args' (map Arg [0 ..])
+
+    boundLocations :: (Int -> Location) -> [ValName] -> [(ValName, Location)]
+    boundLocations f names = zip names (map f [0 ..])
 
 genBinding :: Binding -> ContextM Function
 genBinding (Binding name form) = do
