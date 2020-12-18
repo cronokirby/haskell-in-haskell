@@ -323,15 +323,18 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
     err = error ("No storage found for: " <> show name)
 
 -- | Generate the function body for an expression, along with the necessary sub functions
-genFunctionBody :: Expr -> ContextM (FunctionBody, [Function])
+--
+-- These always return normal bodies, since the case based bodies are returned
+-- only in special sub functions
+genFunctionBody :: Expr -> ContextM (Body, [Function])
 genFunctionBody = \case
   Error err ->
     let instructions =
           [ PrintError err,
             Exit
           ]
-     in return (NormalBody (Body mempty instructions), [])
-  _ -> return (NormalBody (Body mempty []), [])
+     in return (Body mempty instructions, [])
+  _ -> return (Body mempty [], [])
 
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
 genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
@@ -345,7 +348,8 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
           <> boundLocations BoundInt boundInts
           <> boundLocations BoundString boundStrings
           <> argLocations args
-  (body, subFunctions) <- withLocations locations (genFunctionBody expr)
+  (normalBody, subFunctions) <- withLocations locations (genFunctionBody expr)
+  let body = NormalBody normalBody
   return Function {..}
   where
     getMyLocation :: FunctionName -> ContextM (Maybe (ValName, Location))
