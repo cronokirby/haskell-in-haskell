@@ -58,7 +58,7 @@ data Storage
     --
     -- When a variable references a global function, we don't need
     -- to store it alongside the closure, since it can just reference it
-    -- directly
+    -- directly GlobalStorage Index
     GlobalStorage Index
   deriving (Eq, Show)
 
@@ -66,6 +66,8 @@ data Storage
 data Location
   = -- | This variable is the nth pointer arg passed to us on the stack
     Arg Index
+  | -- | This variable is the nth constructor argument passed to us
+    ConstructorArg Index
   | -- | This variable is the nth pointer bound in this closure
     Bound Index
   | -- | This variable is the nth int bound in this closure
@@ -159,6 +161,8 @@ data Instruction
     Exit
   | -- | Push a pointer onto the argument stack
     SAPush Location
+  | -- | Push a pointer onto the stack for constructor arguments
+    ConstructorArgPush Location
   | -- | Bury a pointer used in a case expression
     Bury Location
   | -- | Bury an int used in a case expression
