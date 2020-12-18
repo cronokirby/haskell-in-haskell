@@ -305,13 +305,16 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
   where
     err = error ("No storage found for: " <> show name)
 
+-- | Generate the function body for an expression, along with the necessary sub functions
+genFunctionBody :: Expr -> ContextM (FunctionBody, [Function])
+genFunctionBody _ = return (NormalBody (Body mempty []), [])
+
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
-genLamdbdaForm functionName isGlobal (LambdaForm bound _ args _) = do
+genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
   let argCount = length args
   (boundPtrs, boundInts, boundStrings) <- separateBoundArgs bound
   let boundArgs = ArgInfo (length boundPtrs) (length boundInts) (length boundStrings)
-  let body = NormalBody (Body mempty [])
-      subFunctions = []
+  (body, subFunctions) <- genFunctionBody expr
   return Function {..}
   where
     separateBoundArgs :: [ValName] -> ContextM ([ValName], [ValName], [ValName])
