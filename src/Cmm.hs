@@ -324,7 +324,14 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
 
 -- | Generate the function body for an expression, along with the necessary sub functions
 genFunctionBody :: Expr -> ContextM (FunctionBody, [Function])
-genFunctionBody _ = return (NormalBody (Body mempty []), [])
+genFunctionBody = \case
+  Error err ->
+    let instructions =
+          [ PrintError err,
+            Exit
+          ]
+     in return (NormalBody (Body mempty instructions), [])
+  _ -> return (NormalBody (Body mempty []), [])
 
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
 genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
