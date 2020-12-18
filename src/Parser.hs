@@ -54,16 +54,13 @@ opsL sep p = liftA2 squash p (many (liftA2 (,) sep p))
   where
     squash = foldl' (\acc (combine, a) -> combine acc a)
 
-opsR :: (sep -> a -> a -> a) -> Parser a -> Parser sep -> Parser a
-opsR combine p s = liftA2 squash p (many (liftA2 (,) s p))
+opsR :: Parser (a -> a -> a) -> Parser a -> Parser a
+opsR sep p = liftA2 squash p (many (liftA2 (,) sep p))
   where
     squash start annotated =
-      let (start', annotated') =
-            foldl'
-              (\(oldStart, stack) (sep, a) -> (a, (sep, oldStart) : stack))
-              (start, [])
-              annotated
-       in foldl' (\acc (sep, a) -> combine sep a acc) start' annotated'
+      let (start', annotated') = foldl' shift (start, []) annotated
+          shift (oldStart, stack) (combine, a) = (a, (combine, oldStart) : stack)
+       in foldl' (\acc (combine, a) -> combine a acc) start' annotated'
 
 braced :: Parser a -> Parser [a]
 braced p = token OpenBrace *> sepBy1 p (token Semicolon) <* token CloseBrace
@@ -161,7 +158,7 @@ valueDefinition = nameDefinition <|> typeDefinition
     typeDefinition = liftA2 TypeAnnotation (valName <* token DoubleColon) typeExpr
 
 typeExpr :: Parser Type
-typeExpr = opsR (const (:->)) baseType (token ThinArrow)
+typeExpr = opsR ((:->) <$ token ThinArrow) baseType
   where
     baseType = singleType <|> typeConstructor
     typeConstructor = liftA2 CustomType typeName (many unspacedType)
@@ -210,9 +207,9 @@ unspacedPattern = simplePattern <|> parensed onePattern
 binExpr :: Parser Expr
 binExpr = cashExpr
   where
-    cashExpr = opsR (const (BinExpr Cash)) orExpr (token Dollar)
-    orExpr = opsR (const (BinExpr Or)) andExpr (token VBarVBar)
-    andExpr = opsR (const (BinExpr And)) comparisonExpr (token AmpersandAmpersand)
+    cashExpr = opsR (BinExpr Cash <$ token Dollar) orExpr
+    orExpr = opsR (BinExpr Or <$ token VBarVBar) andExpr
+    andExpr = opsR (BinExpr And <$ token AmpersandAmpersand) comparisonExpr
     comparisonExpr = opsL comparisonOperator concatExpr
       where
         comparisonOperator =
@@ -233,7 +230,7 @@ binExpr = cashExpr
         mulDivOperator =
           (BinExpr Mul <$ token Asterisk)
             <|> (BinExpr Div <$ token FSlash)
-    composeExpr = opsR (const (BinExpr Compose)) unaryExpr (token Dot)
+    composeExpr = opsR (BinExpr Compose <$ token Dot) unaryExpr
 
 unaryExpr :: Parser Expr
 unaryExpr = negateExpr <|> appExpr
