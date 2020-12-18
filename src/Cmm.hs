@@ -322,6 +322,11 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
   where
     err = error ("No storage found for: " <> show name)
 
+storePrim :: Primitive -> Instruction
+storePrim = \case
+  PrimInt i -> StoreInt i
+  PrimString s -> StoreString s
+
 -- | Generate the function body for an expression, along with the necessary sub functions
 --
 -- These always return normal bodies, since the case based bodies are returned
@@ -329,12 +334,20 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
 genFunctionBody :: Expr -> ContextM (Body, [Function])
 genFunctionBody = \case
   Error err ->
-    let instructions =
-          [ PrintError err,
-            Exit
-          ]
-     in return (Body mempty instructions, [])
-  _ -> return (Body mempty [], [])
+    return
+      <| justInstructions
+        [ PrintError err,
+          Exit
+        ]
+  Primitive prim ->
+    return
+      <| justInstructions
+        [ storePrim prim,
+          Exit
+        ]
+  _ -> return (justInstructions [])
+  where
+    justInstructions instructions = (Body mempty instructions, [])
 
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
 genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
