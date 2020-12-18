@@ -58,7 +58,7 @@ data Storage
     -- to store it alongside the closure, since it can just reference it
     -- directly
     GlobalStorage Index
-  deriving (Show)
+  deriving (Eq, Show)
 
 -- | A location allows us to reference some value concretely
 data Location
@@ -306,12 +306,23 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
     err = error ("No storage found for: " <> show name)
 
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
-genLamdbdaForm functionName isGlobal _ =
-  let argCount = 0
-      boundArgs = ArgInfo 0 0 0
-      body = NormalBody (Body mempty [])
+genLamdbdaForm functionName isGlobal (LambdaForm bound _ args _) = do
+  let argCount = length args
+  (boundPtrs, boundInts, boundStrings) <- separateBoundArgs bound
+  let boundArgs = ArgInfo (length boundPtrs) (length boundInts) (length boundStrings)
+  let body = NormalBody (Body mempty [])
       subFunctions = []
-   in return Function {..}
+  return Function {..}
+  where
+    separateBoundArgs :: [ValName] -> ContextM ([ValName], [ValName], [ValName])
+    separateBoundArgs bound' = do
+      ptrs <- extract PointerStorage
+      ints <- extract IntStorage
+      strings <- extract StringStorage
+      return (ptrs, ints, strings)
+      where
+        extract :: Storage -> ContextM [ValName]
+        extract storageType = filterM (getStorage >>> fmap (== storageType)) bound'
 
 genBinding :: Binding -> ContextM Function
 genBinding (Binding name form) = do

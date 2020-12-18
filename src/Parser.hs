@@ -1,6 +1,20 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Parser where
+module Parser
+  ( AST (..),
+    ValName,
+    ConstructorName,
+    Name,
+    Definition (..),
+    ConstructorDefinition (..),
+    ValueDefinition (..),
+    Expr (..),
+    Literal (..),
+    BinOp (..),
+    Pattern (..),
+    parser,
+  )
+where
 
 import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
@@ -25,9 +39,6 @@ instance Alternative Parser where
   empty = Parser (const [])
   Parser lA <|> Parser lB =
     Parser <| \input -> lA input ++ lB input
-
-opt :: Parser a -> Parser (Maybe a)
-opt p = fmap Just p <|> pure Nothing
 
 satisifies :: (Token -> Bool) -> Parser Token
 satisifies p =
