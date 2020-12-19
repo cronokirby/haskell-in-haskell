@@ -22,7 +22,7 @@ module Cmm (Cmm (..), cmm) where
 import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Map.Strict as Map
-import Data.Maybe (maybeToList)
+import Data.Maybe (fromMaybe, maybeToList)
 import Ourlude
 import STG
 
@@ -37,7 +37,10 @@ data FunctionName
   = -- | A standard function name
     PlainFunction PlainFunctionName
   | -- | A name we can use for the alternatives inside of a function
-    Alts
+    --
+    -- We need an index, because we might have a case expression inside
+    -- the scrutinee of a case expression
+    CaseFunction Index
   | -- | A name we use for the entry function
     Entry
   deriving (Show)
@@ -201,9 +204,13 @@ data Instruction
   | -- | Exit the program
     Exit
   | -- | Push a pointer onto the argument stack
-    SAPush Location
+    PushSA Location
   | -- | Push a pointer onto the stack for constructor arguments
-    ConstructorArgPush Location
+    PushConstructorArg Location
+  | -- | Push a case continuation onto the stack
+    --
+    -- The index is for the nth subfunction containing the case function
+    PushCaseContinuation Index
   | -- | Bury a pointer used in a case expression
     Bury Location
   | -- | Bury an int used in a case expression
@@ -279,14 +286,14 @@ data ArgInfo = ArgInfo
 
 -- | Represents the body of a function.
 --
--- This is either some kind of branching, or a normal function bdoy.
+-- This is either some kind of branching, or a normal function body.
 data FunctionBody
   = -- | A case branching on an int
-    IntCaseBody ArgInfo [(Int, Body)]
+    IntCaseBody [(Int, Body)] Body
   | -- | A case branching on a string
-    StringCaseBody ArgInfo [(String, Body)]
+    StringCaseBody [(String, Body)] Body
   | -- | A case branching on a tag
-    TagCaseBody ArgInfo [(Tag, Body)]
+    TagCaseBody [(Tag, Body)] Body
   | -- | Represents a normal function body
     NormalBody Body
   deriving (Show)
@@ -312,6 +319,10 @@ data Function = Function
     --
     -- This also tells us how to garbage collect the closure, along with the information
     -- about whether or not this function is global.
+    --
+    -- If this function is a case function, then this represents the buried args,
+    -- which aren't going to be collocated with the continuation, but passed
+    -- on some stack instead.
     boundArgs :: ArgInfo,
     -- | The actual body of this function
     body :: FunctionBody,
@@ -328,34 +339,46 @@ data Context = Context
   { -- | A map from names to their corresponding storages
     storages :: Map.Map ValName Storage,
     -- | A map from names to their corresponding locations
-    locations :: Map.Map ValName Location,
-    -- | The number of sub functions we've created so far
-    --
-    -- This is necessary, because if we have multiple chained expressions like `let`
-    -- or `case`, then they each end up allocating sub functions, and referring
-    -- to a given sub function by its *index*. Since they get merged into a single table
-    -- of sub functions, we need to make sure we can refer to the correct index.
-    subFunctionsCreated :: Int
+    locations :: Map.Map ValName Location
   }
   deriving (Show)
 
 -- | A default context to start with
 startingContext :: Context
-startingContext = Context mempty mempty 0
+startingContext = Context mempty mempty
+
+-- | The state we need to keep track of in our context
+--
+-- We have an index for generating fresh variables, as well as a variable
+-- that lets us keep track of the number of sub functions we've created so
+-- far inside of a function.
+data ContextState = ContextState
+  { -- | The index used to generate new variables
+    freshIndex :: Index,
+    -- | The number of sub functions that have been created so far
+    --
+    -- This should be reset at the beginning of the generating code for each function
+    subFunctionsCreated :: Int
+  }
+
+-- | The start
+startingState :: ContextState
+startingState = ContextState 0 0
 
 -- | A computation in which we have access to this context, and can make fresh variables
-newtype ContextM a = ContextM (ReaderT Context (State Int) a)
-  deriving (Functor, Applicative, Monad, MonadReader Context, MonadState Int)
+newtype ContextM a = ContextM (ReaderT Context (State ContextState) a)
+  deriving (Functor, Applicative, Monad, MonadReader Context, MonadState ContextState)
 
 -- | Run a contextful computation
 runContextM :: ContextM a -> a
-runContextM (ContextM m) = m |> (`runReaderT` startingContext) |> (`runState` 0) |> fst
+runContextM (ContextM m) =
+  m |> (`runReaderT` startingContext) |> (`runState` startingState) |> fst
 
 -- | Generate a fresh index, that hasn't been used before
 fresh :: ContextM Index
 fresh = do
-  current <- get
-  modify' (+ 1)
+  current <- gets freshIndex
+  modify' (\s -> s {freshIndex = current + 1})
   return current
 
 -- | Run a contextual computation with some storages in scope
@@ -373,9 +396,17 @@ withLocations newLocations =
   local (\r -> r {locations = Map.fromList newLocations <> locations r})
 
 -- | Run a contextual computation with a certain number of tables allocated
-withNMoreSubFunctions :: Int -> ContextM a -> ContextM a
-withNMoreSubFunctions extra =
-  local (\r -> r {subFunctionsCreated = subFunctionsCreated r + extra})
+addNSubFunctions :: Int -> ContextM ()
+addNSubFunctions more =
+  modify' (\s -> s {subFunctionsCreated = subFunctionsCreated s + more})
+
+withNewSubFunctionCount :: ContextM a -> ContextM a
+withNewSubFunctionCount m = do
+  old <- gets subFunctionsCreated
+  modify' (\s -> s {subFunctionsCreated = 0})
+  ret <- m
+  modify' (\s -> s {subFunctionsCreated = old})
+  return ret
 
 -- | Get the storage of a given name
 --
@@ -481,6 +512,105 @@ genBuiltinInstructions builtin args = case builtin of
         [l] -> return l
         _ -> error ("expected 1 location for builtin " <> show builtin ++ ", found " <> show (length atoms))
 
+-- | Generate the function body that actually inspects values in the case branches
+genCaseFunction :: Int -> [ValName] -> Alts -> ContextM Function
+genCaseFunction index bound alts =
+  withNewSubFunctionCount <| do
+    boundArgs <- getBuriedArgs
+    (body, subFunctions) <- handleAlts alts
+    return Function {..}
+  where
+    functionName = CaseFunction index
+    isGlobal = Nothing
+    argCount = 0
+
+    getBuriedArgs :: ContextM ArgInfo
+    getBuriedArgs = do
+      (ptrs, ints, strings) <- separateNames bound
+      return (ArgInfo (length ptrs) (length ints) (length strings))
+
+    handleAlts :: Alts -> ContextM (FunctionBody, [Function])
+    handleAlts = \case
+      BindPrim IntBox name expr ->
+        withTypeAndLocation name IntVar IntRegister (makeDirectBody expr)
+      BindPrim StringBox name expr ->
+        withTypeAndLocation name StringVar StringRegister (makeDirectBody expr)
+      Unbox IntBox name expr ->
+        withTypeAndLocation name IntVar IntRegister (makeDirectBody expr)
+      Unbox StringBox name expr ->
+        withTypeAndLocation name StringVar StringRegister (makeDirectBody expr)
+      IntAlts branches defaultExpr ->
+        handleBranches IntCaseBody (const genFunctionBody) branches defaultExpr
+      StringAlts branches defaultExpr ->
+        handleBranches StringCaseBody (const genFunctionBody) branches defaultExpr
+      ConstrAlts branches defaultExpr ->
+        handleBranches makeCaseBody genConstrCaseBody branches defaultExpr
+        where
+          makeCaseBody :: [((Tag, [ValName]), Body)] -> Body -> FunctionBody
+          makeCaseBody branches' =
+            let withoutNames = [(tag, body) | ((tag, _), body) <- branches']
+             in TagCaseBody withoutNames
+
+          genConstrCaseBody :: (Tag, [ValName]) -> Expr -> ContextM (Body, [Function])
+          genConstrCaseBody (_, names) =
+            let storages = zip names (repeat (LocalStorage PointerVar))
+                locations = zip names (map ConstructorArg [0 ..])
+             in withStorages storages <<< withLocations locations <<< genFunctionBody
+      where
+        withTypeAndLocation name typ location =
+          withStorages [(name, LocalStorage typ)] >>> withLocations [(name, location)]
+
+        makeDirectBody :: Expr -> ContextM (FunctionBody, [Function])
+        makeDirectBody expr = do
+          (body, subFunctions) <- genFunctionBody expr
+          return (NormalBody body, subFunctions)
+
+    handleBranches ::
+      ([(a, Body)] -> Body -> FunctionBody) ->
+      (a -> Expr -> ContextM (Body, [Function])) ->
+      [(a, Expr)] ->
+      Maybe Expr ->
+      ContextM (FunctionBody, [Function])
+    handleBranches makeBody genBody branches defaultExpr = do
+      branches' <-
+        forM branches <| \(i, branch) -> do
+          (body, subFunctions) <- genBody i branch
+          return ((i, body), subFunctions)
+      default' <- forM defaultExpr genFunctionBody
+      let branchBodies = map fst branches'
+          branchSubFunctions = foldMap snd branches'
+          (defaultBody, defaultSubFunctions) = fromMaybe (Body mempty [], []) default'
+          body = makeBody branchBodies defaultBody
+          subFunctions = branchSubFunctions <> defaultSubFunctions
+      return (body, subFunctions)
+
+-- | Generate the body and sub functions we need for a case expression
+genCaseExpr :: Expr -> [ValName] -> Alts -> ContextM (Body, [Function])
+genCaseExpr scrut bound alts = do
+  index <- gets subFunctionsCreated
+  caseFunction <- genCaseFunction index bound alts
+  addNSubFunctions 1
+  (scrutBody, scrutFunctions) <- genFunctionBody scrut
+  buryBound <- getBuryBound
+  let thisBody = Body mempty (buryBound <> [PushCaseContinuation index])
+  return (thisBody <> scrutBody, caseFunction : scrutFunctions)
+  where
+    getBuryBound :: ContextM [Instruction]
+    getBuryBound = do
+      (ptrs, ints, strings) <- separateNames bound
+      buryPtrs <- foldMapM bury (reverse ptrs)
+      buryInts <- foldMapM bury (reverse ints)
+      buryStrings <- foldMapM bury (reverse strings)
+      return (buryStrings <> buryInts <> buryPtrs)
+      where
+        bury :: ValName -> ContextM [Instruction]
+        bury name = do
+          loc <- getLocation name
+          return <| case locationType loc of
+            PointerVar -> [Bury loc]
+            IntVar -> [BuryInt loc]
+            StringVar -> [BuryString loc]
+
 -- | Generate the body we need for a let expression
 genLet :: [Binding] -> Expr -> ContextM (Body, [Function])
 genLet bindings expr = do
@@ -493,9 +623,10 @@ genLet bindings expr = do
       subFunctions <- genSubFunctions
       letInstrs <- genLetInstrs
       let thisBody = Body allocations letInstrs
-      (exprBody, exprSubFunctions) <-
-        withNMoreSubFunctions (length subFunctions)
-          <| genFunctionBody expr
+      -- This needs to be done at least after letInstrs, since letInstrs needs
+      -- to know the number of sub functions we had before
+      addNSubFunctions (length subFunctions)
+      (exprBody, exprSubFunctions) <- genFunctionBody expr
       return (thisBody <> exprBody, subFunctions <> exprSubFunctions)
   where
     getBindingStorages :: ContextM [(ValName, Storage)]
@@ -518,7 +649,7 @@ genLet bindings expr = do
 
     getLocations :: ContextM [(ValName, Location)]
     getLocations = do
-      start <- asks subFunctionsCreated
+      start <- gets subFunctionsCreated
       forM (zip [start ..] bindings) <| \(i, Binding name _) -> do
         storage <- getStorage name
         case storage of
@@ -531,7 +662,7 @@ genLet bindings expr = do
 
     genLetInstrs :: ContextM [Instruction]
     genLetInstrs = do
-      start <- asks subFunctionsCreated
+      start <- gets subFunctionsCreated
       foldMapM (uncurry allocateBinding) (zip [start ..] bindings)
       where
         allocateBinding :: Int -> Binding -> ContextM [Instruction]
@@ -554,6 +685,7 @@ genLet bindings expr = do
 genFunctionBody :: Expr -> ContextM (Body, [Function])
 genFunctionBody = \case
   Let bindings expr -> genLet bindings expr
+  Case scrut bound alts -> genCaseExpr scrut bound alts
   Error err ->
     return
       <| justInstructions
@@ -586,16 +718,15 @@ genFunctionBody = \case
   Apply f args -> do
     fLoc <- getLocation f
     argLocs <- mapM atomAsPointer args
-    let instrs = map SAPush (reverse argLocs) <> [Enter fLoc]
+    let instrs = map PushSA (reverse argLocs) <> [Enter fLoc]
     return (justInstructions instrs)
   Constructor tag args -> do
     argLocs <- mapM atomAsPointer args
-    let instrs = [StoreTag tag] <> map SAPush (reverse argLocs) <> [EnterCaseContinuation]
+    let instrs = [StoreTag tag] <> map PushConstructorArg (reverse argLocs) <> [EnterCaseContinuation]
     return (justInstructions instrs)
   Builtin b args -> do
     instrs <- genBuiltinInstructions b args
     return (justInstructions instrs)
-  _ -> return (justInstructions [])
   where
     justInstructions instructions = (Body mempty instructions, [])
 
@@ -612,7 +743,7 @@ separateNames bound = do
 
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
 genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) =
-  withStorages argStorages <| do
+  withStorages argStorages <| withNewSubFunctionCount <| do
     let argCount = length args
     (boundPtrs, boundInts, boundStrings) <- separateNames bound
     let boundArgs = ArgInfo (length boundPtrs) (length boundInts) (length boundStrings)
