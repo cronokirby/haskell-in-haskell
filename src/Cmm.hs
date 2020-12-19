@@ -516,18 +516,24 @@ genBuiltinInstructions builtin args = case builtin of
 genCaseFunction :: Int -> [ValName] -> Alts -> ContextM Function
 genCaseFunction index bound alts =
   withNewSubFunctionCount <| do
-    boundArgs <- getBuriedArgs
-    (body, subFunctions) <- handleAlts alts
-    return Function {..}
+    (boundArgs, buriedLocations) <- getBuriedArgs
+    withLocations buriedLocations <| do
+      (body, subFunctions) <- handleAlts alts
+      return Function {..}
   where
     functionName = CaseFunction index
     isGlobal = Nothing
     argCount = 0
 
-    getBuriedArgs :: ContextM ArgInfo
+    getBuriedArgs :: ContextM (ArgInfo, [(ValName, Location)])
     getBuriedArgs = do
       (ptrs, ints, strings) <- separateNames bound
-      return (ArgInfo (length ptrs) (length ints) (length strings))
+      let argInfo = ArgInfo (length ptrs) (length ints) (length strings)
+          locations =
+            zip ptrs (map Buried [0 ..])
+              <> zip ints (map BuriedInt [0 ..])
+              <> zip strings (map BuriedString [0 ..])
+      return (argInfo, locations)
 
     handleAlts :: Alts -> ContextM (FunctionBody, [Function])
     handleAlts = \case
