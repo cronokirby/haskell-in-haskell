@@ -422,6 +422,20 @@ genFunctionBody = \case
         [ storePrim prim,
           EnterCaseContinuation
         ]
+  Box IntBox atom -> do
+    loc <- atomAsInt atom
+    return
+      <| justInstructions
+        [ StoreInt loc,
+          EnterCaseContinuation
+        ]
+  Box StringBox atom -> do
+    loc <- atomAsString atom
+    return
+      <| justInstructions
+        [ StoreString loc,
+          EnterCaseContinuation
+        ]
   _ -> return (justInstructions [])
   where
     justInstructions instructions = (Body mempty instructions, [])
