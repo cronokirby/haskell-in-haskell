@@ -347,7 +347,7 @@ genFunctionBody = \case
     return
       <| justInstructions
         [ storePrim prim,
-          Exit
+          EnterCaseContinuation
         ]
   _ -> return (justInstructions [])
   where
