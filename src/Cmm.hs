@@ -48,12 +48,8 @@ type Index = Int
 -- use that information in nested closures to figure out how they're going
 -- to access this variable that they've captured
 data Storage
-  = -- | This variable will be stored in a pointer
-    PointerStorage
-  | -- | This variable will be stored as an int, with 64 bits
-    IntStorage
-  | -- | This variable will be stored as a string
-    StringStorage
+  = -- | This variable is going to be stored locally in closures
+    LocalStorage VarType
   | -- | This variable is a global function with a certain index
     --
     -- When a variable references a global function, we don't need
@@ -62,7 +58,20 @@ data Storage
     GlobalStorage Index
   deriving (Eq, Show)
 
+-- | Represents what type of variable something will end up being
+data VarType
+  = -- | This variable will end up being some kind of pointer
+    PointerVar
+  | -- | This variable will end up being a 64 bit int
+    IntVar
+  | -- | This variable will end up being a string
+    StringVar
+  deriving (Eq, Show)
+
 -- | A location allows us to reference some value concretely
+--
+-- Locations tell us where exactly a variable lives. Variables of the same
+-- type may live in different places in reality.
 data Location
   = -- | This variable is the nth pointer arg passed to us on the stack
     Arg Index
@@ -90,7 +99,36 @@ data Location
     BuriedString Index
   | -- | This variable will be whatever the current function is
     CurrentNode
+  | -- | This variable will be stored in the integer register
+    IntRegister
+  | -- | This variable will be stored in the string register
+    StringRegister
+  | -- | This variable is equal to this primitive int
+    PrimIntLocation Int
+  | -- | This variable is equal to this primitive string
+    PrimStringLocation String
   deriving (Show)
+
+-- | What type of variable is stored in this location?
+locationType :: Location -> VarType
+locationType = \case
+  Arg _ -> PointerVar
+  ConstructorArg _ -> PointerVar
+  Bound _ -> PointerVar
+  Global _ -> PointerVar
+  Allocated _ -> PointerVar
+  Buried _ -> PointerVar
+  CurrentNode -> PointerVar
+  BoundInt _ -> IntVar
+  BuriedInt _ -> IntVar
+  IntRegister -> IntVar
+  PrimIntLocation _ -> IntVar
+  BoundString _ -> StringVar
+  BuriedString _ -> StringVar
+  StringRegister -> StringVar
+  PrimStringLocation _ -> StringVar
+
+
 
 -- | Represents a kind of builtin taking two arguments
 data Builtin2
@@ -135,9 +173,9 @@ data Builtin1
 -- directly to a simple bit of C.
 data Instruction
   = -- | Store a given integer into the integer register
-    StoreInt Int
+    StoreInt Location
   | -- | Store a given string litteral into the string register
-    StoreString String
+    StoreString Location
   | -- | Store a given tag into the tag register
     StoreTag Tag
   | -- | Enter the code stored at a given location
@@ -326,10 +364,15 @@ getStorage name = asks (storages >>> Map.findWithDefault err name)
   where
     err = error ("No storage found for: " <> show name)
 
+getLocation :: ValName -> ContextM Location
+getLocation name = asks (locations >>> Map.findWithDefault err name)
+  where
+    err = error ("No location found for: " <> show name)
+
 storePrim :: Primitive -> Instruction
 storePrim = \case
-  PrimInt i -> StoreInt i
-  PrimString s -> StoreString s
+  PrimInt i -> StoreInt (PrimIntLocation i)
+  PrimString s -> StoreString (PrimStringLocation s)
 
 -- | Generate the function body for an expression, along with the necessary sub functions
 --
@@ -375,19 +418,20 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
         storage <- getStorage name
         return <| Just <| case storage of
           GlobalStorage index -> (name, Global index)
-          PointerStorage -> (name, CurrentNode)
+          LocalStorage PointerVar -> (name, CurrentNode)
           s -> error ("Storage " ++ show s ++ " is not a valid storage for a function")
       _ -> return Nothing
 
     separateBoundArgs :: [ValName] -> ContextM ([ValName], [ValName], [ValName])
     separateBoundArgs bound' = do
-      ptrs <- extract PointerStorage
-      ints <- extract IntStorage
-      strings <- extract StringStorage
+      ptrs <- extract PointerVar
+      ints <- extract IntVar
+      strings <- extract StringVar
       return (ptrs, ints, strings)
       where
-        extract :: Storage -> ContextM [ValName]
-        extract storageType = filterM (getStorage >>> fmap (== storageType)) bound'
+        extract :: VarType -> ContextM [ValName]
+        extract storageType =
+          filterM (getStorage >>> fmap (== LocalStorage storageType)) bound'
 
     argLocations :: [ValName] -> [(ValName, Location)]
     argLocations args' = zip args' (map Arg [0 ..])
