@@ -377,11 +377,6 @@ getLocation name = asks (locations >>> Map.findWithDefault err name)
   where
     err = error ("No location found for: " <> show name)
 
-storePrim :: Primitive -> Instruction
-storePrim = \case
-  PrimInt i -> StoreInt (PrimIntLocation i)
-  PrimString s -> StoreString (PrimStringLocation s)
-
 -- | Cast an atom into an Int location, panicking if this isn't possible
 atomAsInt :: Atom -> ContextM Location
 atomAsInt = \case
@@ -542,12 +537,15 @@ genFunctionBody = \case
         [ PrintError err,
           Exit
         ]
-  Primitive prim ->
+  Primitive (PrimInt i) ->
     return
       <| justInstructions
-        [ storePrim prim,
+        [ StoreInt (PrimIntLocation i),
           EnterCaseContinuation
         ]
+  Primitive (PrimString s) ->
+    let instrs = [StoreString (PrimStringLocation s), EnterCaseContinuation]
+     in return (Body (Allocation 0 0 0 0 [s]) instrs, [])
   Box IntBox atom -> do
     loc <- atomAsInt atom
     return
