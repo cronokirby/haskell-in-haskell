@@ -87,7 +87,10 @@ data Location
     BoundString Index
   | -- | This variable is just a global function
     Global Index
-  | -- | This variable is a closure we've allocated, using an index to figure out which
+  | -- | This variable is a closure we've allocated, with the index being the sub function index
+    --
+    -- This can be sparse, i.e. if we have 4 subfunctions, 2 of which are global, we might
+    -- have index 1 and 3 as `Allocated`.
     Allocated Index
   | -- | This variable is the nth dead pointer
     --
@@ -209,11 +212,10 @@ data Instruction
     BuryString Location
   | -- | Allocate a table for a function
     --
-    -- This function is going to be a direct descendant of the function
-    -- in which this instruction appears.
-    --
-    -- The index is used, since we may reference this closure
-    AllocTable PlainFunctionName Index
+    -- The index serves a dual purpose. It refers to the nth subfunction in whatever function
+    -- this instruction appears, and lets us know which table we're referring to. This same
+    -- index is also used to refer to whatever object this instruction allocates.
+    AllocTable Index
   | -- | Allocate a pointer on the heap
     AllocPointer Location
   | -- | Allocate an int on the heap
@@ -326,13 +328,20 @@ data Context = Context
   { -- | A map from names to their corresponding storages
     storages :: Map.Map ValName Storage,
     -- | A map from names to their corresponding locations
-    locations :: Map.Map ValName Location
+    locations :: Map.Map ValName Location,
+    -- | The number of sub functions we've created so far
+    --
+    -- This is necessary, because if we have multiple chained expressions like `let`
+    -- or `case`, then they each end up allocating sub functions, and referring
+    -- to a given sub function by its *index*. Since they get merged into a single table
+    -- of sub functions, we need to make sure we can refer to the correct index.
+    subFunctionsCreated :: Int
   }
   deriving (Show)
 
 -- | A default context to start with
 startingContext :: Context
-startingContext = Context mempty mempty
+startingContext = Context mempty mempty 0
 
 -- | A computation in which we have access to this context, and can make fresh variables
 newtype ContextM a = ContextM (ReaderT Context (State Int) a)
@@ -362,6 +371,11 @@ withStorages newStorages =
 withLocations :: [(ValName, Location)] -> ContextM a -> ContextM a
 withLocations newLocations =
   local (\r -> r {locations = Map.fromList newLocations <> locations r})
+
+-- | Run a contextual computation with a certain number of tables allocated
+withNMoreSubFunctions :: Int -> ContextM a -> ContextM a
+withNMoreSubFunctions extra =
+  local (\r -> r {subFunctionsCreated = subFunctionsCreated r + extra})
 
 -- | Get the storage of a given name
 --
@@ -465,7 +479,7 @@ genBuiltinInstructions builtin args = case builtin of
     grab1 convert atoms =
       forM atoms convert >>= \case
         [l] -> return l
-        _ -> error ("expected 1 location for builtin " ++ show builtin ++ ", found " ++ show (length atoms))
+        _ -> error ("expected 1 location for builtin " <> show builtin ++ ", found " <> show (length atoms))
 
 -- | Generate the body we need for a let expression
 genLet :: [Binding] -> Expr -> ContextM (Body, [Function])
@@ -479,7 +493,9 @@ genLet bindings expr = do
       subFunctions <- genSubFunctions
       letInstrs <- genLetInstrs
       let thisBody = Body allocations letInstrs
-      (exprBody, exprSubFunctions) <- genFunctionBody expr
+      (exprBody, exprSubFunctions) <-
+        withNMoreSubFunctions (length subFunctions)
+          <| genFunctionBody expr
       return (thisBody <> exprBody, subFunctions <> exprSubFunctions)
   where
     getBindingStorages :: ContextM [(ValName, Storage)]
@@ -501,8 +517,9 @@ genLet bindings expr = do
           return (Allocation 0 (length boundPtrs) (length boundInts) (length boundStrings) [])
 
     getLocations :: ContextM [(ValName, Location)]
-    getLocations =
-      forM (zip [0 ..] bindings) <| \(i, Binding name _) -> do
+    getLocations = do
+      start <- asks subFunctionsCreated
+      forM (zip [start ..] bindings) <| \(i, Binding name _) -> do
         storage <- getStorage name
         case storage of
           GlobalStorage index -> return (name, Global index)
@@ -513,16 +530,22 @@ genLet bindings expr = do
     genSubFunctions = forM bindings genBinding
 
     genLetInstrs :: ContextM [Instruction]
-    genLetInstrs = foldMapM (uncurry allocateBinding) (zip [0 ..] bindings)
+    genLetInstrs = do
+      start <- asks subFunctionsCreated
+      foldMapM (uncurry allocateBinding) (zip [start ..] bindings)
       where
         allocateBinding :: Int -> Binding -> ContextM [Instruction]
         allocateBinding i (Binding name (LambdaForm bound _ _ _)) = do
-          locations <- forM bound getLocation
-          let alloc typ mk = locations |> filter (locationType >>> (== typ)) |> map mk
-              allocPtrs = alloc PointerVar AllocPointer
-              allocInts = alloc IntVar AllocInt
-              allocStrings = alloc StringVar AllocString
-          return ([AllocTable name i] <> allocPtrs <> allocInts <> allocStrings)
+          storage <- getStorage name
+          case storage of
+            GlobalStorage _ -> return []
+            _ -> do
+              locations <- forM bound getLocation
+              let alloc typ mk = locations |> filter (locationType >>> (== typ)) |> map mk
+                  allocPtrs = alloc PointerVar AllocPointer
+                  allocInts = alloc IntVar AllocInt
+                  allocStrings = alloc StringVar AllocString
+              return ([AllocTable i] <> allocPtrs <> allocInts <> allocStrings)
 
 -- | Generate the function body for an expression, along with the necessary sub functions
 --
