@@ -26,6 +26,8 @@ import Data.Maybe (maybeToList)
 import Ourlude
 import STG
 
+type PlainFunctionName = String
+
 -- | Represents a name we can give to a function
 --
 -- The individual pieces of a function may not be unique,
@@ -33,7 +35,7 @@ import STG
 -- subfunctions, then we get unique paths.
 data FunctionName
   = -- | A standard function name
-    StringFunction String
+    PlainFunction PlainFunctionName
   | -- | A name we can use for the alternatives inside of a function
     Alts
   | -- | A name we use for the entry function
@@ -211,7 +213,9 @@ data Instruction
     -- in which this instruction appears.
     --
     -- The index is used, since we may reference this closure
-    AllocTable FunctionName Index
+    AllocTable PlainFunctionName Index
+  | -- | Allocate a pointer on the heap
+    AllocPointer Location
   | -- | Allocate an int on the heap
     AllocInt Location
   | -- | Allocate a string on the heap
@@ -250,18 +254,24 @@ instance Monoid Allocation where
 -- | A body has some instructions, and allocation information
 data Body = Body Allocation [Instruction] deriving (Show)
 
+instance Semigroup Body where
+  Body alloc1 instrs1 <> Body alloc2 instrs2 = Body (alloc1 <> alloc2) (instrs1 <> instrs2)
+
+instance Monoid Body where
+  mempty = Body mempty mempty
+
 -- | Information we have about the arguments used in some function
 --
 -- We can use this to represent a couple things, namely what
 -- kind of buried arguments a case expression uses, and what bound
 -- arguments are used in a closure.
 data ArgInfo = ArgInfo
-  { -- | How many buried pointers there are
-    buriedPointers :: Int,
-    -- | How many buried ints there are
-    buriedInts :: Int,
-    -- | How many buried strings there are
-    buriedStrings :: Int
+  { -- | How many bound pointers there are
+    boundPointers :: Int,
+    -- | How many bound ints there are
+    boundInts :: Int,
+    -- | How many bound strings there are
+    boundStrings :: Int
   }
   deriving (Show)
 
@@ -462,12 +472,70 @@ genBuiltinInstructions builtin args = case builtin of
         [l] -> return l
         _ -> error ("expected 1 location for builtin " ++ show builtin ++ ", found " ++ show (length atoms))
 
+-- | Generate the body we need for a let expression
+genLet :: [Binding] -> Expr -> ContextM (Body, [Function])
+genLet bindings expr = do
+  bindingStorages <- getBindingStorages
+  withStorages bindingStorages <| do
+    let tableCount = bindingStorages |> filter (snd >>> (== LocalStorage PointerVar)) |> length
+    allocations <- getAllocations tableCount
+    locations <- getLocations
+    withLocations locations <| do
+      subFunctions <- genSubFunctions
+      letInstrs <- genLetInstrs
+      let thisBody = Body allocations letInstrs
+      (exprBody, exprSubFunctions) <- genFunctionBody expr
+      return (thisBody <> exprBody, subFunctions <> exprSubFunctions)
+  where
+    getBindingStorages :: ContextM [(ValName, Storage)]
+    getBindingStorages =
+      forM bindings <| \(Binding name form) -> do
+        storage <- case form of
+          LambdaForm [] N _ _ -> GlobalStorage <$> fresh
+          _ -> return (LocalStorage PointerVar)
+        return (name, storage)
+
+    getAllocations :: Int -> ContextM Allocation
+    getAllocations tableCount = do
+      formAllocations <- foldMapM (\(Binding _ form) -> formAllocation form) bindings
+      return (Allocation tableCount 0 0 0 [] <> formAllocations)
+      where
+        formAllocation :: LambdaForm -> ContextM Allocation
+        formAllocation (LambdaForm bound _ _ _) = do
+          (boundPtrs, boundInts, boundStrings) <- separateNames bound
+          return (Allocation 0 (length boundPtrs) (length boundInts) (length boundStrings) [])
+
+    getLocations :: ContextM [(ValName, Location)]
+    getLocations =
+      forM (zip [0 ..] bindings) <| \(i, Binding name _) -> do
+        storage <- getStorage name
+        case storage of
+          GlobalStorage index -> return (name, Global index)
+          LocalStorage PointerVar -> return (name, Allocated i)
+          other -> error (show other <> " is not a valid storage for the closure " <> show name)
+
+    genSubFunctions :: ContextM [Function]
+    genSubFunctions = forM bindings genBinding
+
+    genLetInstrs :: ContextM [Instruction]
+    genLetInstrs = foldMapM (uncurry allocateBinding) (zip [0 ..] bindings)
+      where
+        allocateBinding :: Int -> Binding -> ContextM [Instruction]
+        allocateBinding i (Binding name (LambdaForm bound _ _ _)) = do
+          locations <- forM bound getLocation
+          let alloc typ mk = locations |> filter (locationType >>> (== typ)) |> map mk
+              allocPtrs = alloc PointerVar AllocPointer
+              allocInts = alloc IntVar AllocInt
+              allocStrings = alloc StringVar AllocString
+          return ([AllocTable name i] <> allocPtrs <> allocInts <> allocStrings)
+
 -- | Generate the function body for an expression, along with the necessary sub functions
 --
 -- These always return normal bodies, since the case based bodies are returned
 -- only in special sub functions
 genFunctionBody :: Expr -> ContextM (Body, [Function])
 genFunctionBody = \case
+  Let bindings expr -> genLet bindings expr
   Error err ->
     return
       <| justInstructions
@@ -510,25 +578,37 @@ genFunctionBody = \case
   where
     justInstructions instructions = (Body mempty instructions, [])
 
+separateNames :: [ValName] -> ContextM ([ValName], [ValName], [ValName])
+separateNames bound = do
+  ptrs <- extract PointerVar
+  ints <- extract IntVar
+  strings <- extract StringVar
+  return (ptrs, ints, strings)
+  where
+    extract :: VarType -> ContextM [ValName]
+    extract storageType =
+      filterM (getStorage >>> fmap (== LocalStorage storageType)) bound
+
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
-genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
-  let argCount = length args
-  (boundPtrs, boundInts, boundStrings) <- separateBoundArgs bound
-  let boundArgs = ArgInfo (length boundPtrs) (length boundInts) (length boundStrings)
-  myLocation <- getMyLocation functionName
-  let locations =
-        maybeToList myLocation
-          <> boundLocations Bound boundPtrs
-          <> boundLocations BoundInt boundInts
-          <> boundLocations BoundString boundStrings
-          <> argLocations args
-  (normalBody, subFunctions) <- withLocations locations (genFunctionBody expr)
-  let body = NormalBody normalBody
-  return Function {..}
+genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) =
+  withStorages argStorages <| do
+    let argCount = length args
+    (boundPtrs, boundInts, boundStrings) <- separateNames bound
+    let boundArgs = ArgInfo (length boundPtrs) (length boundInts) (length boundStrings)
+    myLocation <- getMyLocation functionName
+    let locations =
+          maybeToList myLocation
+            <> boundLocations Bound boundPtrs
+            <> boundLocations BoundInt boundInts
+            <> boundLocations BoundString boundStrings
+            <> argLocations
+    (normalBody, subFunctions) <- withLocations locations (genFunctionBody expr)
+    let body = NormalBody normalBody
+    return Function {..}
   where
     getMyLocation :: FunctionName -> ContextM (Maybe (ValName, Location))
     getMyLocation = \case
-      StringFunction name -> do
+      PlainFunction name -> do
         storage <- getStorage name
         return <| Just <| case storage of
           GlobalStorage index -> (name, Global index)
@@ -536,19 +616,11 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) = do
           s -> error ("Storage " ++ show s ++ " is not a valid storage for a function")
       _ -> return Nothing
 
-    separateBoundArgs :: [ValName] -> ContextM ([ValName], [ValName], [ValName])
-    separateBoundArgs bound' = do
-      ptrs <- extract PointerVar
-      ints <- extract IntVar
-      strings <- extract StringVar
-      return (ptrs, ints, strings)
-      where
-        extract :: VarType -> ContextM [ValName]
-        extract storageType =
-          filterM (getStorage >>> fmap (== LocalStorage storageType)) bound'
+    argStorages :: [(ValName, Storage)]
+    argStorages = zip args (repeat (LocalStorage PointerVar))
 
-    argLocations :: [ValName] -> [(ValName, Location)]
-    argLocations args' = zip args' (map Arg [0 ..])
+    argLocations :: [(ValName, Location)]
+    argLocations = zip args (map Arg [0 ..])
 
     boundLocations :: (Int -> Location) -> [ValName] -> [(ValName, Location)]
     boundLocations f names = zip names (map f [0 ..])
@@ -559,20 +631,22 @@ genBinding (Binding name form) = do
   let isGlobal' = case storage of
         GlobalStorage index -> Just index
         _ -> Nothing
-  genLamdbdaForm (StringFunction name) isGlobal' form
+  genLamdbdaForm (PlainFunction name) isGlobal' form
 
 -- | Generate Cmm code from STG, in a contextful way
 genCmm :: STG -> ContextM Cmm
 genCmm (STG bindings entryForm) = do
   entryIndex <- fresh
-  topLevelStorages <-
+  topLevel <-
     forM bindings <| \(Binding name _) -> do
       index <- fresh
-      return (name, GlobalStorage index)
-  withStorages topLevelStorages <| do
+      return (name, GlobalStorage index, Global index)
+  let topLevelStorages = map (\(name, storage, _) -> (name, storage)) topLevel
+      topLevelLocations = map (\(name, _, location) -> (name, location)) topLevel
+  withStorages topLevelStorages <| withLocations topLevelLocations <| do
     entry <- genLamdbdaForm Entry (Just entryIndex) entryForm
-    topLevel <- forM bindings genBinding
-    return (Cmm topLevel entry)
+    topLevelFunctions <- forM bindings genBinding
+    return (Cmm topLevelFunctions entry)
 
 -- | Generate Cmm code from STG
 cmm :: STG -> Cmm
