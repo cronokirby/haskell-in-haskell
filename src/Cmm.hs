@@ -128,8 +128,6 @@ locationType = \case
   StringRegister -> StringVar
   PrimStringLocation _ -> StringVar
 
-
-
 -- | Represents a kind of builtin taking two arguments
 data Builtin2
   = -- | IntR <- a + b
@@ -373,6 +371,38 @@ storePrim :: Primitive -> Instruction
 storePrim = \case
   PrimInt i -> StoreInt (PrimIntLocation i)
   PrimString s -> StoreString (PrimStringLocation s)
+
+-- | Cast an atom into an Int location, panicking if this isn't possible
+atomAsInt :: Atom -> ContextM Location
+atomAsInt = \case
+  PrimitiveAtom (PrimInt i) -> return (PrimIntLocation i)
+  NameAtom n -> do
+    loc <- getLocation n
+    case locationType loc of
+      IntVar -> return loc
+      _ -> error (n <> " has location " <> show loc <> " which cannot hold an Int")
+  other -> error (show other <> " cannot be used as an Int")
+
+-- | Cast an atom into a String location, panicking if this isn't possible
+atomAsString :: Atom -> ContextM Location
+atomAsString = \case
+  PrimitiveAtom (PrimString s) -> return (PrimStringLocation s)
+  NameAtom n -> do
+    loc <- getLocation n
+    case locationType loc of
+      StringVar -> return loc
+      _ -> error (n <> " has location " <> show loc <> " which cannot hold a String")
+  other -> error (show other <> " cannot be used as a String")
+
+-- | Cast an atom into a pointer location, panicking if this isn't possible
+atomAsPointer :: Atom -> ContextM Location
+atomAsPointer = \case
+  NameAtom n -> do
+    loc <- getLocation n
+    case locationType loc of
+      PointerVar -> return loc
+      _ -> error (n <> " has location " <> show loc <> " which cannot hold a pointer")
+  other -> error (show other <> " cannot be used as a pointer")
 
 -- | Generate the function body for an expression, along with the necessary sub functions
 --
