@@ -192,7 +192,7 @@ data Instruction
   | -- | Apply a builtin expecting two locations
     Builtin2 Builtin2 Location Location
   | -- | Apply a builtin expecting a single location
-    Builtin1 Builtin1 Location Location
+    Builtin1 Builtin1 Location
   | -- | Exit the program
     Exit
   | -- | Push a pointer onto the argument stack
@@ -404,6 +404,64 @@ atomAsPointer = \case
       _ -> error (n <> " has location " <> show loc <> " which cannot hold a pointer")
   other -> error (show other <> " cannot be used as a pointer")
 
+-- | Generate the instructions for a builtin instruction
+genBuiltinInstructions :: Builtin -> [Atom] -> ContextM [Instruction]
+genBuiltinInstructions builtin args = case builtin of
+  Add -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 Add2 l1 l2, EnterCaseContinuation]
+  Sub -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 Sub2 l1 l2, EnterCaseContinuation]
+  Mul -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 Mul2 l1 l2, EnterCaseContinuation]
+  Div -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 Div2 l1 l2, EnterCaseContinuation]
+  Less -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 Less2 l1 l2, EnterCaseContinuation]
+  LessEqual -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 LessEqual2 l1 l2, EnterCaseContinuation]
+  Greater -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 Greater2 l1 l2, EnterCaseContinuation]
+  GreaterEqual -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 GreaterEqual2 l1 l2, EnterCaseContinuation]
+  EqualTo -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 EqualTo2 l1 l2, EnterCaseContinuation]
+  NotEqualTo -> do
+    (l1, l2) <- grab2 atomAsInt args
+    return [Builtin2 NotEqualTo2 l1 l2, EnterCaseContinuation]
+  Concat -> do
+    (l1, l2) <- grab2 atomAsString args
+    return [Builtin2 Concat2 l1 l2, EnterCaseContinuation]
+  Negate -> do
+    l <- grab1 atomAsInt args
+    return [Builtin1 Negate1 l, EnterCaseContinuation]
+  ExitWithInt -> do
+    l <- grab1 atomAsInt args
+    return [Builtin1 PrintInt1 l, Exit]
+  ExitWithString -> do
+    l <- grab1 atomAsString args
+    return [Builtin1 PrintString1 l, Exit]
+  where
+    grab2 :: (Atom -> ContextM Location) -> [Atom] -> ContextM (Location, Location)
+    grab2 convert atoms =
+      forM atoms convert >>= \case
+        [l1, l2] -> return (l1, l2)
+        _ -> error ("expected 2 locations for builtin " ++ show builtin ++ ", found " ++ show (length atoms))
+
+    grab1 :: (Atom -> ContextM Location) -> [Atom] -> ContextM Location
+    grab1 convert atoms =
+      forM atoms convert >>= \case
+        [l] -> return l
+        _ -> error ("expected 1 location for builtin " ++ show builtin ++ ", found " ++ show (length atoms))
+
 -- | Generate the function body for an expression, along with the necessary sub functions
 --
 -- These always return normal bodies, since the case based bodies are returned
@@ -440,6 +498,13 @@ genFunctionBody = \case
     fLoc <- getLocation f
     argLocs <- mapM atomAsPointer args
     let instrs = map SAPush (reverse argLocs) <> [Enter fLoc]
+    return (justInstructions instrs)
+  Constructor tag args -> do
+    argLocs <- mapM atomAsPointer args
+    let instrs = [StoreTag tag] <> map SAPush (reverse argLocs) <> [EnterCaseContinuation]
+    return (justInstructions instrs)
+  Builtin b args -> do
+    instrs <- genBuiltinInstructions b args
     return (justInstructions instrs)
   _ -> return (justInstructions [])
   where
