@@ -436,6 +436,11 @@ genFunctionBody = \case
         [ StoreString loc,
           EnterCaseContinuation
         ]
+  Apply f args -> do
+    fLoc <- getLocation f
+    argLocs <- mapM atomAsPointer args
+    let instrs = map SAPush (reverse argLocs) <> [Enter fLoc]
+    return (justInstructions instrs)
   _ -> return (justInstructions [])
   where
     justInstructions instructions = (Body mempty instructions, [])
