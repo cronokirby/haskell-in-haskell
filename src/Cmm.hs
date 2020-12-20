@@ -592,6 +592,8 @@ genCaseFunction index bound alts =
 
 -- | Generate the body and sub functions we need for a case expression
 genCaseExpr :: Expr -> [ValName] -> Alts -> ContextM (Body, [Function])
+genCaseExpr scrut [] (BindPrim box1 n1 (Box box2 (NameAtom n2)))
+  | box1 == box2 && n1 == n2 = genFunctionBody scrut
 genCaseExpr scrut bound alts = do
   index <- gets subFunctionsCreated
   caseFunction <- genCaseFunction index bound alts
