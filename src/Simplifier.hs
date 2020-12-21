@@ -230,7 +230,7 @@ lookupConstructor name = do
 gatherConstructorMap :: MonadError SimplifierError m => [P.Definition] -> m ConstructorMap
 gatherConstructorMap =
   foldMapM <| \case
-    P.TypeDefinition name typeVars definitions ->
+    P.DataDefinition name typeVars definitions ->
       let root = CustomType name (map TVar typeVars)
        in foldMapM (makeMap typeVars root) (zip definitions [0 ..])
     _ -> return Map.empty
@@ -325,7 +325,7 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap r
 gatherCustomTypes :: [P.Definition] -> Map.Map TypeName Int
 gatherCustomTypes =
   foldMap <| \case
-    P.TypeDefinition name vars _ -> Map.singleton name (length vars)
+    P.DataDefinition name vars _ -> Map.singleton name (length vars)
     _ -> Map.empty
 
 -- Gather all of the type synonyms, at a superficial level

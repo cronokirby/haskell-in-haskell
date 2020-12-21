@@ -123,7 +123,7 @@ tests =
             "type X = Int;data L = A Int | B String (String -> String)"
             ( AST
                 [ TypeSynonym "X" IntT,
-                  TypeDefinition
+                  DataDefinition
                     "L"
                     []
                     [ ConstructorDefinition "A" [IntT],
@@ -144,7 +144,7 @@ tests =
             "foo :: a -> List a; data List a = Cons a (List a) | Nil"
             ( AST
                 [ ValueDefinition (TypeAnnotation "foo" (TVar "a" :-> CustomType "List" [TVar "a"])),
-                  TypeDefinition
+                  DataDefinition
                     "List"
                     ["a"]
                     [ ConstructorDefinition "Cons" [TVar "a", CustomType "List" [TVar "a"]],
