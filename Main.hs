@@ -1,7 +1,9 @@
 {-# LANGUAGE TypeApplications #-}
+
 module Main where
 
 import qualified CWriter
+import qualified Cmm
 import Control.Monad ((>=>))
 import Data.Char (toLower)
 import Data.Maybe (listToMaybe)
@@ -14,7 +16,6 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import Text.Pretty.Simple (pPrint, pPrintString)
 import qualified Typer
-import qualified Cmm
 import Types (Scheme)
 
 -- An error that occurrs in a stage, including its name and what went wrong
@@ -74,10 +75,10 @@ stgStage :: Stage (Simplifier.AST Scheme) STG.STG
 stgStage = makeStage "STG" STG.stg
 
 cmmStage :: Stage STG.STG Cmm.Cmm
-cmmStage = makeStage "Cmm" (Cmm.cmm >>> Right @ ())
+cmmStage = makeStage "Cmm" (Cmm.cmm >>> Right @())
 
-writeCStage :: Stage STG.STG String
-writeCStage = makeStage "Output C" (CWriter.writeC >>> Right @ ())
+writeCStage :: Stage Cmm.Cmm String
+writeCStage = makeStage "Output C" (CWriter.writeC >>> Right @())
 
 -- Read out which stages to execute based on a string
 readStage :: String -> Maybe String -> Maybe (String -> IO ())
@@ -88,13 +89,39 @@ readStage "parse" _ =
 readStage "simplify" _ =
   lexerStage >-> parserStage >-> simplifierStage |> printStage |> Just
 readStage "type" _ =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage |> printStage |> Just
+  lexerStage
+    >-> parserStage
+    >-> simplifierStage
+    >-> typerStage
+    |> printStage
+    |> Just
 readStage "stg" _ =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage |> printStage |> Just
+  lexerStage
+    >-> parserStage
+    >-> simplifierStage
+    >-> typerStage
+    >-> stgStage
+    |> printStage
+    |> Just
 readStage "cmm" _ =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage >-> cmmStage |> printStage |> Just
+  lexerStage
+    >-> parserStage
+    >-> simplifierStage
+    >-> typerStage
+    >-> stgStage
+    >-> cmmStage
+    |> printStage
+    |> Just
 readStage "compile" (Just outputFile) =
-  lexerStage >-> parserStage >-> simplifierStage >-> typerStage >-> stgStage >-> writeCStage |> outputStage |> Just
+  lexerStage
+    >-> parserStage
+    >-> simplifierStage
+    >-> typerStage
+    >-> stgStage
+    >-> cmmStage
+    >-> writeCStage
+    |> outputStage
+    |> Just
   where
     outputStage (Stage _ r) a = case r a of
       Left err -> printStagedError err
