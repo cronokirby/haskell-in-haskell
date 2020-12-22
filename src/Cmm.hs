@@ -19,12 +19,37 @@
 -- analyze those to generate nicer C code.
 module Cmm (Cmm (..), cmm) where
 
+import Control.Monad (forM)
 import Control.Monad.Reader
+  ( MonadReader (local),
+    ReaderT (..),
+    asks,
+    filterM,
+  )
 import Control.Monad.State
+  ( MonadState,
+    State,
+    gets,
+    modify',
+    runState,
+  )
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, maybeToList)
 import Ourlude
 import STG
+  ( Alts (..),
+    Atom (..),
+    Binding (..),
+    BoxType (IntBox, StringBox),
+    Builtin (..),
+    Expr (..),
+    LambdaForm (..),
+    Primitive (PrimInt, PrimString),
+    STG (..),
+    Tag,
+    Updateable (..),
+    ValName,
+  )
 
 type PlainFunctionName = String
 
