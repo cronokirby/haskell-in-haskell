@@ -3,6 +3,7 @@
 module CWriter (writeC) where
 
 import Cmm
+import Data.List (intercalate)
 import Ourlude
 
 -- | A type for CCode.
@@ -29,12 +30,13 @@ consPath name = (IdentPath [name] <>)
 
 -- | Display a path as a piece of C code
 displayPath :: IdentPath -> CCode
-displayPath (IdentPath names) = foldMap convertName (reverse names)
+displayPath (IdentPath names) =
+  names |> reverse |> map convertName |> intercalate "_"
   where
     convertName :: FunctionName -> CCode
     convertName = \case
       PlainFunction name -> foldMap convertChar name
-      CaseFunction index -> "_case_" ++ show index
+      CaseFunction index -> "case_" ++ show index
       Entry -> "_entry"
       where
         convertChar :: Char -> String
