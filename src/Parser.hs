@@ -261,7 +261,7 @@ factor = littExpr <|> nameExpr <|> parensed expr
     littExpr = fmap LitExpr literal
     nameExpr = fmap NameExpr name
 
-lowerName :: Parser Name
+lowerName :: Parser ValName
 lowerName =
   pluck <| \case
     LowerName n -> Just n
