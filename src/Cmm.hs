@@ -17,7 +17,7 @@
 -- Having a separate stage makes it much easier to generate better C code, since
 -- you can easily translate the STG into simple imperative statements, and then
 -- analyze those to generate nicer C code.
-module Cmm (Cmm (..), cmm) where
+module Cmm (Cmm (..), FunctionName (..), cmm) where
 
 import Control.Monad (forM)
 import Control.Monad.Reader
@@ -68,7 +68,7 @@ data FunctionName
     CaseFunction Index
   | -- | A name we use for the entry function
     Entry
-  deriving (Show)
+  deriving (Eq, Show)
 
 type Index = Int
 
