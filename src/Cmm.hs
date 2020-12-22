@@ -17,7 +17,13 @@
 -- Having a separate stage makes it much easier to generate better C code, since
 -- you can easily translate the STG into simple imperative statements, and then
 -- analyze those to generate nicer C code.
-module Cmm (Cmm (..), FunctionName (..), cmm) where
+module Cmm
+  ( Cmm (..),
+    FunctionName (..),
+    Function (..),
+    cmm,
+  )
+where
 
 import Control.Monad (forM)
 import Control.Monad.Reader
