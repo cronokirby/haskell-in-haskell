@@ -171,8 +171,8 @@ valueDefinition = nameDefinition <|> typeDefinition
 typeExpr :: Parser Type
 typeExpr = opsR ((:->) <$ token ThinArrow) baseType
   where
-    baseType = singleType <|> typeConstructor
-    typeConstructor = liftA2 CustomType typeName (many unspacedType)
+    baseType = singleType <|> customType
+    customType = liftA2 CustomType typeName (many unspacedType)
 
 unspacedType :: Parser Type
 unspacedType = namedType <|> singleType
