@@ -148,16 +148,14 @@ ast :: Parser AST
 ast = fmap AST (braced definition)
 
 definition :: Parser Definition
-definition = fmap ValueDefinition valueDefinition <|> typeDefinition <|> typeSynonym
+definition = fmap ValueDefinition valueDefinition <|> dataDefinition <|> typeSynonym
   where
-    typeDefinition =
-      token Data
-        *> ( DataDefinition
-               <$> typeName
-               <*> many typeVar
-               <*> (token Equal *> sepBy1 constructorDefinition (token VBar))
-           )
-    typeSynonym = token Type *> liftA2 TypeSynonym (typeName <* token Equal) typeExpr
+    dataDefinition =
+      DataDefinition
+        <$> (token Data *> typeName)
+        <*> many typeVar
+        <*> (token Equal *> sepBy1 constructorDefinition (token VBar))
+    typeSynonym = liftA2 TypeSynonym (token Type *> typeName) (token Equal *> typeExpr)
 
 constructorDefinition :: Parser ConstructorDefinition
 constructorDefinition = liftA2 ConstructorDefinition constructorName (many typeArgument)
