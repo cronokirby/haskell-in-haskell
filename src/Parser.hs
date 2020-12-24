@@ -160,22 +160,22 @@ definition = fmap ValueDefinition valueDefinition <|> typeDefinition <|> typeSyn
     typeSynonym = token Type *> liftA2 TypeSynonym (typeName <* token Equal) typeExpr
 
 constructorDefinition :: Parser ConstructorDefinition
-constructorDefinition = liftA2 ConstructorDefinition constructorName (many unspacedType)
+constructorDefinition = liftA2 ConstructorDefinition constructorName (many typeArgument)
 
 valueDefinition :: Parser ValueDefinition
-valueDefinition = nameDefinition <|> typeDefinition
+valueDefinition = nameDefinition <|> typeAnnotation
   where
     nameDefinition = NameDefinition <$> valName <*> many unspacedPattern <*> (token Equal *> expr)
-    typeDefinition = liftA2 TypeAnnotation (valName <* token DoubleColon) typeExpr
+    typeAnnotation = liftA2 TypeAnnotation (valName <* token DoubleColon) typeExpr
 
 typeExpr :: Parser Type
 typeExpr = opsR ((:->) <$ token ThinArrow) baseType
   where
     baseType = singleType <|> customType
-    customType = liftA2 CustomType typeName (many unspacedType)
+    customType = liftA2 CustomType typeName (many typeArgument)
 
-unspacedType :: Parser Type
-unspacedType = namedType <|> singleType
+typeArgument :: Parser Type
+typeArgument = namedType <|> singleType
   where
     namedType = fmap (`CustomType` []) typeName
 
