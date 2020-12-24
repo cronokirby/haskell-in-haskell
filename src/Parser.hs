@@ -192,7 +192,7 @@ expr = notWhereExpr <|> whereExpr
   where
     notWhereExpr = letExpr <|> ifExpr <|> lambdaExpr <|> binExpr <|> caseExpr
     letExpr = token Let *> liftA2 LetExpr (braced valueDefinition) (token In *> expr)
-    ifExpr = token If *> (IfExpr <$> expr <*> (token Then *> expr) <*> (token Else *> expr))
+    ifExpr = IfExpr <$> (token If *> expr) <*> (token Then *> expr) <*> (token Else *> expr)
     lambdaExpr = token BSlash *> liftA2 LambdaExpr (some valName) (token ThinArrow *> expr)
     whereExpr = liftA2 WhereExpr notWhereExpr (token Where *> braced valueDefinition)
 
