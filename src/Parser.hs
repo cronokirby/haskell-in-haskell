@@ -209,11 +209,11 @@ onePattern = unspacedPattern <|> argfulPattern
 unspacedPattern :: Parser Pattern
 unspacedPattern = simplePattern <|> parensed onePattern
   where
-    simplePattern = wildCardPattern <|> varPattern <|> littPattern <|> singleConstructor
+    simplePattern = wildCardPattern <|> varPattern <|> litPattern <|> singleConstructor
     singleConstructor = fmap (`ConstructorPattern` []) constructorName
     wildCardPattern = WildcardPattern <$ token Underscore
     varPattern = fmap NamePattern valName
-    littPattern = fmap LiteralPattern literal
+    litPattern = fmap LiteralPattern literal
 
 binExpr :: Parser Expr
 binExpr = cashExpr
