@@ -25,5 +25,6 @@ library
   exposed-modules:     Ourlude
                      , Lexer
                      , Parser
+                     , Types
   ghc-options:         -Wall
   hs-source-dirs:      src
