@@ -1,11 +1,26 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Parser (AST (..), parser) where
+module Parser
+  ( AST (..),
+    ValName,
+    ConstructorName,
+    Name,
+    Definition (..),
+    ConstructorDefinition (..),
+    ValueDefinition (..),
+    Expr (..),
+    Literal (..),
+    BinOp (..),
+    Pattern (..),
+    parser,
+  )
+where
 
 import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
 import Lexer (Token (..))
 import Ourlude
+import Types (Type (..), TypeName, TypeVar)
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
@@ -44,7 +59,71 @@ pluck f =
 
 data ParseError = UnimplementedError deriving (Show)
 
-data AST = AST deriving (Show)
+newtype AST = AST [Definition] deriving (Eq, Show)
+
+data Definition
+  = ValueDefinition ValueDefinition
+  | DataDefinition TypeName [TypeVar] [ConstructorDefinition]
+  | TypeSynonym TypeName Type
+  deriving (Eq, Show)
+
+data ValueDefinition
+  = TypeAnnotation ValName Type
+  | NameDefinition ValName [Pattern] Expr
+  deriving (Eq, Show)
+
+type ConstructorName = String
+
+data ConstructorDefinition
+  = ConstructorDefinition ConstructorName [Type]
+  deriving (Eq, Show)
+
+data Literal
+  = IntLiteral Int
+  | StringLiteral String
+  | BoolLiteral Bool
+  deriving (Eq, Ord, Show)
+
+type Name = String
+
+type ValName = String
+
+data Expr
+  = LitExpr Literal
+  | NameExpr Name
+  | IfExpr Expr Expr Expr
+  | LambdaExpr [ValName] Expr
+  | ApplyExpr Expr [Expr]
+  | NegateExpr Expr
+  | BinExpr BinOp Expr Expr
+  | CaseExpr Expr [(Pattern, Expr)]
+  | LetExpr [ValueDefinition] Expr
+  | WhereExpr Expr [ValueDefinition]
+  deriving (Eq, Show)
+
+data BinOp
+  = Add
+  | Sub
+  | Mul
+  | Div
+  | Less
+  | LessEqual
+  | Greater
+  | GreaterEqual
+  | EqualTo
+  | NotEqualTo
+  | Or
+  | And
+  | Cash
+  | Compose
+  deriving (Eq, Show)
+
+data Pattern
+  = WildcardPattern
+  | NamePattern ValName
+  | LiteralPattern Literal
+  | ConstructorPattern ConstructorName [Pattern]
+  deriving (Eq, Show)
 
 parser :: [Token] -> Either ParseError AST
 parser _ = Left UnimplementedError
