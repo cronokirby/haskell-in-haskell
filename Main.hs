@@ -4,6 +4,7 @@ import Control.Monad ((>=>))
 import Data.Char (toLower)
 import qualified Lexer
 import Ourlude
+import qualified Parser
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import Text.Pretty.Simple (pPrint, pPrintString)
@@ -32,6 +33,9 @@ makeStage name r = Stage name (r >>> stageEither name)
 lexerStage :: Stage String [Lexer.Token]
 lexerStage = makeStage "Lexer" Lexer.lexer
 
+parserStage :: Stage [Lexer.Token] Parser.AST
+parserStage = makeStage "Parser" Parser.parser
+
 (>->) :: Stage a b -> Stage b c -> Stage a c
 (>->) (Stage _ r1) (Stage n2 r2) = Stage n2 (r1 >=> r2)
 
@@ -47,7 +51,10 @@ printStage (Stage name r) a = case r a of
 data Args = Args FilePath (String -> IO ())
 
 readStage :: String -> Maybe (String -> IO ())
-readStage "lex" = lexerStage |> printStage |> Just
+readStage "lex" =
+  lexerStage |> printStage |> Just
+readStage "parse" =
+  lexerStage >-> parserStage |> printStage |> Just
 readStage _ = Nothing
 
 process :: Args -> IO ()
