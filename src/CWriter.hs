@@ -51,15 +51,20 @@ displayPath (IdentPath names) =
           '_' -> "__"
           x -> pure x
 
+-- | The type we use to store global function information
+type Globals = IntMap IdentPath
+
 -- | The context we have access to while generating C code
 data Context = Context
   { -- | The path to the current function that we're working on
-    currentFunction :: IdentPath
+    currentFunction :: IdentPath,
+    -- | A map from function indices to full identifiers
+    globals :: Globals
   }
 
 -- | A context we can use at the start of our traversal
 startingContext :: Context
-startingContext = Context mempty
+startingContext = Context mempty mempty
 
 -- | A computational context we use when generating C code
 newtype CWriter a = CWriter (Reader Context a)
@@ -73,6 +78,10 @@ runCWriter (CWriter m) = runReader m startingContext
 insideFunction :: FunctionName -> CWriter a -> CWriter a
 insideFunction name =
   local (\r -> r {currentFunction = consPath name (currentFunction r)})
+
+-- | Execute some computation, with access to certain globals
+withGlobals :: Globals -> CWriter a -> CWriter a
+withGlobals globals = local (\r -> r { .. })
 
 -- | Traverse our IR representation, gathering all global functions
 --
