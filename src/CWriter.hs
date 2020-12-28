@@ -71,7 +71,8 @@ runCWriter (CWriter m) = runReader m startingContext
 
 -- | Execute some computation inside of a named function
 insideFunction :: FunctionName -> CWriter a -> CWriter a
-insideFunction name = local (\r -> r {currentFunction = consPath name (currentFunction r)})
+insideFunction name =
+  local (\r -> r {currentFunction = consPath name (currentFunction r)})
 
 -- | Traverse our IR representation, gathering all global functions
 --
@@ -94,4 +95,4 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
 writeC :: Cmm -> CCode
 writeC cmm =
   let globals = runCWriter (gatherGlobals cmm)
-  in show globals
+   in show globals
