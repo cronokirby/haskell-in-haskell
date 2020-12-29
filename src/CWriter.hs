@@ -81,7 +81,7 @@ insideFunction name =
 
 -- | Execute some computation, with access to certain globals
 withGlobals :: Globals -> CWriter a -> CWriter a
-withGlobals globals = local (\r -> r { .. })
+withGlobals globals = local (\r -> r {globals = globals})
 
 -- | Traverse our IR representation, gathering all global functions
 --

@@ -29,7 +29,7 @@ module Simplifier
   )
 where
 
-import Control.Monad (forM_, replicateM, when, unless)
+import Control.Monad (forM_, replicateM, unless, when)
 import Control.Monad.Except (Except, MonadError (..), liftEither, runExcept)
 import Control.Monad.Reader (ReaderT (..), ask, asks, local)
 import Control.Monad.State (MonadState, StateT (..), execStateT, get, gets, modify', put)
@@ -37,12 +37,12 @@ import Data.Foldable (asum)
 import Data.Function (on)
 import Data.List (elemIndex, foldl', groupBy, transpose)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, isJust)
+import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Ourlude
 import Parser (ConstructorDefinition (..), ConstructorName, Literal (..), Name, ValName)
 import qualified Parser as P
-import Types (FreeTypeVars(..), Scheme (..), Type (..), TypeName, TypeVar, closeType)
+import Types (FreeTypeVars (..), Scheme (..), Type (..), TypeName, TypeVar, closeType)
 
 data AST t = AST TypeInformation [ValueDefinition t] deriving (Eq, Show)
 
@@ -194,10 +194,7 @@ resolve _ IntT = return IntT
 resolve _ StringT = return StringT
 resolve _ BoolT = return BoolT
 resolve _ (TVar a) = return (TVar a)
-resolve mp (t1 :-> t2) = do
-  t1' <- resolve mp t1
-  t2' <- resolve mp t2
-  return (t1' :-> t2')
+resolve mp (t1 :-> t2) = (:->) <$> resolve mp t1 <*> resolve mp t2
 resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
   Nothing -> Left (UnknownType name)
   Just (Synonym t)
@@ -215,9 +212,8 @@ resolveM expr = do
   either throwResolution return (resolve resolutions' expr)
 
 isConstructor :: HasTypeInformation m => Name -> m Bool
-isConstructor name = do
-  mp <- constructorMap <$> typeInformation
-  return (Map.lookup name mp |> isJust)
+isConstructor name =
+  typeInformation |> fmap (constructorMap >>> Map.member name)
 
 -- Try and lookup the information about a given constructor, failing with a resolution error
 -- if that constructor doesn't exist
@@ -241,21 +237,18 @@ gatherConstructorMap =
           scheme = Scheme typeVars (foldr (:->) ret types)
           info = ConstructorInfo arity scheme number
           freeInScheme = ftv scheme
-      unless (null freeInScheme) <|
-        throwError (UnboundTypeVarsInConstructor (Set.toList freeInScheme) cstr)
+      unless (null freeInScheme)
+        <| throwError (UnboundTypeVarsInConstructor (Set.toList freeInScheme) cstr)
       return (Map.singleton cstr info)
 
 {- Resolving all of the type synonyms -}
 
 -- Which type definitions does this type reference?
 typeDependencies :: Type -> Set.Set TypeName
-typeDependencies StringT = mempty
-typeDependencies IntT = mempty
-typeDependencies BoolT = mempty
-typeDependencies (TVar _) = mempty
-typeDependencies (t1 :-> t2) = typeDependencies t1 <> typeDependencies t2
-typeDependencies (CustomType name exprs) =
-  Set.singleton name <> foldMap typeDependencies exprs
+typeDependencies = \case
+  t1 :-> t2 -> typeDependencies t1 <> typeDependencies t2
+  CustomType name exprs -> Set.singleton name <> foldMap typeDependencies exprs
+  _ -> mempty
 
 -- This is the state we keep track of while sorting the graph of types
 data SorterState = SorterState
@@ -271,6 +264,11 @@ data SorterState = SorterState
 -- which we can modify, and the ability to throw exceptions.
 type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except ResolutionError)) a
 
+-- Run the sorter, given a seed state
+runSorter :: SorterM a -> SorterState -> Either ResolutionError a
+runSorter m st =
+  runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
+
 -- Given a mapping from names to shallow types, find a linear ordering of these types
 --
 -- The types are sorted topologically, based on their dependencies. This means that
@@ -283,11 +281,6 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap r
     -- This acts similarly to a "neighbors" function in a traditional graph
     deps :: TypeName -> Set.Set TypeName
     deps k = Map.findWithDefault Set.empty k (Map.map typeDependencies mp)
-
-    -- Run the sorter, given a seed state
-    runSorter :: SorterM a -> SorterState -> Either ResolutionError a
-    runSorter m st =
-      runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
 
     see :: TypeName -> SorterM Bool
     see name = do
@@ -352,9 +345,8 @@ gatherResolutions defs = do
 
     resolveAll :: [TypeName] -> MakeResolutionM ()
     resolveAll =
-      mapM_ <| \n -> do
-        lookup' <- asks (Map.lookup n)
-        case lookup' of
+      mapM_ <| \n ->
+        asks (Map.lookup n) >>= \case
           Nothing -> throwError (UnknownType n)
           Just unresolved -> do
             resolutions' <- get
@@ -435,36 +427,36 @@ convertValueDefinitions :: [P.ValueDefinition] -> Simplifier [ValueDefinition ()
 convertValueDefinitions =
   groupBy ((==) `on` getName) >>> traverse gather
   where
-    getTypeAnnotations :: [P.ValueDefinition] -> [Type]
-    getTypeAnnotations ls =
-      (catMaybes <<< (`map` ls)) <| \case
-        P.TypeAnnotation _ typ -> Just typ
-        _ -> Nothing
-
-    squashPatterns :: [P.ValueDefinition] -> Simplifier (Matrix (Expr ()))
-    squashPatterns ls = do
-      let strip (P.NameDefinition _ pats body) = do
-            body' <- convertExpr body
-            return (Just (Row pats body'))
-          strip _ = return Nothing
-      stripped <- traverse strip ls
-      let rows = catMaybes stripped
-      return (Matrix rows)
-
     getName :: P.ValueDefinition -> Name
-    getName (P.TypeAnnotation name _) = name
-    getName (P.NameDefinition name _ _) = name
+    getName = \case
+      P.TypeAnnotation name _ -> name
+      P.NameDefinition name _ _ -> name
+
+    getTypeAnnotations :: [P.ValueDefinition] -> [Type]
+    getTypeAnnotations ls = ls |> map pluckAnnotation |> catMaybes
+      where
+        pluckAnnotation = \case
+          P.TypeAnnotation _ typ -> Just typ
+          _ -> Nothing
+
+    makeMatrix :: [P.ValueDefinition] -> Simplifier (Matrix (Expr ()))
+    makeMatrix = traverse makeRow >>> fmap (catMaybes >>> Matrix)
+      where
+        makeRow = \case
+          P.NameDefinition _ pats body ->
+            (Just <<< Row pats) <$> convertExpr body
+          _ -> return Nothing
 
     gather :: [P.ValueDefinition] -> Simplifier (ValueDefinition ())
     gather [] = error "groupBy returned empty list"
-    gather information = do
-      let name = getName (head information)
-          annotations = getTypeAnnotations information
+    gather valueHeads = do
+      let name = getName (head valueHeads)
+          annotations = getTypeAnnotations valueHeads
       schemeExpr <- case map closeType annotations of
         [] -> return Nothing
         [single] -> return (Just single)
         tooMany -> throwError (MultipleTypeAnnotations name tooMany)
-      matrix <- squashPatterns information
+      matrix <- makeMatrix valueHeads
       validateMatrix name matrix
       (names, caseExpr) <- compileMatrix matrix
       let expr = foldr (`LambdaExpr` ()) caseExpr names
@@ -490,14 +482,14 @@ validateMatrix :: MonadError SimplifierError m => ValName -> Matrix a -> m ()
 validateMatrix name (Matrix rows) = do
   let lengths = map (rowPats >>> length) rows
       allEqual = null lengths || all (== head lengths) lengths
-  unless allEqual <|
-    throwError (DifferentPatternLengths name lengths)
-  when (null rows) <|
+  unless allEqual
+    <| throwError (DifferentPatternLengths name lengths)
+  when (null rows)
+    <|
     -- If we're validating a matrix for some name, and there are no patterns,
     -- then there are no definitions for that annotation
     throwError (UnimplementedAnnotation name)
   return ()
-
 
 -- Represents a row in our pattern matrix
 data Row a = Row
@@ -515,11 +507,12 @@ gatherBranches :: [P.Pattern] -> [Branch]
 gatherBranches = foldMap pluckHead >>> Set.toList
   where
     pluckHead :: P.Pattern -> Set.Set Branch
-    pluckHead (P.LiteralPattern l) =
-      Set.singleton (LiteralBranch l)
-    pluckHead (P.ConstructorPattern name pats) =
-      Set.singleton (ConstructorBranch name (length pats))
-    pluckHead _ = Set.empty
+    pluckHead = \case
+      P.LiteralPattern l ->
+        Set.singleton (LiteralBranch l)
+      P.ConstructorPattern name pats ->
+        Set.singleton (ConstructorBranch name (length pats))
+      _ -> Set.empty
 
 -- Get all the columns of a matrix
 columns :: Matrix a -> [[P.Pattern]]
@@ -551,10 +544,11 @@ defaultMatrix (Matrix rows) =
   rows |> filter isDefault |> map stripHead |> Matrix
   where
     isDefault :: Row a -> Bool
-    isDefault (Row [] _) = True
-    isDefault (Row (P.WildcardPattern : _) _) = True
-    isDefault (Row (P.NamePattern _ : _) _) = True
-    isDefault _ = False
+    isDefault = \case
+      Row [] _ -> True
+      Row (P.WildcardPattern : _) _ -> True
+      Row (P.NamePattern _ : _) _ -> True
+      _ -> False
 
     stripHead :: Row a -> Row a
     stripHead (Row pats a) = Row (tail pats) a
@@ -576,12 +570,12 @@ branchMatrix branch (Matrix rows) =
     makeWildCards (ConstructorBranch _ arity) = replicate arity P.WildcardPattern
 
     newPats :: [P.Pattern] -> Maybe [P.Pattern]
-    newPats [] = Just []
-    newPats (P.WildcardPattern : rest) =
-      Just (makeWildCards branch ++ rest)
-    newPats (P.NamePattern _ : rest) =
-      Just (makeWildCards branch ++ rest)
-    newPats (pat : rest) = (++ rest) <$> matches branch pat
+    newPats = \case
+      P.WildcardPattern : rest ->
+        Just (makeWildCards branch ++ rest)
+      P.NamePattern _ : rest ->
+        Just (makeWildCards branch ++ rest)
+      pat : rest -> (++ rest) <$> matches branch pat
 
 -- Represents a decision tree we use to generate a case expression.
 --
