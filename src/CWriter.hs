@@ -134,6 +134,13 @@ writeLine code = do
   tell code
   tell "\n"
 
+-- | Write a comment line
+--
+-- This is useful to have separate, so that we can potentially disable
+-- comment output
+comment :: CCode -> CWriter ()
+comment code = writeLine ("// " <> code)
+
 -- | Modify some computation to be further indented
 indented :: CWriter a -> CWriter a
 indented =
@@ -199,6 +206,7 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
 genFunction :: Function -> CWriter ()
 genFunction Function {..} =
   insideFunction functionName <| do
+    comment (printf "%s" (show functionName))
     current <- displayCurrentFunction
     writeLine (printf "void* %s() {" current)
     indented (writeLine "return NULL;")
