@@ -38,12 +38,10 @@ consPath name = (IdentPath [name] <>)
 -- | Display a path as a piece of C code
 displayPath :: IdentPath -> CCode
 displayPath (IdentPath names) =
-  names |> reverse |> map convertName |> intercalate "_"
+  names |> reverse |> map convertName |> ("hs" :) |> intercalate "_"
   where
     convertName :: FunctionName -> CCode
     convertName = \case
-      -- We need to handle this as a special case
-      PlainFunction "main" -> "_main"
       PlainFunction name -> foldMap convertChar name
       CaseFunction index -> "case_" ++ show index
       Entry -> "_entry"
