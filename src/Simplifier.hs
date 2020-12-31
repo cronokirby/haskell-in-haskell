@@ -576,6 +576,7 @@ branchMatrix branch (Matrix rows) =
       P.NamePattern _ : rest ->
         Just (makeWildCards branch ++ rest)
       pat : rest -> (++ rest) <$> matches branch pat
+      [] -> Just []
 
 -- Represents a decision tree we use to generate a case expression.
 --
