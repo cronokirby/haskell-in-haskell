@@ -22,6 +22,8 @@ module Cmm
     FunctionName (..),
     Function (..),
     Location (..),
+    FunctionBody(..),
+    Body(..),
     cmm,
   )
 where

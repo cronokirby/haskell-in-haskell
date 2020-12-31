@@ -42,3 +42,8 @@ void heap_reserve(size_t amount) {
     collect_garbage();
   }
 }
+
+/// The register holding integer returns
+static int64_t g_IntRegister;
+/// The register holding constructor tag returns
+static int64_t g_TagRegister;

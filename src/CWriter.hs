@@ -202,6 +202,39 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
         thoseMappings <- gatherInFunctions subFunctions
         return (thisMapping <> thoseMappings)
 
+genBody :: Body -> CWriter ()
+genBody _ = do
+  comment "TODO: handle normal bodies"
+  writeLine "return NULL;"
+
+genIntCases :: CCode -> [(Int, Body)] -> Body -> CWriter ()
+genIntCases scrut cases default' = do
+  writeLine (printf "switch (%s) {" scrut)
+  indented <| do
+    forM_ cases genCase
+    genDefault default'
+  writeLine "}"
+  where
+    genCase (i, body) = do
+      writeLine (printf "case %d: {" i)
+      indented (genBody body)
+      writeLine "}"
+
+    genDefault body = do
+      writeLine "default: {"
+      indented (genBody body)
+      writeLine "}"
+
+genStringCases :: [(String, Body)] -> Body -> CWriter ()
+genStringCases _ _ = comment "TODO: Handle string cases"
+
+genFunctionBody :: FunctionBody -> CWriter ()
+genFunctionBody = \case
+  IntCaseBody cases default' -> genIntCases "g_IntRegister" cases default'
+  TagCaseBody cases default' -> genIntCases "g_TagRegister" cases default'
+  StringCaseBody cases default' -> genStringCases cases default'
+  NormalBody body -> genBody body
+
 -- | Generate the C code for a function
 genFunction :: Function -> CWriter ()
 genFunction Function {..} =
@@ -209,7 +242,7 @@ genFunction Function {..} =
     comment (printf "%s" (show functionName))
     current <- displayCurrentFunction
     writeLine (printf "void* %s() {" current)
-    indented (writeLine "return NULL;")
+    indented (genFunctionBody body)
     writeLine "}"
     forM_ subFunctions genFunction
 
