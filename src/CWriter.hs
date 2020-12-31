@@ -11,6 +11,7 @@ import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (intercalate)
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 import Ourlude
 import Text.Printf (printf)
 
@@ -38,6 +39,9 @@ cLocation (LocationTable mp) = \case
   -- so they need to have an entry here
   PrimIntLocation i -> Just (show i)
   other -> Map.lookup other mp
+
+singleLocation :: Location -> CCode -> LocationTable
+singleLocation loc code = LocationTable (Map.singleton loc code)
 
 -- | A type for CCode.
 --
@@ -79,6 +83,10 @@ displayPath (IdentPath names) =
           '_' -> "__"
           x -> pure x
 
+-- | Get the table name for some identifier path
+tableName :: IdentPath -> CCode
+tableName = displayPath >>> ("table_for_" <>)
+
 -- | The number of columns we're currently indented
 type Indent = Int
 
@@ -93,12 +101,21 @@ data Context = Context
     -- | The current indentation
     currentIndent :: Indent,
     -- | A map from function indices to full identifiers
-    globals :: Globals
+    --
+    -- Unlike the standard location table, this contains an abstract
+    -- identifier we can convert into the name of the function,
+    -- or table, or its static pointer.
+    --
+    -- The location table always contains the static pointer of a global
+    globals :: Globals,
+    -- | A table for CCode to use different locations
+    locationTable :: LocationTable
   }
+  deriving (Show)
 
 -- | A context we can use at the start of our traversal
 startingContext :: Context
-startingContext = Context mempty 0 mempty
+startingContext = Context mempty 0 mempty mempty
 
 -- | A computational context we use when generating C code
 newtype CWriter a = CWriter (ReaderT Context (Writer CCode) a)
@@ -128,8 +145,30 @@ insideFunction name =
   local (\r -> r {currentFunction = consPath name (currentFunction r)})
 
 -- | Execute some computation, with access to certain globals
+--
+-- We'll also have access to the location of their tables
 withGlobals :: Globals -> CWriter a -> CWriter a
-withGlobals globals = local (\r -> r {globals = globals})
+withGlobals globals =
+  local (\r -> r {globals = globals})
+    >>> withLocations impliedLocations
+  where
+    table (i, path) = singleLocation (Global i) (tableName path)
+
+    impliedLocations =
+      globals |> IntMap.toList |> foldMap table
+
+-- | Execute some computation, with access to certain locations
+withLocations :: LocationTable -> CWriter a -> CWriter a
+withLocations newLocations =
+  local (\r -> r {locationTable = newLocations <> locationTable r})
+
+-- | Get the CCode to use some location
+getCLocation :: Location -> CWriter CCode
+getCLocation location = do
+  table <- asks locationTable
+  return (fromMaybe err (cLocation table location))
+  where
+    err = error ("could not find C location for " ++ show location)
 
 -- | Compute the the C representation for the current function
 --
