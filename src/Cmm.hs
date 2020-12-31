@@ -21,6 +21,7 @@ module Cmm
   ( Cmm (..),
     FunctionName (..),
     Function (..),
+    Location (..),
     cmm,
   )
 where
@@ -146,7 +147,7 @@ data Location
     PrimIntLocation Int
   | -- | This variable is equal to this primitive string
     PrimStringLocation String
-  deriving (Show)
+  deriving (Eq, Ord, Show)
 
 -- | What type of variable is stored in this location?
 locationType :: Location -> VarType

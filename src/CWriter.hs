@@ -10,8 +10,34 @@ import Control.Monad.Writer
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (intercalate)
+import qualified Data.Map as Map
 import Ourlude
 import Text.Printf (printf)
+
+-- | The type we use to store global function information
+type Globals = IntMap IdentPath
+
+-- | A table telling us how to use each location
+--
+-- Each entry is usually the name of the variable, or piece
+-- of C we can write to use that location.
+--
+-- This map is usually going to be sparse, but filled with the locations
+-- we logically end up using.
+newtype LocationTable = LocationTable (Map.Map Location CCode)
+  deriving (Show, Semigroup, Monoid)
+
+-- | Given a location table, find the CCode to use a given location
+cLocation :: LocationTable -> Location -> Maybe CCode
+cLocation (LocationTable mp) = \case
+  CurrentNode -> Just "g_NodeRegister"
+  IntRegister -> Just "g_IntRegister"
+  StringRegister -> Just "g_StringRegister"
+  -- Integers don't need to be allocated, so we can always use them
+  -- Strings, on the other hand, do need to be explicitly located,
+  -- so they need to have an entry here
+  PrimIntLocation i -> Just (show i)
+  other -> Map.lookup other mp
 
 -- | A type for CCode.
 --
@@ -52,9 +78,6 @@ displayPath (IdentPath names) =
           '\'' -> "_t_"
           '_' -> "__"
           x -> pure x
-
--- | The type we use to store global function information
-type Globals = IntMap IdentPath
 
 -- | The number of columns we're currently indented
 type Indent = Int
