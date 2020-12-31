@@ -270,6 +270,20 @@ genFunction Function {..} =
     writeLine "}"
     forM_ subFunctions genFunction
 
+genMainFunction :: CWriter ()
+genMainFunction = do
+  writeLine "int main() {"
+  indented <| do
+    writeLine "setup();"
+    let entry = displayPath (IdentPath [Entry])
+    writeLine (printf "CodeLabel label = &%s;" entry)
+    writeLine "while (label != NULL) {"
+    indented (writeLine "label = (CodeLabel)label();")
+    writeLine "}"
+    writeLine "cleanup();"
+    writeLine "return 0;"
+  writeLine "}"
+
 -- | Generate CCode for our Cmm IR
 genCmm :: Cmm -> CWriter ()
 genCmm (Cmm functions entry) = do
@@ -278,6 +292,8 @@ genCmm (Cmm functions entry) = do
     genFunction f
     writeLine ""
   genFunction entry
+  writeLine ""
+  genMainFunction
 
 -- | Convert our Cmm IR into actual C code
 writeC :: Cmm -> CCode

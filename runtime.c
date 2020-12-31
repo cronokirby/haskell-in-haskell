@@ -9,16 +9,16 @@ void panic(const char *message) {
   exit(-1);
 }
 
-/// An entry function takes no arguments, and returns the next function.
+/// A code label takes no arguments, and returns the next function.
 ///
 /// We have to return a void*, because we can't easily have a recursive
 /// type here. But, this is basically always an `EntryFunction*`.
-typedef void *(*EntryFunction)(void);
+typedef void *(*CodeLabel)(void);
 
 /// An InfoTable contains the information about the functions of a closure
 typedef struct InfoTable {
   /// The function we can call to enter the closure
-  EntryFunction entry;
+  CodeLabel entry;
 } InfoTable;
 
 /// A data structure representing our global Heap of memory
