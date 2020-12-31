@@ -49,6 +49,9 @@ singleLocation loc code = LocationTable (Map.singleton loc code)
 -- for our explanation purposes
 type CCode = String
 
+cAllocationSize :: CCode
+cAllocationSize = "allocation_size"
+
 -- | Represents a sequence of function names
 --
 -- This is a useful intermediate step to help us convert our tree of functions
@@ -212,7 +215,7 @@ reserveBodySpace :: Body -> CWriter ()
 reserveBodySpace (Body alloc _) | alloc == mempty = return ()
 reserveBodySpace (Body Allocation {..} _) = do
   comment "reserve enough space on the heap"
-  writeLine "size_t allocation_size = 0;"
+  writeLine (printf "size_t %s = 0;" cAllocationSize)
   addSize "table allocations" "sizeof(void*)" tablesAllocated
   addSize "pointer allocations" "sizeof(void*)" pointersAllocated
   addSize "int allocations" "sizeof(int64_t)" intsAllocated
@@ -220,13 +223,13 @@ reserveBodySpace (Body Allocation {..} _) = do
   unless (null primitiveStringsAllocated)
     <| comment "primitive string allocations"
   forM_ primitiveStringsAllocated <| \s -> do
-    writeLine (printf "allocation_size += sizeof(void*) + strlen(%s) + 1;" s)
-  writeLine "heap_reserve(allocation_size);\n"
+    writeLine (printf "%s += sizeof(void*) + strlen(%s) + 1;" cAllocationSize s)
+  writeLine (printf "heap_reserve(%s);\n" cAllocationSize)
   where
     addSize _ _ 0 = return ()
     addSize cmt sizeof count = do
       comment cmt
-      writeLine (printf "allocation_size += %d * %s;" count sizeof)
+      writeLine (printf "%s += %d * %s;" cAllocationSize count sizeof)
 
 genIntCases :: CCode -> [(Int, Body)] -> Body -> CWriter ()
 genIntCases scrut cases default' = do
