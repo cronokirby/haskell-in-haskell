@@ -203,9 +203,30 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
         return (thisMapping <> thoseMappings)
 
 genBody :: Body -> CWriter ()
-genBody _ = do
+genBody body = do
+  reserveBodySpace body
   comment "TODO: handle normal bodies"
   writeLine "return NULL;"
+
+reserveBodySpace :: Body -> CWriter ()
+reserveBodySpace (Body alloc _) | alloc == mempty = return ()
+reserveBodySpace (Body Allocation {..} _) = do
+  comment "reserve enough space on the heap"
+  writeLine "size_t allocation_size = 0;"
+  addSize "table allocations" "sizeof(void*)" tablesAllocated
+  addSize "pointer allocations" "sizeof(void*)" pointersAllocated
+  addSize "int allocations" "sizeof(int64_t)" intsAllocated
+  addSize "string allocations" "sizeof(uint8_t*)" stringsAllocated
+  unless (null primitiveStringsAllocated)
+    <| comment "primitive string allocations"
+  forM_ primitiveStringsAllocated <| \s -> do
+    writeLine (printf "allocation_size += sizeof(void*) + strlen(%s) + 1;" s)
+  writeLine "heap_reserve(allocation_size);\n"
+  where
+    addSize _ _ 0 = return ()
+    addSize cmt sizeof count = do
+      comment cmt
+      writeLine (printf "allocation_size += %d * %s;" count sizeof)
 
 genIntCases :: CCode -> [(Int, Body)] -> Body -> CWriter ()
 genIntCases scrut cases default' = do

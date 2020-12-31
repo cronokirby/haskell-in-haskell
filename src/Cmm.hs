@@ -24,6 +24,7 @@ module Cmm
     Location (..),
     FunctionBody(..),
     Body(..),
+    Allocation (..),
     cmm,
   )
 where
@@ -277,7 +278,7 @@ data Allocation = Allocation
     pointersAllocated :: Int,
     -- | The number of ints inside closures allocated
     intsAllocated :: Int,
-    -- | The number of points to strings inside closures allocated
+    -- | The number of pointers to strings inside closures allocated
     stringsAllocated :: Int,
     -- | The raw strings that this function allocates
     --
@@ -285,7 +286,7 @@ data Allocation = Allocation
     -- depends on the length of the string.
     primitiveStringsAllocated :: [String]
   }
-  deriving (Show)
+  deriving (Eq, Show)
 
 instance Semigroup Allocation where
   Allocation t p i s ps <> Allocation t' p' i' s' ps' =
