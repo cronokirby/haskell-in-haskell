@@ -56,17 +56,26 @@ displayPath (IdentPath names) =
 -- | The type we use to store global function information
 type Globals = IntMap IdentPath
 
+-- | The number of columns we're currently indented
+type Indent = Int
+
+-- | The number of columns each level of indentation should have
+indentAmount :: Indent
+indentAmount = 2
+
 -- | The context we have access to while generating C code
 data Context = Context
   { -- | The path to the current function that we're working on
     currentFunction :: IdentPath,
+    -- | The current indentation
+    currentIndent :: Indent,
     -- | A map from function indices to full identifiers
     globals :: Globals
   }
 
 -- | A context we can use at the start of our traversal
 startingContext :: Context
-startingContext = Context mempty mempty
+startingContext = Context mempty 0 mempty
 
 -- | A computational context we use when generating C code
 newtype CWriter a = CWriter (ReaderT Context (Writer CCode) a)
@@ -80,8 +89,15 @@ runCWriter (CWriter m) =
 -- | Write a line of C code in the context
 writeLine :: CCode -> CWriter ()
 writeLine code = do
+  amount <- asks currentIndent
+  tell (replicate amount ' ')
   tell code
   tell "\n"
+
+-- | Modify some computation to be further indented
+indented :: CWriter a -> CWriter a
+indented =
+  local (\r -> r {currentIndent = indentAmount + currentIndent r})
 
 -- | Execute some computation inside of a named function
 insideFunction :: FunctionName -> CWriter a -> CWriter a
@@ -123,7 +139,7 @@ genFunction Function {..} =
   insideFunction functionName <| do
     current <- displayCurrentFunction
     writeLine (printf "void* %s() {" current)
-    writeLine "  return NULL;"
+    indented (writeLine "return NULL;")
     writeLine "}"
     forM_ subFunctions genFunction
 
