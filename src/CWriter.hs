@@ -246,14 +246,19 @@ withSubFunctionTable functions m = do
       table = functions |> map makePath |> zip [0 ..] |> IntMap.fromList
   local (\r -> r {subFunctionTable = table}) m
 
--- | Get the C function associated with the nth sub function in the current scope
-getSubFunction :: Index -> CWriter CCode
-getSubFunction n = do
-  table <- asks subFunctionTable
-  let path = IntMap.findWithDefault err n table
-  return (displayPath path)
+getSubFunctionPath :: Index -> CWriter IdentPath
+getSubFunctionPath n =
+  asks (subFunctionTable >>> IntMap.findWithDefault err n)
   where
     err = error ("Sub Function " <> show n <> " has no C function associated with it")
+
+-- | Get the C function associated with the nth sub function in the current scope
+getSubFunction :: Index -> CWriter CCode
+getSubFunction = getSubFunctionPath >>> fmap displayPath
+
+-- | Get the table name for some sub function index
+getTableName :: Index -> CWriter CCode
+getTableName = getSubFunctionPath >>> fmap tableName
 
 -- | Get the CCode to use some location
 getCLocation :: Location -> CWriter CCode
@@ -520,8 +525,11 @@ genFunction :: Function -> CWriter ()
 genFunction Function {..} =
   insideFunction functionName <| do
     comment (printf "%s" (show functionName))
-    current <- displayCurrentFunction
+    currentPath <- asks currentFunction
+    let current = displayPath currentPath
+        currentTable = tableName currentPath
     writeLine (printf "void* %s(void);" current)
+    writeLine (printf "InfoTable %s = { &%s };" currentTable current)
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
     withSubFunctionTable subFunctions
