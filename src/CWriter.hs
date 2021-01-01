@@ -351,13 +351,12 @@ reserveBodySpace (Body Allocation {..} _ _) = do
       comment cmt
       writeLine (printf "%s += %d * %s;" allocationSizeVar count sizeof)
 
-genIntCases :: ArgInfo -> CCode -> [(Int, Body)] -> Body -> CWriter ()
-genIntCases buriedArgs scrut cases default' = do
-  writeLine (printf "switch (%s) {" scrut)
-  indented <| do
-    forM_ cases genCase
-    genDefault default'
-  writeLine "}"
+genContinuationBody :: ArgInfo -> Body -> CWriter ()
+genContinuationBody buriedArgs body = do
+  reserveBodySpace body
+  args <- popConstructorArgs body
+  buried <- popBuriedArgs buriedArgs
+  withLocations (args <> buried) (genInstructions body)
   where
     popConstructorArgs :: Body -> CWriter LocationTable
     popConstructorArgs (Body _ 0 _) = return mempty
@@ -370,7 +369,6 @@ genIntCases buriedArgs scrut cases default' = do
           writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
           return (ConstructorArg n, var)
       return (manyLocations pairs)
-
     popBuriedArgs :: ArgInfo -> CWriter LocationTable
     popBuriedArgs (ArgInfo 0 0 0) = return mempty
     popBuriedArgs ArgInfo {..} = do
@@ -413,20 +411,22 @@ genIntCases buriedArgs scrut cases default' = do
               return (BuriedString n, var)
           return (manyLocations pairs)
 
-    handleBody body = do
-      reserveBodySpace body
-      args <- popConstructorArgs body
-      buried <- popBuriedArgs buriedArgs
-      withLocations (args <> buried) (genInstructions body)
-
+genIntCases :: ArgInfo -> CCode -> [(Int, Body)] -> Body -> CWriter ()
+genIntCases buriedArgs scrut cases default' = do
+  writeLine (printf "switch (%s) {" scrut)
+  indented <| do
+    forM_ cases genCase
+    genDefault default'
+  writeLine "}"
+  where
     genCase (i, body) = do
       writeLine (printf "case %d: {" i)
-      indented (handleBody body)
+      indented (genContinuationBody buriedArgs body)
       writeLine "}"
 
     genDefault body = do
       writeLine "default: {"
-      indented (handleBody body)
+      indented (genContinuationBody buriedArgs body)
       writeLine "}"
 
 genStringCases :: ArgInfo -> [(String, Body)] -> Body -> CWriter ()
@@ -440,6 +440,8 @@ genFunctionBody argCount boundArgs = \case
     genIntCases boundArgs "g_TagRegister" cases default'
   StringCaseBody cases default' ->
     genStringCases boundArgs cases default'
+  ContinuationBody body ->
+    genContinuationBody boundArgs body
   NormalBody body -> genNormalBody argCount boundArgs body
 
 -- | Generate the C code for a function

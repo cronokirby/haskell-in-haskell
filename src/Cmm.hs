@@ -338,6 +338,10 @@ data FunctionBody
     StringCaseBody [(String, Body)] Body
   | -- | A case branching on a tag
     TagCaseBody [(Tag, Body)] Body
+  | -- | A function body of a continuation
+    --
+    -- This is kind of like a normal body, but bound arguments are buried instead.
+    ContinuationBody Body
   | -- | Represents a normal function body
     NormalBody Body
   deriving (Show)
@@ -617,7 +621,7 @@ genCaseFunction index bound alts =
         makeDirectBody :: Expr -> ContextM (FunctionBody, [Function])
         makeDirectBody expr = do
           (body, subFunctions) <- genFunctionBody expr
-          return (NormalBody body, subFunctions)
+          return (ContinuationBody body, subFunctions)
 
     handleBranches ::
       ([(a, Body)] -> Body -> FunctionBody) ->
