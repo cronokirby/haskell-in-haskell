@@ -298,14 +298,21 @@ instance Semigroup Allocation where
 instance Monoid Allocation where
   mempty = Allocation 0 0 0 0 []
 
+-- | The number of constructor args passed to a body
+--
+-- This is 0 out of convenience if this isn't a body of a case branch,
+-- in which case any other value would be meaningless
+type ConstructorArgs = Int
+
 -- | A body has some instructions, and allocation information
-data Body = Body Allocation [Instruction] deriving (Show)
+data Body = Body Allocation ConstructorArgs [Instruction] deriving (Show)
 
 instance Semigroup Body where
-  Body alloc1 instrs1 <> Body alloc2 instrs2 = Body (alloc1 <> alloc2) (instrs1 <> instrs2)
+  Body alloc1 count1 instrs1 <> Body alloc2 count2 instrs2 =
+    Body (alloc1 <> alloc2) (count1 + count2) (instrs1 <> instrs2)
 
 instance Monoid Body where
-  mempty = Body mempty mempty
+  mempty = Body mempty 0 mempty
 
 -- | Information we have about the arguments used in some function
 --
@@ -596,10 +603,13 @@ genCaseFunction index bound alts =
              in TagCaseBody withoutNames
 
           genConstrCaseBody :: (Tag, [ValName]) -> Expr -> ContextM (Body, [Function])
-          genConstrCaseBody (_, names) =
+          genConstrCaseBody (_, names) expr =
             let storages = zip names (repeat (LocalStorage PointerVar))
                 locations = zip names (map ConstructorArg [0 ..])
-             in withStorages storages <<< withLocations locations <<< genFunctionBody
+             in withStorages storages <| withLocations locations <| do
+                  (body, fns) <- genFunctionBody expr
+                  -- We include the number of names as the number of constructor args
+                  return (Body mempty (length names) mempty <> body, fns)
       where
         withTypeAndLocation name typ location =
           withStorages [(name, LocalStorage typ)] >>> withLocations [(name, location)]
@@ -623,7 +633,7 @@ genCaseFunction index bound alts =
       default' <- forM defaultExpr genFunctionBody
       let branchBodies = map fst branches'
           branchSubFunctions = foldMap snd branches'
-          (defaultBody, defaultSubFunctions) = fromMaybe (Body mempty [], []) default'
+          (defaultBody, defaultSubFunctions) = fromMaybe (mempty, []) default'
           body = makeBody branchBodies defaultBody
           subFunctions = branchSubFunctions <> defaultSubFunctions
       return (body, subFunctions)
@@ -638,7 +648,7 @@ genCaseExpr scrut bound alts = do
   addNSubFunctions 1
   (scrutBody, scrutFunctions) <- genFunctionBody scrut
   buryBound <- getBuryBound
-  let thisBody = Body mempty (buryBound <> [PushCaseContinuation index])
+  let thisBody = Body mempty 0 (buryBound <> [PushCaseContinuation index])
   return (thisBody <> scrutBody, caseFunction : scrutFunctions)
   where
     getBuryBound :: ContextM [Instruction]
@@ -668,7 +678,7 @@ genLet bindings expr = do
     withLocations locations <| do
       subFunctions <- genSubFunctions
       letInstrs <- genLetInstrs
-      let thisBody = Body allocations letInstrs
+      let thisBody = Body allocations 0 letInstrs
       -- This needs to be done at least after letInstrs, since letInstrs needs
       -- to know the number of sub functions we had before
       addNSubFunctions (length subFunctions)
@@ -746,7 +756,7 @@ genFunctionBody = \case
         ]
   Primitive (PrimString s) ->
     let instrs = [StoreString (PrimStringLocation s), EnterCaseContinuation]
-     in return (Body (Allocation 0 0 0 0 [s]) instrs, [])
+     in return (Body (Allocation 0 0 0 0 [s]) 0 instrs, [])
   Box IntBox atom -> do
     loc <- atomAsInt atom
     return
@@ -774,7 +784,7 @@ genFunctionBody = \case
     instrs <- genBuiltinInstructions b args
     return (justInstructions instrs)
   where
-    justInstructions instructions = (Body mempty instructions, [])
+    justInstructions instructions = (Body mempty 0 instructions, [])
 
 separateNames :: [ValName] -> ContextM ([ValName], [ValName], [ValName])
 separateNames bound = do

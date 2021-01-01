@@ -223,8 +223,8 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
 --
 -- This assumes that all the necessary locations have been supplied
 genInstructions :: Body -> CWriter ()
-genInstructions (Body _ []) = writeLine "return NULL;"
-genInstructions (Body _ instrs) = forM_ instrs <| \instr -> do
+genInstructions (Body _ _ []) = writeLine "return NULL;"
+genInstructions (Body _ _ instrs) = forM_ instrs <| \instr -> do
   comment (show instr)
   genInstr instr
   where
@@ -256,8 +256,8 @@ genNormalBody argCount boundArgs body = do
       return (manyLocations pairs)
 
 reserveBodySpace :: Body -> CWriter ()
-reserveBodySpace (Body alloc _) | alloc == mempty = return ()
-reserveBodySpace (Body Allocation {..} _) = do
+reserveBodySpace (Body alloc _ _) | alloc == mempty = return ()
+reserveBodySpace (Body Allocation {..} _ _) = do
   comment "reserve enough space on the heap"
   writeLine (printf "size_t %s = 0;" allocationSizeVar)
   addSize "table allocations" "sizeof(void*)" tablesAllocated
