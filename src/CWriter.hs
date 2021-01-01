@@ -350,6 +350,20 @@ genInstructions (Body _ _ instrs) =
         getCLocation location >>= \l -> do
           writeLine (printf "g_SA.top[0] = %s;" l)
           writeLine "++g_SA.top;"
+      AllocTable index -> do
+        let var = allocatedVar index
+        table <- getTableName index
+        writeLine (printf "uint8_t* %s = heap_cursor();" var)
+        writeLine (printf "heap_write_info_table(&%s);" table)
+      AllocPointer location ->
+        getCLocation location >>= \l ->
+          writeLine (printf "heap_write_ptr(%s);" l)
+      AllocInt location ->
+        getCLocation location >>= \l ->
+          writeLine (printf "heap_write_int(%s);" l)
+      AllocString location ->
+        getCLocation location >>= \l ->
+          writeLine (printf "heap_write_ptr(%s);" l)
       other -> comment "TODO: Handle this correctly"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
@@ -416,8 +430,8 @@ reserveBodySpace (Body alloc _ _) | alloc == mempty = return ()
 reserveBodySpace (Body Allocation {..} _ _) = do
   comment "reserve enough space on the heap"
   writeLine (printf "size_t %s = 0;" allocationSizeVar)
-  addSize "table allocations" "sizeof(void*)" tablesAllocated
-  addSize "pointer allocations" "sizeof(void*)" pointersAllocated
+  addSize "table allocations" "sizeof(InfoTable*)" tablesAllocated
+  addSize "pointer allocations" "sizeof(uint8_t*)" pointersAllocated
   addSize "int allocations" "sizeof(int64_t)" intsAllocated
   addSize "string allocations" "sizeof(uint8_t*)" stringsAllocated
   writeLine (printf "heap_reserve(%s);\n" allocationSizeVar)

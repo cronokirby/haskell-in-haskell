@@ -56,6 +56,32 @@ void heap_reserve(size_t amount) {
   }
 }
 
+/// Get a current cursor, where writes to the Heap will happen
+uint8_t *heap_cursor() {
+  return g_Heap.cursor;
+}
+
+/// Write a pointer into the heap
+void heap_write_ptr(uint8_t *ptr) {
+  size_t bytes = sizeof(uint8_t *);
+  memcpy(g_Heap.cursor, &ptr, bytes);
+  g_Heap.cursor += bytes;
+}
+
+/// Write an info table pointer into the heap
+void heap_write_info_table(InfoTable *ptr) {
+  size_t bytes = sizeof(InfoTable);
+  memcpy(g_Heap.cursor, &ptr, bytes);
+  g_Heap.cursor += bytes;
+}
+
+/// Write an integer into the heap
+void heap_write_int(int64_t x) {
+  size_t bytes = sizeof(int64_t);
+  memcpy(g_Heap.cursor, &x, bytes);
+  g_Heap.cursor += bytes;
+}
+
 /// Read a ptr from a chunk of data
 uint8_t *read_ptr(uint8_t *data) {
   uint8_t *ret;
