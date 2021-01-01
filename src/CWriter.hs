@@ -85,6 +85,10 @@ boundStringVar n = "bound_string_" <> show n
 closurePointerTmp :: CCode
 closurePointerTmp = "tmp_closure_ptr"
 
+-- | A variable name for the Nth sub function allocated
+allocatedVar :: Index -> CCode
+allocatedVar n = "allocated_" <> show n
+
 {- Nested Identifiers -}
 
 -- | Represents a sequence of function names
@@ -390,9 +394,16 @@ genFunction Function {..} =
     comment (printf "%s" (show functionName))
     current <- displayCurrentFunction
     writeLine (printf "void* %s() {" current)
-    indented (genFunctionBody argCount boundArgs body)
+    withLocations maybeAllocatedClosures <| indented
+      <| genFunctionBody argCount boundArgs body
     writeLine "}"
     forM_ subFunctions genFunction
+  where
+    -- The idea is that we'll initialize these variable on demand as we
+    -- see actual alloc instructions, but we know what we're going to name that
+    -- variable already.
+    maybeAllocatedClosures =
+      manyLocations [(Allocated n, allocatedVar n) | n <- zipWith const [0 ..] subFunctions]
 
 genMainFunction :: CWriter ()
 genMainFunction = do
