@@ -101,6 +101,10 @@ buriedIntVar n = "buried_int_" <> show n
 buriedStringVar :: Index -> CCode
 buriedStringVar n = "buried_string_" <> show n
 
+-- | A variable name for a continuation we're about to enter
+continuationVar :: CCode
+continuationVar = "continuation"
+
 {- Nested Identifiers -}
 
 -- | Represents a sequence of function names
@@ -301,9 +305,6 @@ genInstructions (Body _ _ instrs) =
       Enter _ -> do
         comment "TODO: Handle this correctly"
         writeLine "return NULL;"
-      EnterCaseContinuation -> do
-        comment "TODO: Handle this correctly"
-        writeLine "return NULL;"
       PushSA location ->
         getCLocation location >>= \l -> do
           writeLine (printf "g_SA.top[0] = %s;" l)
@@ -316,6 +317,9 @@ genInstructions (Body _ _ instrs) =
         function <- getSubFunction index
         writeLine (printf "g_SB.top[0].as_continuation = &%s;" function)
         writeLine "++g_SB.top;"
+      EnterCaseContinuation -> do
+        writeLine "--g_SB.top;"
+        writeLine "return g_SB.top[0].as_continuation;"
       Exit -> writeLine "return NULL;"
       other -> comment "TODO: Handle this correctly"
 
