@@ -224,6 +224,15 @@ withGlobals globals =
     impliedLocations =
       globals |> IntMap.toList |> foldMap table
 
+-- | Get the C function for some global
+getGlobalFunction :: Index -> CWriter CCode
+getGlobalFunction i = do
+  globals' <- asks globals
+  let path = IntMap.findWithDefault err i globals'
+  return (displayPath path)
+  where
+    err = error ("Global Function " <> show i <> " does not exist")
+
 -- | Execute some computation, with access to certain locations
 withLocations :: LocationTable -> CWriter a -> CWriter a
 withLocations newLocations =
@@ -302,9 +311,6 @@ genInstructions (Body _ _ instrs) =
         writeLine (printf "g_ConstructorArgCountRegister = %d;" count)
       PopExcessConstructorArgs ->
         writeLine "g_SA.top -= g_ConstructorArgCountRegister;"
-      Enter _ -> do
-        comment "TODO: Handle this correctly"
-        writeLine "return NULL;"
       PushSA location ->
         getCLocation location >>= \l -> do
           writeLine (printf "g_SA.top[0] = %s;" l)
@@ -317,6 +323,12 @@ genInstructions (Body _ _ instrs) =
         function <- getSubFunction index
         writeLine (printf "g_SB.top[0].as_continuation = &%s;" function)
         writeLine "++g_SB.top;"
+      Enter (Global i) ->
+        getGlobalFunction i >>= \l ->
+          writeLine (printf "return &%s;" l)
+      Enter location ->
+        getCLocation location >>= \l ->
+          writeLine (printf "return read_info_table(%s)->entry;" l)
       EnterCaseContinuation -> do
         writeLine "--g_SB.top;"
         writeLine "return g_SB.top[0].as_continuation;"

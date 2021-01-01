@@ -70,6 +70,13 @@ int64_t read_int(uint8_t *data) {
   return ret;
 }
 
+/// Read a pointer to an info table from a chunk of data
+InfoTable *read_info_table(uint8_t *data) {
+  InfoTable *ret;
+  memcpy(&ret, data, sizeof(InfoTable *));
+  return ret;
+}
+
 /// Represents the argument stack
 ///
 /// Each argument represents the location in memory where the closure
