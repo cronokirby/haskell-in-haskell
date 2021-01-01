@@ -276,6 +276,8 @@ genInstructions (Body _ _ instrs) =
       StoreTag tag -> writeLine (printf "g_TagRegister = %d;" tag)
       StoreConstructorArgCount count ->
         writeLine (printf "g_ConstructorArgCountRegister = %d;" count)
+      PopExcessConstructorArgs ->
+        writeLine "g_SA.top -= g_ConstructorArgCountRegister;"
       Enter _ -> do
         comment "TODO: Handle this correctly"
         writeLine "return NULL;"
