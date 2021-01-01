@@ -56,10 +56,10 @@ void heap_reserve(size_t amount) {
   }
 }
 
-/// Read an info table pointer from a chunk of data
-InfoTable *read_info_table(uint8_t *data) {
-  InfoTable *ret;
-  memcpy(&ret, data, sizeof(InfoTable *));
+/// Read a ptr from a chunk of data
+uint8_t *read_ptr(uint8_t *data) {
+  uint8_t *ret;
+  memcpy(&ret, data, sizeof(uint8_t *));
   return ret;
 }
 
@@ -70,27 +70,20 @@ int64_t read_int(uint8_t *data) {
   return ret;
 }
 
-/// Read out a string from a chunk of data
-///
-/// This makes judicious use of our representation of strings as closures.
-uint8_t *read_string(uint8_t *data) {
-  uint8_t *closure;
-  memcpy(&closure, data, sizeof(uint8_t *));
-  // We adjust to skip the info table for the string closure, and go to the data
-  return closure + sizeof(InfoTable *);
-}
-
 /// Represents the argument stack
+///
+/// Each argument represents the location in memory where the closure
+/// for that argument is stored. You can sort of think of this as InfoTable**.
 typedef struct StackA {
   /// The top of the argument stack.
   ///
   /// The stack grows upward, with the current pointer always
   /// pointing at valid memory, but containing no "live" value.
-  InfoTable **top;
+  uint8_t **top;
   /// The base pointer of the argument stack.
   ///
   /// We need to keep this around to free the stack on program exit.
-  InfoTable **base;
+  uint8_t **base;
 } StackA;
 
 /// The "A" or argument stack
@@ -101,9 +94,8 @@ StackA g_SA = {NULL, NULL};
 /// This is either a pointer to string data, a 64 bit integer, or a function
 /// pointer for a continuation.
 typedef union StackBItem {
-  uint8_t *string_item;
-  int64_t int_item;
-  CodeLabel cont_item;
+  int64_t as_int;
+  CodeLabel as_continuation;
 } StackBItem;
 
 /// Represents the secondary stack.

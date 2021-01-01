@@ -89,6 +89,18 @@ closurePointerTmp = "tmp_closure_ptr"
 allocatedVar :: Index -> CCode
 allocatedVar n = "allocated_" <> show n
 
+-- | A variable name for the Nth buried pointer
+buriedPtrVar :: Index -> CCode
+buriedPtrVar n = "buried_ptr_" <> show n
+
+-- | A variable name for the Nth buried int
+buriedIntVar :: Index -> CCode
+buriedIntVar n = "buried_int_" <> show n
+
+-- | A variable name for the Nth buried string
+buriedStringVar :: Index -> CCode
+buriedStringVar n = "buried_string_" <> show n
+
 {- Nested Identifiers -}
 
 -- | Represents a sequence of function names
@@ -278,7 +290,7 @@ genNormalBody argCount bound body = do
       pairs <-
         forM [0 .. argCount - 1] <| \n -> do
           let var = argVar n
-          writeLine (printf "InfoTable* %s = g_SA.top[%d];" var n)
+          writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
           return (Arg n, var)
       return (manyLocations pairs)
 
@@ -296,8 +308,8 @@ genNormalBody argCount bound body = do
             pairs <-
               forM [0 .. count - 1] <| \n -> do
                 let var = boundPointerVar n
-                writeLine (printf "InfoTable* %s = read_info_table(%s);" var closurePointerTmp)
-                writeLine (printf "%s += sizeof(InfoTable*);" closurePointerTmp)
+                writeLine (printf "uint8_t* %s = read_ptr(%s);" var closurePointerTmp)
+                writeLine (printf "%s += sizeof(uint8_t*);" closurePointerTmp)
                 return (Bound n, var)
             return (manyLocations pairs)
         popInts = case boundInts of
@@ -318,7 +330,7 @@ genNormalBody argCount bound body = do
             pairs <-
               forM [0 .. count - 1] <| \n -> do
                 let var = boundStringVar n
-                writeLine (printf "uint8_t* %s = read_string(%s);" var closurePointerTmp)
+                writeLine (printf "uint8_t* %s = read_ptr(%s);" var closurePointerTmp)
                 writeLine (printf "%s += sizeof(uint8_t*);" closurePointerTmp)
                 return (BoundString n, var)
             return (manyLocations pairs)
@@ -355,14 +367,57 @@ genIntCases buriedArgs scrut cases default' = do
       pairs <-
         forM [0 .. count - 1] <| \n -> do
           let var = constructorArgVar n
-          writeLine (printf "InfoTable* %s = g_SA.top[%d];" var n)
+          writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
           return (ConstructorArg n, var)
       return (manyLocations pairs)
 
+    popBuriedArgs :: ArgInfo -> CWriter LocationTable
+    popBuriedArgs (ArgInfo 0 0 0) = return mempty
+    popBuriedArgs ArgInfo {..} = do
+      comment "resurrecting buried locals"
+      sequence
+        [ popPointers boundPointers,
+          popInts boundInts,
+          popStrings boundStrings
+        ]
+        |> fmap fold
+      where
+        popPointers 0 = return mempty
+        popPointers count = do
+          comment "buried pointers"
+          writeLine (printf "g_SA.top -= %d;" count)
+          pairs <-
+            forM [0 .. count - 1] <| \n -> do
+              let var = buriedPtrVar n
+              writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
+              return (Buried n, var)
+          return (manyLocations pairs)
+        popInts 0 = return mempty
+        popInts count = do
+          comment "buried ints"
+          writeLine (printf "g_SB.top -= %d;" count)
+           pairs <-
+            forM [0 .. count - 1] <| \n -> do
+              let var = buriedIntVar n
+              writeLine (printf "int64_t %s = g_SB.top[%d].as_int;" var n)
+              return (BuriedInt n, var)
+          return (manyLocations pairs)
+        popStrings 0 = return mempty
+        popStrings count = do
+          comment "buried strings"
+          writeLine (printf "g_SA.top -= %d;" count)
+           pairs <-
+            forM [0 .. count - 1] <| \n -> do
+              let var = buriedStringVar n
+              writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
+              return (BuriedString n, var)
+          return (manyLocations pairs)
+
     handleBody body = do
       reserveBodySpace body
-      locations <- popConstructorArgs body
-      withLocations locations (genInstructions body)
+      args <- popConstructorArgs body
+      buried <- popBuriedArgs buriedArgs
+      withLocations (args <> buried) (genInstructions body)
 
     genCase (i, body) = do
       writeLine (printf "case %d: {" i)
