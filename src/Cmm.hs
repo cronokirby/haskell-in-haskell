@@ -28,6 +28,8 @@ module Cmm
     Instruction (..),
     Index,
     Allocation (..),
+    Builtin2(..),
+    Builtin1(..),
     cmm,
   )
 where

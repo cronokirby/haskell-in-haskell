@@ -304,6 +304,24 @@ genInstructions (Body _ _ instrs) =
     comment (show instr)
     genInstr instr
   where
+    genB1 b l = case b of
+      PrintInt1 -> writeLine (printf "printf(\"%%ld\\n\", %s);" l)
+      PrintString1 -> comment "TODO: Handle this correctly"
+      Negate1 -> writeLine (printf "g_IntRegister = -%s;" l)
+
+    genB2 b l1 l2 = case b of
+      Add2 -> writeLine (printf "g_IntRegister = %s + %s;" l1 l2)
+      Sub2 -> writeLine (printf "g_IntRegister = %s - %s;" l1 l2)
+      Mul2 -> writeLine (printf "g_IntRegister = %s * %s;" l1 l2)
+      Div2 -> writeLine (printf "g_IntRegister = %s / %s;" l1 l2)
+      Less2 -> writeLine (printf "g_IntRegister = %s < %s;" l1 l2)
+      LessEqual2 -> writeLine (printf "g_IntRegister = %s <= %s;" l1 l2)
+      Greater2 -> writeLine (printf "g_IntRegister = %s > %s;" l1 l2)
+      GreaterEqual2 -> writeLine (printf "g_IntRegister = %s >= %s;" l1 l2)
+      EqualTo2 -> writeLine (printf "g_IntRegister = %s == %s;" l1 l2)
+      NotEqualTo2 -> writeLine (printf "g_IntRegister = %s /= %s;" l1 l2)
+      Concat2 -> comment "TODO: Handle this correctly"
+
     genInstr = \case
       StoreInt location ->
         getCLocation location >>= \l ->
@@ -327,6 +345,11 @@ genInstructions (Body _ _ instrs) =
         writeLine "--g_SB.top;"
         writeLine "return g_SB.top[0].as_continuation;"
       Exit -> writeLine "return NULL;"
+      Builtin2 b location1 location2 -> do
+        l1 <- getCLocation location1
+        l2 <- getCLocation location2
+        genB2 b l1 l2
+      Builtin1 b location -> getCLocation location >>= genB1 b
       PushSA location ->
         getCLocation location >>= \l -> do
           writeLine (printf "g_SA.top[0] = %s;" l)

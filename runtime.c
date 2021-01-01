@@ -163,7 +163,7 @@ static const size_t STACK_SIZE = 1 << 10;
 
 /// Setup all the memory areas that we need
 void setup() {
-  g_Heap.data = malloc(BASE_HEAP_SIZE * sizeof(uint8_t));
+  g_Heap.data = malloc(BASE_HEAP_SIZE * sizeof(uint8_t *));
   if (g_Heap.data == NULL) {
     panic("Failed to initialize Heap");
   }
