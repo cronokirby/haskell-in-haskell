@@ -661,7 +661,7 @@ genCaseExpr scrut bound alts = do
       buryPtrs <- foldMapM bury ptrs
       buryInts <- foldMapM bury ints
       buryStrings <- foldMapM bury strings
-      return (buryStrings <> buryInts <> buryPtrs)
+      return (buryPtrs <> buryInts <> buryStrings)
       where
         bury :: ValName -> ContextM [Instruction]
         bury name = do

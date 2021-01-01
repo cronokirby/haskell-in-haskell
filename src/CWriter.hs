@@ -311,6 +311,16 @@ genInstructions (Body _ _ instrs) =
         writeLine (printf "g_ConstructorArgCountRegister = %d;" count)
       PopExcessConstructorArgs ->
         writeLine "g_SA.top -= g_ConstructorArgCountRegister;"
+      Enter (Global i) ->
+        getGlobalFunction i >>= \l ->
+          writeLine (printf "return &%s;" l)
+      Enter location ->
+        getCLocation location >>= \l ->
+          writeLine (printf "return read_info_table(%s)->entry;" l)
+      EnterCaseContinuation -> do
+        writeLine "--g_SB.top;"
+        writeLine "return g_SB.top[0].as_continuation;"
+      Exit -> writeLine "return NULL;"
       PushSA location ->
         getCLocation location >>= \l -> do
           writeLine (printf "g_SA.top[0] = %s;" l)
@@ -323,16 +333,18 @@ genInstructions (Body _ _ instrs) =
         function <- getSubFunction index
         writeLine (printf "g_SB.top[0].as_continuation = &%s;" function)
         writeLine "++g_SB.top;"
-      Enter (Global i) ->
-        getGlobalFunction i >>= \l ->
-          writeLine (printf "return &%s;" l)
-      Enter location ->
-        getCLocation location >>= \l ->
-          writeLine (printf "return read_info_table(%s)->entry;" l)
-      EnterCaseContinuation -> do
-        writeLine "--g_SB.top;"
-        writeLine "return g_SB.top[0].as_continuation;"
-      Exit -> writeLine "return NULL;"
+      Bury location ->
+        getCLocation location >>= \l -> do
+          writeLine (printf "g_SA.top[0] = %s;" l)
+          writeLine "++g_SA.top;"
+      BuryInt location ->
+        getCLocation location >>= \l -> do
+          writeLine (printf "g_SB.top[0].as_int = %s;" l)
+          writeLine "++g_SB.top;"
+      BuryString location ->
+        getCLocation location >>= \l -> do
+          writeLine (printf "g_SA.top[0] = %s;" l)
+          writeLine "++g_SA.top;"
       other -> comment "TODO: Handle this correctly"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()

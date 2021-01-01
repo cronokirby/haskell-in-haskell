@@ -118,6 +118,11 @@ StackB g_SB = {NULL, NULL};
 
 /// The register holding integer returns
 int64_t g_IntRegister = 0xBAD;
+/// The register holding string values
+///
+/// This is **not** a pointer to the character data, but rather,
+/// the location in memory where this string closure resides.
+uint8_t *g_StringRegister = NULL;
 /// The register holding constructor tag returns
 int64_t g_TagRegister = 0xBAD;
 /// The register holding the number of constructor args returned
