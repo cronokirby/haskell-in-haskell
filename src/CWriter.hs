@@ -305,7 +305,7 @@ genNormalBody argCount bound body = do
                 let var = boundIntVar n
                 writeLine (printf "int64_t %s = read_int(%s);" var closurePointerTmp)
                 writeLine (printf "%s += sizeof(int64_t);" closurePointerTmp)
-                return (Bound n, var)
+                return (BoundInt n, var)
             return (manyLocations pairs)
         popStrings = case boundStrings of
           0 -> return mempty
@@ -316,7 +316,7 @@ genNormalBody argCount bound body = do
                 let var = boundStringVar n
                 writeLine (printf "uint8_t* %s = read_string(%s);" var closurePointerTmp)
                 writeLine (printf "%s += sizeof(uint8_t*);" closurePointerTmp)
-                return (Bound n, var)
+                return (BoundString n, var)
             return (manyLocations pairs)
 
 reserveBodySpace :: Body -> CWriter ()
