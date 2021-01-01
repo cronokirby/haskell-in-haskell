@@ -163,13 +163,15 @@ data Context = Context
     -- The location table always contains the static pointer of a global
     globals :: Globals,
     -- | A table for CCode to use different locations
-    locationTable :: LocationTable
+    locationTable :: LocationTable,
+    -- | A table mapping indexed sub functions to full identifier paths
+    subFunctionTable :: IntMap IdentPath
   }
   deriving (Show)
 
 -- | A context we can use at the start of our traversal
 startingContext :: Context
-startingContext = Context mempty 0 mempty mempty
+startingContext = Context mempty 0 mempty mempty mempty
 
 -- | A computational context we use when generating C code
 newtype CWriter a = CWriter (ReaderT Context (Writer CCode) a)
@@ -222,6 +224,23 @@ withGlobals globals =
 withLocations :: LocationTable -> CWriter a -> CWriter a
 withLocations newLocations =
   local (\r -> r {locationTable = newLocations <> locationTable r})
+
+-- | Execute some computation, with access to certain sub function locations
+withSubFunctionTable :: [Function] -> CWriter a -> CWriter a
+withSubFunctionTable functions m = do
+  current <- asks currentFunction
+  let makePath Function {..} = consPath functionName current
+      table = functions |> map makePath |> zip [0 ..] |> IntMap.fromList
+  local (\r -> r {subFunctionTable = table}) m
+
+-- | Get the C function associated with the nth sub function in the current scope
+getSubFunction :: Index -> CWriter CCode
+getSubFunction n = do
+  table <- asks subFunctionTable
+  let path = IntMap.findWithDefault err n table
+  return (displayPath path)
+  where
+    err = error ("Sub Function " <> show n <> " has no C function associated with it")
 
 -- | Get the CCode to use some location
 getCLocation :: Location -> CWriter CCode
@@ -292,6 +311,10 @@ genInstructions (Body _ _ instrs) =
         getCLocation location >>= \l -> do
           writeLine (printf "g_SA.top[0] = %s;" l)
           writeLine "++g_SA.top;"
+      PushCaseContinuation index -> do
+        function <- getSubFunction index
+        writeLine (printf "g_SB.top[0].as_continuation = &%s;" function)
+        writeLine "++g_SB.top;"
       Exit -> writeLine "return NULL;"
       other -> comment "TODO: Handle this correctly"
 
@@ -470,7 +493,9 @@ genFunction Function {..} =
     comment (printf "%s" (show functionName))
     current <- displayCurrentFunction
     writeLine (printf "void* %s() {" current)
-    withLocations maybeAllocatedClosures <| indented
+    withSubFunctionTable subFunctions
+      <| withLocations maybeAllocatedClosures
+      <| indented
       <| genFunctionBody argCount boundArgs body
     writeLine "}"
     forM_ subFunctions genFunction
