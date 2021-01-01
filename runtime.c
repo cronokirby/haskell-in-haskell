@@ -59,13 +59,13 @@ void heap_reserve(size_t amount) {
 typedef struct StackA {
   /// The top of the argument stack.
   ///
-  /// The stack grows downward, with the current pointer always
+  /// The stack grows upward, with the current pointer always
   /// pointing at valid memory, but containing no "live" value.
-  InfoTable *top;
+  InfoTable **top;
   /// The base pointer of the argument stack.
   ///
   /// We need to keep this around to free the stack on program exit.
-  InfoTable *base;
+  InfoTable **base;
 } StackA;
 
 /// The "A" or argument stack
@@ -83,14 +83,14 @@ static const size_t STACK_SIZE = 1 << 10;
 
 /// Setup all the memory areas that we need
 void setup() {
-  g_Heap.data = malloc(BASE_HEAP_SIZE);
+  g_Heap.data = malloc(BASE_HEAP_SIZE * sizeof(uint8_t));
   if (g_Heap.data == NULL) {
     panic("Failed to initialize Heap");
   }
   g_Heap.cursor = g_Heap.data;
   g_Heap.capacity = BASE_HEAP_SIZE;
 
-  g_SA.base = malloc(STACK_SIZE);
+  g_SA.base = malloc(STACK_SIZE * sizeof(InfoTable *));
   if (g_SA.base == NULL) {
     panic("Failed to initialize Stack");
   }

@@ -19,11 +19,14 @@
 -- analyze those to generate nicer C code.
 module Cmm
   ( Cmm (..),
+    ArgInfo (..),
     FunctionName (..),
     Function (..),
     Location (..),
-    FunctionBody(..),
-    Body(..),
+    FunctionBody (..),
+    Body (..),
+    Instruction (..),
+    Index,
     Allocation (..),
     cmm,
   )
@@ -641,9 +644,9 @@ genCaseExpr scrut bound alts = do
     getBuryBound :: ContextM [Instruction]
     getBuryBound = do
       (ptrs, ints, strings) <- separateNames bound
-      buryPtrs <- foldMapM bury (reverse ptrs)
-      buryInts <- foldMapM bury (reverse ints)
-      buryStrings <- foldMapM bury (reverse strings)
+      buryPtrs <- foldMapM bury ptrs
+      buryInts <- foldMapM bury ints
+      buryStrings <- foldMapM bury strings
       return (buryStrings <> buryInts <> buryPtrs)
       where
         bury :: ValName -> ContextM [Instruction]
@@ -761,11 +764,11 @@ genFunctionBody = \case
   Apply f args -> do
     fLoc <- getLocation f
     argLocs <- mapM atomAsPointer args
-    let instrs = map PushSA (reverse argLocs) <> [Enter fLoc]
+    let instrs = map PushSA argLocs <> [Enter fLoc]
     return (justInstructions instrs)
   Constructor tag args -> do
     argLocs <- mapM atomAsPointer args
-    let instrs = [StoreTag tag] <> map PushConstructorArg (reverse argLocs) <> [EnterCaseContinuation]
+    let instrs = [StoreTag tag] <> map PushConstructorArg argLocs <> [EnterCaseContinuation]
     return (justInstructions instrs)
   Builtin b args -> do
     instrs <- genBuiltinInstructions b args

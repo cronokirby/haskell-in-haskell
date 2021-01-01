@@ -18,6 +18,8 @@ import Text.Printf (printf)
 -- | The type we use to store global function information
 type Globals = IntMap IdentPath
 
+{- Locations -}
+
 -- | A table telling us how to use each location
 --
 -- Each entry is usually the name of the variable, or piece
@@ -43,20 +45,32 @@ cLocation (LocationTable mp) = \case
 singleLocation :: Location -> CCode -> LocationTable
 singleLocation loc code = LocationTable (Map.singleton loc code)
 
+manyLocations :: [(Location, CCode)] -> LocationTable
+manyLocations = Map.fromList >>> LocationTable
+
 -- | A type for CCode.
 --
 -- We could use something more efficient than a string, but this is ok
 -- for our explanation purposes
 type CCode = String
 
-cAllocationSize :: CCode
-cAllocationSize = "allocation_size"
+{- Common variable names -}
+
+-- | A variable name for allocation
+allocationSizeVar :: CCode
+allocationSizeVar = "allocation_size"
+
+-- | A variable name for the Nth argument passed to us
+nthArgumentVar :: Index -> CCode
+nthArgumentVar n = "arg_" <> show n
+
+{- Nested Identifiers -}
 
 -- | Represents a sequence of function names
 --
 -- This is a useful intermediate step to help us convert our tree of functions
 -- into flat C functions.
-data IdentPath = IdentPath [FunctionName] deriving (Eq, Show)
+newtype IdentPath = IdentPath [FunctionName] deriving (Eq, Show)
 
 instance Semigroup IdentPath where
   IdentPath names <> IdentPath names' = IdentPath (names <> names')
@@ -205,17 +219,47 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
         thoseMappings <- gatherInFunctions subFunctions
         return (thisMapping <> thoseMappings)
 
-genBody :: Body -> CWriter ()
-genBody body = do
+-- | Generate the C code to handle the instructions in a body
+--
+-- This assumes that all the necessary locations have been supplied
+genInstructions :: Body -> CWriter ()
+genInstructions (Body _ []) = writeLine "return NULL;"
+genInstructions (Body _ instrs) = forM_ instrs <| \instr -> do
+  comment (show instr)
+  genInstr instr
+  where
+    genInstr = \case
+      Enter _ -> do
+        comment "TODO: Handle this correctly"
+        writeLine "return NULL;"
+      EnterCaseContinuation -> do
+        comment "TODO: Handle this correctly"
+        writeLine "return NULL;"
+      Exit -> writeLine "return NULL;";
+      other -> comment "TODO: Handle this correctly"
+
+genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
+genNormalBody argCount boundArgs body = do
   reserveBodySpace body
-  comment "TODO: handle normal bodies"
-  writeLine "return NULL;"
+  args <- if argCount <= 0 then return mempty else popArgs
+  withLocations args (genInstructions body)
+  where
+    popArgs :: CWriter LocationTable
+    popArgs = do
+      comment "popping stack arguments"
+      writeLine (printf "g_SA.top -= %d;" argCount)
+      pairs <-
+        forM [0 .. argCount - 1] <| \n -> do
+          let var = nthArgumentVar n
+          writeLine (printf "InfoTable* %s = g_SA.top[%d];" var n)
+          return (Arg n, var)
+      return (manyLocations pairs)
 
 reserveBodySpace :: Body -> CWriter ()
 reserveBodySpace (Body alloc _) | alloc == mempty = return ()
 reserveBodySpace (Body Allocation {..} _) = do
   comment "reserve enough space on the heap"
-  writeLine (printf "size_t %s = 0;" cAllocationSize)
+  writeLine (printf "size_t %s = 0;" allocationSizeVar)
   addSize "table allocations" "sizeof(void*)" tablesAllocated
   addSize "pointer allocations" "sizeof(void*)" pointersAllocated
   addSize "int allocations" "sizeof(int64_t)" intsAllocated
@@ -223,16 +267,16 @@ reserveBodySpace (Body Allocation {..} _) = do
   unless (null primitiveStringsAllocated)
     <| comment "primitive string allocations"
   forM_ primitiveStringsAllocated <| \s -> do
-    writeLine (printf "%s += sizeof(void*) + strlen(%s) + 1;" cAllocationSize s)
-  writeLine (printf "heap_reserve(%s);\n" cAllocationSize)
+    writeLine (printf "%s += sizeof(void*) + strlen(%s) + 1;" allocationSizeVar s)
+  writeLine (printf "heap_reserve(%s);\n" allocationSizeVar)
   where
     addSize _ _ 0 = return ()
     addSize cmt sizeof count = do
       comment cmt
-      writeLine (printf "%s += %d * %s;" cAllocationSize count sizeof)
+      writeLine (printf "%s += %d * %s;" allocationSizeVar count sizeof)
 
-genIntCases :: CCode -> [(Int, Body)] -> Body -> CWriter ()
-genIntCases scrut cases default' = do
+genIntCases :: ArgInfo -> CCode -> [(Int, Body)] -> Body -> CWriter ()
+genIntCases buriedArgs scrut cases default' = do
   writeLine (printf "switch (%s) {" scrut)
   indented <| do
     forM_ cases genCase
@@ -241,23 +285,30 @@ genIntCases scrut cases default' = do
   where
     genCase (i, body) = do
       writeLine (printf "case %d: {" i)
-      indented (genBody body)
+      indented <| do
+        reserveBodySpace body
+        genInstructions body
       writeLine "}"
 
     genDefault body = do
       writeLine "default: {"
-      indented (genBody body)
+      indented <| do
+        reserveBodySpace body
+        genInstructions body
       writeLine "}"
 
-genStringCases :: [(String, Body)] -> Body -> CWriter ()
-genStringCases _ _ = comment "TODO: Handle string cases"
+genStringCases :: ArgInfo -> [(String, Body)] -> Body -> CWriter ()
+genStringCases _ _ _ = comment "TODO: Handle string cases"
 
-genFunctionBody :: FunctionBody -> CWriter ()
-genFunctionBody = \case
-  IntCaseBody cases default' -> genIntCases "g_IntRegister" cases default'
-  TagCaseBody cases default' -> genIntCases "g_TagRegister" cases default'
-  StringCaseBody cases default' -> genStringCases cases default'
-  NormalBody body -> genBody body
+genFunctionBody :: Int -> ArgInfo -> FunctionBody -> CWriter ()
+genFunctionBody argCount boundArgs = \case
+  IntCaseBody cases default' ->
+    genIntCases boundArgs "g_IntRegister" cases default'
+  TagCaseBody cases default' ->
+    genIntCases boundArgs "g_TagRegister" cases default'
+  StringCaseBody cases default' ->
+    genStringCases boundArgs cases default'
+  NormalBody body -> genNormalBody argCount boundArgs body
 
 -- | Generate the C code for a function
 genFunction :: Function -> CWriter ()
@@ -266,7 +317,7 @@ genFunction Function {..} =
     comment (printf "%s" (show functionName))
     current <- displayCurrentFunction
     writeLine (printf "void* %s() {" current)
-    indented (genFunctionBody body)
+    indented (genFunctionBody argCount boundArgs body)
     writeLine "}"
     forM_ subFunctions genFunction
 
