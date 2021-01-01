@@ -274,6 +274,8 @@ genInstructions (Body _ _ instrs) =
         getCLocation location >>= \l ->
           writeLine (printf "g_StringRegister = %s;" l)
       StoreTag tag -> writeLine (printf "g_TagRegister = %d;" tag)
+      StoreConstructorArgCount count ->
+        writeLine (printf "g_ConstructorArgCountRegister = %d;" count)
       Enter _ -> do
         comment "TODO: Handle this correctly"
         writeLine "return NULL;"

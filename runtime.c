@@ -113,6 +113,8 @@ StackB g_SB = {NULL, NULL};
 int64_t g_IntRegister = 0xBAD;
 /// The register holding constructor tag returns
 int64_t g_TagRegister = 0xBAD;
+/// The register holding the number of constructor args returned
+int64_t g_ConstructorArgCountRegister = 0xBAD;
 /// The register holding the location of the current closure
 uint8_t *g_NodeRegister = NULL;
 
