@@ -280,6 +280,7 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
 -- This assumes that all the necessary locations have been supplied
 genInstructions :: Body -> CWriter ()
 genInstructions (Body _ _ []) = writeLine "return NULL;"
+genInstructions (Body _ _ [PopExcessConstructorArgs]) = writeLine "return NULL;"
 genInstructions (Body _ _ instrs) =
   forM_ instrs <| \instr -> do
     comment (show instr)
@@ -492,13 +493,14 @@ genFunction Function {..} =
   insideFunction functionName <| do
     comment (printf "%s" (show functionName))
     current <- displayCurrentFunction
+    writeLine (printf "void* %s(void);" current)
+    forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
     withSubFunctionTable subFunctions
       <| withLocations maybeAllocatedClosures
       <| indented
       <| genFunctionBody argCount boundArgs body
     writeLine "}"
-    forM_ subFunctions genFunction
   where
     -- The idea is that we'll initialize these variable on demand as we
     -- see actual alloc instructions, but we know what we're going to name that
