@@ -222,6 +222,10 @@ data Instruction
     StoreString Location
   | -- | Store a given tag into the tag register
     StoreTag Tag
+  | -- | Store the number of constructors we're returning
+    StoreConstructorArgCount Int
+  | -- | Pop the constructor args we're not using
+    PopExcessConstructorArgs
   | -- | Enter the code stored at a given location
     --
     -- For this to be valid, that location needs to actually contain *code*,
@@ -598,9 +602,10 @@ genCaseFunction index bound alts =
         handleBranches makeCaseBody genConstrCaseBody branches defaultExpr
         where
           makeCaseBody :: [((Tag, [ValName]), Body)] -> Body -> FunctionBody
-          makeCaseBody branches' =
+          makeCaseBody branches' defaultBody =
             let withoutNames = [(tag, body) | ((tag, _), body) <- branches']
-             in TagCaseBody withoutNames
+                removeExcessArgs = Body mempty 0 [PopExcessConstructorArgs]
+             in TagCaseBody withoutNames (removeExcessArgs <> defaultBody)
 
           genConstrCaseBody :: (Tag, [ValName]) -> Expr -> ContextM (Body, [Function])
           genConstrCaseBody (_, names) expr =
@@ -778,7 +783,10 @@ genFunctionBody = \case
     return (justInstructions instrs)
   Constructor tag args -> do
     argLocs <- mapM atomAsPointer args
-    let instrs = [StoreTag tag] <> map PushConstructorArg argLocs <> [EnterCaseContinuation]
+    let instrs =
+          [StoreTag tag, StoreConstructorArgCount (length args)]
+            <> map PushConstructorArg argLocs
+            <> [EnterCaseContinuation]
     return (justInstructions instrs)
   Builtin b args -> do
     instrs <- genBuiltinInstructions b args
