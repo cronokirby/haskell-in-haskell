@@ -328,10 +328,6 @@ reserveBodySpace (Body Allocation {..} _ _) = do
   addSize "pointer allocations" "sizeof(void*)" pointersAllocated
   addSize "int allocations" "sizeof(int64_t)" intsAllocated
   addSize "string allocations" "sizeof(uint8_t*)" stringsAllocated
-  unless (null primitiveStringsAllocated)
-    <| comment "primitive string allocations"
-  forM_ primitiveStringsAllocated <| \s -> do
-    writeLine (printf "%s += sizeof(void*) + strlen(%s) + 1;" allocationSizeVar s)
   writeLine (printf "heap_reserve(%s);\n" allocationSizeVar)
   where
     addSize _ _ 0 = return ()

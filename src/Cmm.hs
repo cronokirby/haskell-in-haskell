@@ -286,21 +286,16 @@ data Allocation = Allocation
     -- | The number of ints inside closures allocated
     intsAllocated :: Int,
     -- | The number of pointers to strings inside closures allocated
-    stringsAllocated :: Int,
-    -- | The raw strings that this function allocates
-    --
-    -- We need to know exactly which strings, becuase how much memory is allocated
-    -- depends on the length of the string.
-    primitiveStringsAllocated :: [String]
+    stringsAllocated :: Int
   }
   deriving (Eq, Show)
 
 instance Semigroup Allocation where
-  Allocation t p i s ps <> Allocation t' p' i' s' ps' =
-    Allocation (t + t') (p + p') (i + i') (s + s') (ps <> ps')
+  Allocation t p i s <> Allocation t' p' i' s' =
+    Allocation (t + t') (p + p') (i + i') (s + s')
 
 instance Monoid Allocation where
-  mempty = Allocation 0 0 0 0 []
+  mempty = Allocation 0 0 0 0
 
 -- | The number of constructor args passed to a body
 --
@@ -331,7 +326,7 @@ data ArgInfo = ArgInfo
     -- | How many bound strings there are
     boundStrings :: Int
   }
-  deriving (Show)
+  deriving (Eq, Show)
 
 -- | Represents the body of a function.
 --
@@ -701,12 +696,12 @@ genLet bindings expr = do
     getAllocations :: Int -> ContextM Allocation
     getAllocations tableCount = do
       formAllocations <- foldMapM (\(Binding _ form) -> formAllocation form) bindings
-      return (Allocation tableCount 0 0 0 [] <> formAllocations)
+      return (Allocation tableCount 0 0 0 <> formAllocations)
       where
         formAllocation :: LambdaForm -> ContextM Allocation
         formAllocation (LambdaForm bound _ _ _) = do
           (boundPtrs, boundInts, boundStrings) <- separateNames bound
-          return (Allocation 0 (length boundPtrs) (length boundInts) (length boundStrings) [])
+          return (Allocation 0 (length boundPtrs) (length boundInts) (length boundStrings))
 
     getLocations :: ContextM [(ValName, Location)]
     getLocations = do
@@ -761,7 +756,7 @@ genFunctionBody = \case
         ]
   Primitive (PrimString s) ->
     let instrs = [StoreString (PrimStringLocation s), EnterCaseContinuation]
-     in return (Body (Allocation 0 0 0 0 [s]) 0 instrs, [])
+     in return (Body (Allocation 0 0 0 0) 0 instrs, [])
   Box IntBox atom -> do
     loc <- atomAsInt atom
     return
