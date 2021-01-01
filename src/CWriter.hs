@@ -320,7 +320,8 @@ genInstructions (Body _ _ instrs) =
         getGlobalFunction i >>= \l ->
           writeLine (printf "return &%s;" l)
       Enter location ->
-        getCLocation location >>= \l ->
+        getCLocation location >>= \l -> do
+          writeLine (printf "g_NodeRegister = %s;" l)
           writeLine (printf "return read_info_table(%s)->entry;" l)
       EnterCaseContinuation -> do
         writeLine "--g_SB.top;"
