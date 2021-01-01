@@ -284,6 +284,14 @@ genInstructions (Body _ _ instrs) =
       EnterCaseContinuation -> do
         comment "TODO: Handle this correctly"
         writeLine "return NULL;"
+      PushSA location ->
+        getCLocation location >>= \l -> do
+          writeLine (printf "g_SA.top[0] = %s;" l)
+          writeLine "++g_SA.top;"
+      PushConstructorArg location ->
+        getCLocation location >>= \l -> do
+          writeLine (printf "g_SA.top[0] = %s;" l)
+          writeLine "++g_SA.top;"
       Exit -> writeLine "return NULL;"
       other -> comment "TODO: Handle this correctly"
 
