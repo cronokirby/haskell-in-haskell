@@ -96,6 +96,27 @@ typedef struct StackA {
 /// The "A" or argument stack
 StackA g_SA = {NULL, NULL};
 
+/// Represents an item on the secondary stack.
+///
+/// This is either a pointer to string data, a 64 bit integer, or a function
+/// pointer for a continuation.
+typedef union StackBItem {
+  uint8_t *string_item;
+  int64_t int_item;
+  CodeLabel cont_item;
+} StackBItem;
+
+/// Represents the secondary stack.
+///
+/// This contains various things: ints, strings, and continuations.
+typedef struct StackB {
+  StackBItem *top;
+  StackBItem *base;
+} StackB;
+
+/// The secondary stack
+StackB g_SB = {NULL, NULL};
+
 /// The register holding integer returns
 int64_t g_IntRegister = 0xBAD;
 /// The register holding constructor tag returns
@@ -119,13 +140,20 @@ void setup() {
 
   g_SA.base = malloc(STACK_SIZE * sizeof(InfoTable *));
   if (g_SA.base == NULL) {
-    panic("Failed to initialize Stack");
+    panic("Failed to initialize Argument Stack");
   }
   g_SA.top = g_SA.base + STACK_SIZE - 1;
+
+  g_SB.base = malloc(STACK_SIZE * sizeof(StackBItem));
+  if (g_SB.base == NULL) {
+    panic("Failed to initialize Secondary Stack");
+  }
+  g_SB.top = g_SB.base + STACK_SIZE - 1;
 }
 
 /// Cleanup all the memory areas that we've created
 void cleanup() {
   free(g_Heap.data);
   free(g_SA.base);
+  free(g_SB.base);
 }
