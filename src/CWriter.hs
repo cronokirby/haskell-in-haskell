@@ -396,7 +396,7 @@ genIntCases buriedArgs scrut cases default' = do
         popInts count = do
           comment "buried ints"
           writeLine (printf "g_SB.top -= %d;" count)
-           pairs <-
+          pairs <-
             forM [0 .. count - 1] <| \n -> do
               let var = buriedIntVar n
               writeLine (printf "int64_t %s = g_SB.top[%d].as_int;" var n)
@@ -406,7 +406,7 @@ genIntCases buriedArgs scrut cases default' = do
         popStrings count = do
           comment "buried strings"
           writeLine (printf "g_SA.top -= %d;" count)
-           pairs <-
+          pairs <-
             forM [0 .. count - 1] <| \n -> do
               let var = buriedStringVar n
               writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
