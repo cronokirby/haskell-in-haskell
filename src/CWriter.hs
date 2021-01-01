@@ -61,8 +61,12 @@ allocationSizeVar :: CCode
 allocationSizeVar = "allocation_size"
 
 -- | A variable name for the Nth argument passed to us
-nthArgumentVar :: Index -> CCode
-nthArgumentVar n = "arg_" <> show n
+argVar :: Index -> CCode
+argVar n = "arg_" <> show n
+
+-- | A variable name for the Nth constructor argument passed to us
+constructorArgVar :: Index -> CCode
+constructorArgVar n = "constructor_arg_" <> show n
 
 {- Nested Identifiers -}
 
@@ -224,9 +228,10 @@ gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
 -- This assumes that all the necessary locations have been supplied
 genInstructions :: Body -> CWriter ()
 genInstructions (Body _ _ []) = writeLine "return NULL;"
-genInstructions (Body _ _ instrs) = forM_ instrs <| \instr -> do
-  comment (show instr)
-  genInstr instr
+genInstructions (Body _ _ instrs) =
+  forM_ instrs <| \instr -> do
+    comment (show instr)
+    genInstr instr
   where
     genInstr = \case
       Enter _ -> do
@@ -235,7 +240,7 @@ genInstructions (Body _ _ instrs) = forM_ instrs <| \instr -> do
       EnterCaseContinuation -> do
         comment "TODO: Handle this correctly"
         writeLine "return NULL;"
-      Exit -> writeLine "return NULL;";
+      Exit -> writeLine "return NULL;"
       other -> comment "TODO: Handle this correctly"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
@@ -250,7 +255,7 @@ genNormalBody argCount boundArgs body = do
       writeLine (printf "g_SA.top -= %d;" argCount)
       pairs <-
         forM [0 .. argCount - 1] <| \n -> do
-          let var = nthArgumentVar n
+          let var = argVar n
           writeLine (printf "InfoTable* %s = g_SA.top[%d];" var n)
           return (Arg n, var)
       return (manyLocations pairs)
@@ -283,18 +288,31 @@ genIntCases buriedArgs scrut cases default' = do
     genDefault default'
   writeLine "}"
   where
+    popConstructorArgs :: Body -> CWriter LocationTable
+    popConstructorArgs (Body _ 0 _) = return mempty
+    popConstructorArgs (Body _ count _) = do
+      comment "popping constructor arguments"
+      writeLine (printf "g_SA.top -= %d;" count)
+      pairs <-
+        forM [0 .. count - 1] <| \n -> do
+          let var = constructorArgVar n
+          writeLine (printf "InfoTable* %s = g_SA.top[%d];" var n)
+          return (ConstructorArg n, var)
+      return (manyLocations pairs)
+
+    handleBody body = do
+      reserveBodySpace body
+      locations <- popConstructorArgs body
+      withLocations locations (genInstructions body)
+
     genCase (i, body) = do
       writeLine (printf "case %d: {" i)
-      indented <| do
-        reserveBodySpace body
-        genInstructions body
+      indented (handleBody body)
       writeLine "}"
 
     genDefault body = do
       writeLine "default: {"
-      indented <| do
-        reserveBodySpace body
-        genInstructions body
+      indented (handleBody body)
       writeLine "}"
 
 genStringCases :: ArgInfo -> [(String, Body)] -> Body -> CWriter ()
