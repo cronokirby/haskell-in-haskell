@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /// exit the program, displaying an error message
 void panic(const char *message) {
@@ -55,6 +56,30 @@ void heap_reserve(size_t amount) {
   }
 }
 
+/// Read an info table pointer from a chunk of data
+InfoTable *read_info_table(uint8_t *data) {
+  InfoTable *ret;
+  memcpy(&ret, data, sizeof(InfoTable *));
+  return ret;
+}
+
+/// Read a 64 bit integer from a chunk of data
+int64_t read_int(uint8_t *data) {
+  int64_t ret;
+  memcpy(&ret, data, sizeof(int64_t));
+  return ret;
+}
+
+/// Read out a string from a chunk of data
+///
+/// This makes judicious use of our representation of strings as closures.
+uint8_t *read_string(uint8_t *data) {
+  uint8_t *closure;
+  memcpy(&closure, data, sizeof(uint8_t *));
+  // We adjust to skip the info table for the string closure, and go to the data
+  return closure + sizeof(InfoTable *);
+}
+
 /// Represents the argument stack
 typedef struct StackA {
   /// The top of the argument stack.
@@ -75,6 +100,8 @@ StackA g_SA = {NULL, NULL};
 int64_t g_IntRegister = 0xBAD;
 /// The register holding constructor tag returns
 int64_t g_TagRegister = 0xBAD;
+/// The register holding the location of the current closure
+uint8_t *g_NodeRegister = NULL;
 
 /// The starting size for the Heap
 static const size_t BASE_HEAP_SIZE = 1 << 16;

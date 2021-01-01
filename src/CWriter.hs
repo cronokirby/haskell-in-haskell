@@ -7,6 +7,7 @@ module CWriter (writeC) where
 import Cmm hiding (cmm)
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Data.Foldable (Foldable (fold))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (intercalate)
@@ -67,6 +68,22 @@ argVar n = "arg_" <> show n
 -- | A variable name for the Nth constructor argument passed to us
 constructorArgVar :: Index -> CCode
 constructorArgVar n = "constructor_arg_" <> show n
+
+-- | A variable name for the Nth bound pointer in this closure
+boundPointerVar :: Index -> CCode
+boundPointerVar n = "bound_pointer_" <> show n
+
+-- | A variable name for the Nth bound int in this closure
+boundIntVar :: Index -> CCode
+boundIntVar n = "bound_int_" <> show n
+
+-- | A variable name for the Nth bound string in this closure
+boundStringVar :: Index -> CCode
+boundStringVar n = "bound_string_" <> show n
+
+-- | A temp variable for reading out of a closure
+closurePointerTmp :: CCode
+closurePointerTmp = "tmp_closure_ptr"
 
 {- Nested Identifiers -}
 
@@ -244,10 +261,11 @@ genInstructions (Body _ _ instrs) =
       other -> comment "TODO: Handle this correctly"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
-genNormalBody argCount boundArgs body = do
+genNormalBody argCount bound body = do
   reserveBodySpace body
   args <- if argCount <= 0 then return mempty else popArgs
-  withLocations args (genInstructions body)
+  boundArgs <- popBound bound
+  withLocations (args <> boundArgs) (genInstructions body)
   where
     popArgs :: CWriter LocationTable
     popArgs = do
@@ -259,6 +277,47 @@ genNormalBody argCount boundArgs body = do
           writeLine (printf "InfoTable* %s = g_SA.top[%d];" var n)
           return (Arg n, var)
       return (manyLocations pairs)
+
+    popBound :: ArgInfo -> CWriter LocationTable
+    popBound (ArgInfo 0 0 0) = return mempty
+    popBound ArgInfo {..} = do
+      comment "pulling bound arguments"
+      writeLine (printf "uint8_t* %s = g_NodeRegister + sizeof(InfoTable*);" closurePointerTmp)
+      fold <$> sequence [popPointers, popInts, popStrings]
+      where
+        popPointers = case boundPointers of
+          0 -> return mempty
+          count -> do
+            comment "pulling bound pointers"
+            pairs <-
+              forM [0 .. count - 1] <| \n -> do
+                let var = boundPointerVar n
+                writeLine (printf "InfoTable* %s = read_info_table(%s);" var closurePointerTmp)
+                writeLine (printf "%s += sizeof(InfoTable*);" closurePointerTmp)
+                return (Bound n, var)
+            return (manyLocations pairs)
+        popInts = case boundInts of
+          0 -> return mempty
+          count -> do
+            comment "pulling bound ints"
+            pairs <-
+              forM [0 .. count - 1] <| \n -> do
+                let var = boundIntVar n
+                writeLine (printf "int64_t %s = read_int(%s);" var closurePointerTmp)
+                writeLine (printf "%s += sizeof(int64_t);" closurePointerTmp)
+                return (Bound n, var)
+            return (manyLocations pairs)
+        popStrings = case boundStrings of
+          0 -> return mempty
+          count -> do
+            comment "pulling bound strings"
+            pairs <-
+              forM [0 .. count - 1] <| \n -> do
+                let var = boundStringVar n
+                writeLine (printf "uint8_t* %s = read_string(%s);" var closurePointerTmp)
+                writeLine (printf "%s += sizeof(uint8_t*);" closurePointerTmp)
+                return (Bound n, var)
+            return (manyLocations pairs)
 
 reserveBodySpace :: Body -> CWriter ()
 reserveBodySpace (Body alloc _ _) | alloc == mempty = return ()
