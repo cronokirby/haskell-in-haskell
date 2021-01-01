@@ -267,6 +267,13 @@ genInstructions (Body _ _ instrs) =
     genInstr instr
   where
     genInstr = \case
+      StoreInt location ->
+        getCLocation location >>= \l ->
+          writeLine (printf "g_IntRegister = %s;" l)
+      StoreString location ->
+        getCLocation location >>= \l ->
+          writeLine (printf "g_StringRegister = %s;" l)
+      StoreTag tag -> writeLine (printf "g_TagRegister = %d;" tag)
       Enter _ -> do
         comment "TODO: Handle this correctly"
         writeLine "return NULL;"
