@@ -174,13 +174,13 @@ void setup() {
   if (g_SA.base == NULL) {
     panic("Failed to initialize Argument Stack");
   }
-  g_SA.top = g_SA.base + STACK_SIZE - 1;
+  g_SA.top = g_SA.base;
 
   g_SB.base = malloc(STACK_SIZE * sizeof(StackBItem));
   if (g_SB.base == NULL) {
     panic("Failed to initialize Secondary Stack");
   }
-  g_SB.top = g_SB.base + STACK_SIZE - 1;
+  g_SB.top = g_SB.base;
 }
 
 /// Cleanup all the memory areas that we've created
