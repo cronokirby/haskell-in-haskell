@@ -548,7 +548,21 @@ genIntCases buriedArgs scrut cases default' = do
       writeLine "}"
 
 genStringCases :: ArgInfo -> [(String, Body)] -> Body -> CWriter ()
-genStringCases _ _ _ = comment "TODO: Handle string cases"
+genStringCases buriedArgs cases default' = do
+  writeLine "char* scrut = (char*)(g_StringRegister + sizeof(InfoTable*));"
+  forM_ (zip [0..] cases) genCase
+  genDefault default'
+  where
+    genCase :: (Int, (String, Body)) -> CWriter ()
+    genCase (i, (s, body)) = do
+      let condType = if i == 0 then "if" else "} else if"
+      writeLine (printf "%s (strcmp(%s, scrut) == 0) {" condType (show s))
+      indented (genContinuationBody buriedArgs body)
+     
+    genDefault body = do
+      writeLine "} else {"
+      indented (genContinuationBody buriedArgs body)
+      writeLine "}"
 
 genFunctionBody :: Int -> ArgInfo -> FunctionBody -> CWriter ()
 genFunctionBody argCount boundArgs = \case
