@@ -391,8 +391,8 @@ genInstructions (Body _ _ instrs) =
       AllocString location ->
         getCLocation location >>= \l ->
           writeLine (printf "heap_write_ptr(%s);" l)
-      PrintError l ->
-        writeLine (printf "printf(\"Error:\\n%%s\\n\", (char*)(%s + sizeof(InfoTable*)));" l)
+      PrintError s ->
+        writeLine (printf "puts(\"Error:\\n%s\");" s)
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
 genNormalBody argCount bound body = do
