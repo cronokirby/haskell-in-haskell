@@ -22,6 +22,18 @@ typedef struct InfoTable {
   CodeLabel entry;
 } InfoTable;
 
+/// We provide an entry function for a string that always fails
+void *string_entry() {
+  panic("attempted to call a string's entry function");
+  return NULL;
+}
+
+/// The Infotable we use for strings
+///
+/// The entry should never be called, so we provide a panicking function
+const InfoTable string_info_table = {&string_entry};
+const static InfoTable *string_info_table_ptr = &string_info_table;
+
 /// A data structure representing our global Heap of memory
 typedef struct Heap {
   /// The data contained in this heap
@@ -54,6 +66,34 @@ void heap_reserve(size_t amount) {
   if (g_Heap.cursor + amount > g_Heap.data + g_Heap.capacity) {
     collect_garbage();
   }
+}
+
+/// Concat two strings together, returning the location of the new string
+///
+/// This might trigger garbage collection. In practice, we only ever do
+/// this right before jumping to a continuation, so this is ok.
+uint8_t *string_concat(uint8_t *s1, uint8_t *s2) {
+  uint8_t *data1 = s1 + sizeof(InfoTable *);
+  uint8_t *data2 = s2 + sizeof(InfoTable *);
+  size_t len1 = strlen((char *)data1);
+  size_t len2 = strlen((char *)data2);
+
+  size_t required = sizeof(InfoTable *) + len1 + len2 + 1;
+  if (g_Heap.cursor + required > g_Heap.data + g_Heap.capacity) {
+    // TODO: Also evacuate the two strings, so we know where the data goes
+    collect_garbage();
+  }
+
+  uint8_t *ret = g_Heap.cursor;
+
+  memcpy(g_Heap.cursor, &string_info_table_ptr, sizeof(InfoTable *));
+  g_Heap.cursor += sizeof(InfoTable *);
+  memcpy(g_Heap.cursor, data1, len1 + 1);
+  g_Heap.cursor += len1 + 1;
+  memcpy(g_Heap.cursor, data2, len2 + 1);
+  g_Heap.cursor += len2 + 1;
+
+  return ret;
 }
 
 /// Get a current cursor, where writes to the Heap will happen
