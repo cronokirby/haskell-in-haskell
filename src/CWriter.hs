@@ -101,10 +101,6 @@ buriedIntVar n = "buried_int_" <> show n
 buriedStringVar :: Index -> CCode
 buriedStringVar n = "buried_string_" <> show n
 
--- | A variable name for a continuation we're about to enter
-continuationVar :: CCode
-continuationVar = "continuation"
-
 {- Nested Identifiers -}
 
 -- | Represents a sequence of function names
@@ -268,13 +264,6 @@ getCLocation location = do
   where
     err = error ("could not find C location for " ++ show location)
 
--- | Compute the the C representation for the current function
---
--- We need access to the context in CWriter to do this, since
--- we need to know which function we're currently in
-displayCurrentFunction :: CWriter CCode
-displayCurrentFunction = asks currentFunction |> fmap displayPath
-
 -- | Traverse our IR representation, gathering all global functions
 --
 -- We do this, since each global function has a unique index. This allows us to gather
@@ -388,7 +377,7 @@ genInstructions (Body _ _ instrs) =
       AllocString location ->
         getCLocation location >>= \l ->
           writeLine (printf "heap_write_ptr(%s);" l)
-      other -> comment "TODO: Handle this correctly"
+      _ -> comment "TODO: Handle this correctly"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
 genNormalBody argCount bound body = do
