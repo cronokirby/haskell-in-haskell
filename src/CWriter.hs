@@ -219,7 +219,11 @@ withGlobals globals =
   local (\r -> r {globals = globals})
     >>> withLocations impliedLocations
   where
-    table (i, path) = singleLocation (Global i) (tablePtrName path)
+    -- Basically, when we use this location, we're expecting a pointer
+    -- holding the location in memory where a pointer to the table lives.
+    -- The pointer to the table is allocated in static memory, so we need
+    -- the address in static memory where it lives.
+    table (i, path) = singleLocation (Global i) (printf "(uint8_t*)&%s" (tablePtrName path))
 
     impliedLocations =
       globals |> IntMap.toList |> foldMap table
@@ -565,7 +569,7 @@ genFunction Function {..} =
     -- If it this is a global, we need to create a place for the info table
     -- pointer to live
     when (isJust isGlobal)
-      <| writeLine (printf "uint8_t* %s = (uint8_t*)&%s;" currentPointer currentTable)
+      <| writeLine (printf "InfoTable* %s = &%s;" currentPointer currentTable)
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
     withSubFunctionTable subFunctions
