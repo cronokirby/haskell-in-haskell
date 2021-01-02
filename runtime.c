@@ -91,8 +91,8 @@ uint8_t *string_concat(uint8_t *s1, uint8_t *s2) {
 
   memcpy(g_Heap.cursor, &table_pointer_for_string, sizeof(InfoTable *));
   g_Heap.cursor += sizeof(InfoTable *);
-  memcpy(g_Heap.cursor, data1, len1 + 1);
-  g_Heap.cursor += len1 + 1;
+  memcpy(g_Heap.cursor, data1, len1);
+  g_Heap.cursor += len1;
   memcpy(g_Heap.cursor, data2, len2 + 1);
   g_Heap.cursor += len2 + 1;
 

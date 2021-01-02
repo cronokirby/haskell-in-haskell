@@ -308,7 +308,8 @@ genInstructions (Body _ _ instrs) =
   where
     genB1 b l = case b of
       PrintInt1 -> writeLine (printf "printf(\"%%ld\\n\", %s);" l)
-      PrintString1 -> comment "TODO: Handle this correctly"
+      PrintString1 ->
+        writeLine (printf "printf(\"%%s\\n\", (char*)(%s + sizeof(InfoTable*)));" l)
       Negate1 -> writeLine (printf "g_IntRegister = -%s;" l)
 
     genB2 b l1 l2 = case b of
@@ -322,7 +323,7 @@ genInstructions (Body _ _ instrs) =
       GreaterEqual2 -> writeLine (printf "g_IntRegister = %s >= %s;" l1 l2)
       EqualTo2 -> writeLine (printf "g_IntRegister = %s == %s;" l1 l2)
       NotEqualTo2 -> writeLine (printf "g_IntRegister = %s /= %s;" l1 l2)
-      Concat2 -> comment "TODO: Handle this correctly"
+      Concat2 -> writeLine (printf "g_StringRegister = string_concat(%s, %s);" l1 l2)
 
     genInstr = \case
       StoreInt location ->
@@ -390,7 +391,8 @@ genInstructions (Body _ _ instrs) =
       AllocString location ->
         getCLocation location >>= \l ->
           writeLine (printf "heap_write_ptr(%s);" l)
-      _ -> comment "TODO: Handle this correctly"
+      PrintError l ->
+        writeLine (printf "printf(\"Error:\\n%%s\\n\", (char*)(%s + sizeof(InfoTable*)));" l)
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
 genNormalBody argCount bound body = do
@@ -595,7 +597,8 @@ gatherStrings (Cmm functions entry) =
   foldMap inFunction (entry : functions)
   where
     inFunction :: Function -> Set.Set String
-    inFunction Function {..} = inFunctionBody body
+    inFunction Function {..} =
+      inFunctionBody body <> foldMap inFunction subFunctions
 
     inFunctionBody :: FunctionBody -> Set.Set String
     inFunctionBody = \case
