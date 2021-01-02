@@ -12,7 +12,7 @@ import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (intercalate)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Ourlude
 import Text.Printf (printf)
 
@@ -141,6 +141,10 @@ displayPath (IdentPath names) =
 tableName :: IdentPath -> CCode
 tableName = displayPath >>> ("table_for_" <>)
 
+-- | Get the table pointer name for some identifier path
+tablePtrName :: IdentPath -> CCode
+tablePtrName = displayPath >>> ("table_pointer_for_" <>)
+
 -- | The number of columns we're currently indented
 type Indent = Int
 
@@ -215,7 +219,7 @@ withGlobals globals =
   local (\r -> r {globals = globals})
     >>> withLocations impliedLocations
   where
-    table (i, path) = singleLocation (Global i) (tableName path)
+    table (i, path) = singleLocation (Global i) (tablePtrName path)
 
     impliedLocations =
       globals |> IntMap.toList |> foldMap table
@@ -555,8 +559,13 @@ genFunction Function {..} =
     currentPath <- asks currentFunction
     let current = displayPath currentPath
         currentTable = tableName currentPath
+        currentPointer = tablePtrName currentPath
     writeLine (printf "void* %s(void);" current)
     writeLine (printf "InfoTable %s = { &%s };" currentTable current)
+    -- If it this is a global, we need to create a place for the info table
+    -- pointer to live
+    when (isJust isGlobal)
+      <| writeLine (printf "uint8_t* %s = (uint8_t*)&%s;" currentPointer currentTable)
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
     withSubFunctionTable subFunctions
