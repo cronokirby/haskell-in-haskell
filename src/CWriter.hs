@@ -13,6 +13,7 @@ import qualified Data.IntMap as IntMap
 import Data.List (intercalate)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, isJust)
+import qualified Data.Set as Set
 import Ourlude
 import Text.Printf (printf)
 
@@ -100,6 +101,10 @@ buriedIntVar n = "buried_int_" <> show n
 -- | A variable name for the Nth buried string
 buriedStringVar :: Index -> CCode
 buriedStringVar n = "buried_string_" <> show n
+
+-- | A variable name for the nth string literal
+stringLiteralVar :: Index -> CCode
+stringLiteralVar n = "string_literal_" <> show n
 
 {- Nested Identifiers -}
 
@@ -584,6 +589,61 @@ genFunction Function {..} =
     maybeAllocatedClosures =
       manyLocations [(Allocated n, allocatedVar n) | n <- zipWith const [0 ..] subFunctions]
 
+-- | Gather all the literal strings used in our program
+gatherStrings :: Cmm -> Set.Set String
+gatherStrings (Cmm functions entry) =
+  foldMap inFunction (entry : functions)
+  where
+    inFunction :: Function -> Set.Set String
+    inFunction Function {..} = inFunctionBody body
+
+    inFunctionBody :: FunctionBody -> Set.Set String
+    inFunctionBody = \case
+      IntCaseBody branches default' ->
+        foldMap inBody (default' : map snd branches)
+      StringCaseBody branches default' ->
+        foldMap inBody (default' : map snd branches)
+      TagCaseBody branches default' ->
+        foldMap inBody (default' : map snd branches)
+      ContinuationBody body -> inBody body
+      NormalBody body -> inBody body
+
+    inBody :: Body -> Set.Set String
+    inBody (Body _ _ instrs) = foldMap inInstr instrs
+
+    inInstr :: Instruction -> Set.Set String
+    inInstr = \case
+      StoreString loc -> inLocation loc
+      Builtin2 _ loc1 loc2 -> inLocation loc1 <> inLocation loc2
+      Builtin1 _ loc -> inLocation loc
+      BuryString loc -> inLocation loc
+      AllocString loc -> inLocation loc
+      -- Some of these contain locations, but shouldn't contain strings
+      _ -> mempty
+
+    inLocation :: Location -> Set.Set String
+    inLocation (PrimStringLocation s) = Set.singleton s
+    inLocation _ = mempty
+
+-- | Generate the static strings we need in our program
+genStaticStrings :: Set.Set String -> CWriter LocationTable
+genStaticStrings strings =
+  foldMapM (uncurry makeLocation) indexedStrings
+  where
+    indexedStrings :: [(Index, String)]
+    indexedStrings = strings |> Set.toList |> zip [0 ..]
+
+    makeLocation :: Index -> String -> CWriter LocationTable
+    makeLocation i s = do
+      let bytes = length s + 1
+          var = stringLiteralVar i
+      writeLine "struct {"
+      indented <| do
+        writeLine "InfoTable* table;"
+        writeLine (printf "char data[%d];" bytes)
+      writeLine (printf "} %s = { &table_for_string_literal, %s };" var (show s))
+      return (singleLocation (PrimStringLocation s) ("(uint8_t*)&" <> var))
+
 genMainFunction :: CWriter ()
 genMainFunction = do
   writeLine "int main() {"
@@ -600,14 +660,18 @@ genMainFunction = do
 
 -- | Generate CCode for our Cmm IR
 genCmm :: Cmm -> CWriter ()
-genCmm (Cmm functions entry) = do
+genCmm cmm@(Cmm functions entry) = do
   writeLine "#include \"runtime.c\"\n"
-  forM_ functions <| \f -> do
-    genFunction f
-    writeLine ""
-  genFunction entry
+  stringLocations <- genStaticStrings (gatherStrings cmm)
   writeLine ""
-  genMainFunction
+  withLocations stringLocations <| do
+    forM_ functions <| \f -> do
+      genFunction f
+      writeLine ""
+    genFunction entry
+    writeLine ""
+    writeLine ""
+    genMainFunction
 
 -- | Convert our Cmm IR into actual C code
 writeC :: Cmm -> CCode

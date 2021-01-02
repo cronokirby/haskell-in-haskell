@@ -31,8 +31,11 @@ void *string_entry() {
 /// The Infotable we use for strings
 ///
 /// The entry should never be called, so we provide a panicking function
-const InfoTable string_info_table = {&string_entry};
-const static InfoTable *string_info_table_ptr = &string_info_table;
+InfoTable table_for_string = {&string_entry};
+static InfoTable *table_pointer_for_string = &table_for_string;
+
+/// The InfoTable we use for string literals
+InfoTable table_for_string_literal = {&string_entry};
 
 /// A data structure representing our global Heap of memory
 typedef struct Heap {
@@ -86,7 +89,7 @@ uint8_t *string_concat(uint8_t *s1, uint8_t *s2) {
 
   uint8_t *ret = g_Heap.cursor;
 
-  memcpy(g_Heap.cursor, &string_info_table_ptr, sizeof(InfoTable *));
+  memcpy(g_Heap.cursor, &table_pointer_for_string, sizeof(InfoTable *));
   g_Heap.cursor += sizeof(InfoTable *);
   memcpy(g_Heap.cursor, data1, len1 + 1);
   g_Heap.cursor += len1 + 1;
@@ -101,25 +104,24 @@ uint8_t *heap_cursor() {
   return g_Heap.cursor;
 }
 
+void heap_write(void *data, size_t bytes) {
+  memcpy(g_Heap.cursor, data, bytes);
+  g_Heap.cursor += bytes;
+}
+
 /// Write a pointer into the heap
 void heap_write_ptr(uint8_t *ptr) {
-  size_t bytes = sizeof(uint8_t *);
-  memcpy(g_Heap.cursor, &ptr, bytes);
-  g_Heap.cursor += bytes;
+  heap_write(&ptr, sizeof(uint8_t *));
 }
 
 /// Write an info table pointer into the heap
 void heap_write_info_table(InfoTable *ptr) {
-  size_t bytes = sizeof(InfoTable);
-  memcpy(g_Heap.cursor, &ptr, bytes);
-  g_Heap.cursor += bytes;
+  heap_write(&ptr, sizeof(InfoTable *));
 }
 
 /// Write an integer into the heap
 void heap_write_int(int64_t x) {
-  size_t bytes = sizeof(int64_t);
-  memcpy(g_Heap.cursor, &x, bytes);
-  g_Heap.cursor += bytes;
+  heap_write(&x, sizeof(int64_t));
 }
 
 /// Read a ptr from a chunk of data
