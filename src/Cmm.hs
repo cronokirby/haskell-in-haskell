@@ -28,8 +28,8 @@ module Cmm
     Instruction (..),
     Index,
     Allocation (..),
-    Builtin2(..),
-    Builtin1(..),
+    Builtin2 (..),
+    Builtin1 (..),
     cmm,
   )
 where
@@ -269,6 +269,11 @@ data Instruction
     AllocTable Index
   | -- | Allocate a pointer on the heap
     AllocPointer Location
+  | -- | Allocate blank space for a pointer
+    --
+    -- This is necessary because a closure needs at least one pointer's worth of space
+    -- next to it, to hold a relocation for garbage collection
+    AllocBlankPointer
   | -- | Allocate an int on the heap
     AllocInt Location
   | -- | Allocate a string on the heap
@@ -705,6 +710,12 @@ genLet bindings expr = do
       return (Allocation tableCount 0 0 0 <> formAllocations)
       where
         formAllocation :: LambdaForm -> ContextM Allocation
+        formAllocation (LambdaForm [] _ _ _) =
+          -- The blank pointer if we have no bound arguments
+          --
+          -- This condition becomes more complicated if we have integers
+          -- that aren't at least the size of a pointer.
+          return (Allocation 0 1 0 0)
         formAllocation (LambdaForm bound _ _ _) = do
           (boundPtrs, boundInts, boundStrings) <- separateNames bound
           return (Allocation 0 (length boundPtrs) (length boundInts) (length boundStrings))
@@ -738,7 +749,20 @@ genLet bindings expr = do
                   allocPtrs = alloc PointerVar AllocPointer
                   allocInts = alloc IntVar AllocInt
                   allocStrings = alloc StringVar AllocString
-              return ([AllocTable i] <> allocPtrs <> allocInts <> allocStrings)
+                  -- If we have no bound arguments, we insert a blank
+                  -- pointer, to give us a place to write an indirection
+                  -- after this closure gets garbage collected.
+                  --
+                  -- IMPORTANT: this assumes ints are at least as big
+                  -- as pointers (with 64 bits, this is true),
+                  -- otherwise, you'd need to adjust this condition to check
+                  -- that at least one pointer or string is allocated, or
+                  -- enough ints to make up the size of a pointer are.
+                  --
+                  -- If you had 32 bit integers, you'd need to have at least
+                  -- 2 of them to avoid doing this.
+                  allocBlank = [AllocBlankPointer | null bound]
+              return ([AllocTable i] <> allocBlank <> allocPtrs <> allocInts <> allocStrings)
 
 -- | Generate the function body for an expression, along with the necessary sub functions
 --

@@ -385,6 +385,8 @@ genInstructions (Body _ _ instrs) =
       AllocPointer location ->
         getCLocation location >>= \l ->
           writeLine (printf "heap_write_ptr(%s);" l)
+      AllocBlankPointer -> do
+        writeLine (printf "heap_write_ptr(NULL);")
       AllocInt location ->
         getCLocation location >>= \l ->
           writeLine (printf "heap_write_int(%s);" l)
@@ -550,7 +552,7 @@ genIntCases buriedArgs scrut cases default' = do
 genStringCases :: ArgInfo -> [(String, Body)] -> Body -> CWriter ()
 genStringCases buriedArgs cases default' = do
   writeLine "char* scrut = (char*)(g_StringRegister + sizeof(InfoTable*));"
-  forM_ (zip [0..] cases) genCase
+  forM_ (zip [0 ..] cases) genCase
   genDefault default'
   where
     genCase :: (Int, (String, Body)) -> CWriter ()
@@ -558,7 +560,7 @@ genStringCases buriedArgs cases default' = do
       let condType = if i == 0 then "if" else "} else if"
       writeLine (printf "%s (strcmp(%s, scrut) == 0) {" condType (show s))
       indented (genContinuationBody buriedArgs body)
-     
+
     genDefault body = do
       writeLine "} else {"
       indented (genContinuationBody buriedArgs body)
