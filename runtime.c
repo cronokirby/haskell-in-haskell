@@ -16,10 +16,21 @@ void panic(const char *message) {
 /// type here. But, this is basically always an `EntryFunction*`.
 typedef void *(*CodeLabel)(void);
 
+/// An evac function takes the current location of a closure,
+/// and returns the new location after moving that closure (if necessary).
+typedef uint8_t *(*EvacFunction)(uint8_t *);
+
+/// For static objects, evacuating them should return their current location
+uint8_t *static_evac(uint8_t *base) {
+  return base;
+}
+
 /// An InfoTable contains the information about the functions of a closure
 typedef struct InfoTable {
   /// The function we can call to enter the closure
   CodeLabel entry;
+  /// The evacuation function we call to collect this closure
+  EvacFunction evac;
 } InfoTable;
 
 /// We provide an entry function for a string that always fails
@@ -31,11 +42,11 @@ void *string_entry() {
 /// The Infotable we use for strings
 ///
 /// The entry should never be called, so we provide a panicking function
-InfoTable table_for_string = {&string_entry};
+InfoTable table_for_string = {&string_entry, &static_evac};
 static InfoTable *table_pointer_for_string = &table_for_string;
 
 /// The InfoTable we use for string literals
-InfoTable table_for_string_literal = {&string_entry};
+InfoTable table_for_string_literal = {&string_entry, &static_evac};
 
 /// A data structure representing our global Heap of memory
 typedef struct Heap {

@@ -586,7 +586,7 @@ genFunction Function {..} =
         currentTable = tableName currentPath
         currentPointer = tablePtrName currentPath
     writeLine (printf "void* %s(void);" current)
-    writeLine (printf "InfoTable %s = { &%s };" currentTable current)
+    writeLine (printf "InfoTable %s = { &%s, &static_evac };" currentTable current)
     -- If it this is a global, we need to create a place for the info table
     -- pointer to live
     when (isJust isGlobal)
