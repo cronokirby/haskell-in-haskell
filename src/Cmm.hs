@@ -660,10 +660,10 @@ genCaseExpr scrut bound alts = do
     getBuryBound :: ContextM [Instruction]
     getBuryBound = do
       (ptrs, ints, strings) <- separateNames bound
-      buryPtrs <- foldMapM bury ptrs
-      buryInts <- foldMapM bury ints
-      buryStrings <- foldMapM bury strings
-      return (buryPtrs <> buryInts <> buryStrings)
+      buryPtrs <- foldMapM bury (reverse ptrs)
+      buryInts <- foldMapM bury (reverse ints)
+      buryStrings <- foldMapM bury (reverse strings)
+      return (buryStrings <> buryInts <> buryPtrs)
       where
         bury :: ValName -> ContextM [Instruction]
         bury name = do
@@ -780,13 +780,13 @@ genFunctionBody = \case
   Apply f args -> do
     fLoc <- getLocation f
     argLocs <- mapM atomAsPointer args
-    let instrs = map PushSA argLocs <> [Enter fLoc]
+    let instrs = map PushSA (reverse argLocs) <> [Enter fLoc]
     return (justInstructions instrs)
   Constructor tag args -> do
     argLocs <- mapM atomAsPointer args
     let instrs =
           [StoreTag tag, StoreConstructorArgCount (length args)]
-            <> map PushConstructorArg argLocs
+            <> map PushConstructorArg (reverse argLocs)
             <> [EnterCaseContinuation]
     return (justInstructions instrs)
   Builtin b args -> do

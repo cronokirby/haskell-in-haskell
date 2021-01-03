@@ -404,12 +404,12 @@ genNormalBody argCount bound body = do
     popArgs :: CWriter LocationTable
     popArgs = do
       comment "popping stack arguments"
-      writeLine (printf "g_SA.top -= %d;" argCount)
       pairs <-
-        forM [0 .. argCount - 1] <| \n -> do
+        forM [1 .. argCount] <| \n -> do
           let var = argVar n
-          writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
-          return (Arg n, var)
+          writeLine (printf "uint8_t* %s = g_SA.top[-%d];" var n)
+          return (Arg (n - 1), var)
+      writeLine (printf "g_SA.top -= %d;" argCount)
       return (manyLocations pairs)
 
     popBound :: ArgInfo -> CWriter LocationTable
@@ -480,12 +480,12 @@ genContinuationBody buriedArgs body = do
     popConstructorArgs (Body _ 0 _) = return mempty
     popConstructorArgs (Body _ count _) = do
       comment "popping constructor arguments"
-      writeLine (printf "g_SA.top -= %d;" count)
       pairs <-
-        forM [0 .. count - 1] <| \n -> do
+        forM [1 .. count] <| \n -> do
           let var = constructorArgVar n
-          writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
-          return (ConstructorArg n, var)
+          writeLine (printf "uint8_t* %s = g_SA.top[-%d];" var n)
+          return (ConstructorArg (n - 1), var)
+      writeLine (printf "g_SA.top -= %d;" count)
       return (manyLocations pairs)
     popBuriedArgs :: ArgInfo -> CWriter LocationTable
     popBuriedArgs (ArgInfo 0 0 0) = return mempty
@@ -501,32 +501,32 @@ genContinuationBody buriedArgs body = do
         popPointers 0 = return mempty
         popPointers count = do
           comment "buried pointers"
-          writeLine (printf "g_SA.top -= %d;" count)
           pairs <-
-            forM [0 .. count - 1] <| \n -> do
+            forM [1 .. count] <| \n -> do
               let var = buriedPtrVar n
-              writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
-              return (Buried n, var)
+              writeLine (printf "uint8_t* %s = g_SA.top[-%d];" var n)
+              return (Buried (n - 1), var)
+          writeLine (printf "g_SA.top -= %d;" count)
           return (manyLocations pairs)
         popInts 0 = return mempty
         popInts count = do
           comment "buried ints"
-          writeLine (printf "g_SB.top -= %d;" count)
           pairs <-
-            forM [0 .. count - 1] <| \n -> do
+            forM [1 .. count] <| \n -> do
               let var = buriedIntVar n
-              writeLine (printf "int64_t %s = g_SB.top[%d].as_int;" var n)
-              return (BuriedInt n, var)
+              writeLine (printf "int64_t %s = g_SB.top[-%d].as_int;" var n)
+              return (BuriedInt (n - 1), var)
+          writeLine (printf "g_SB.top -= %d;" count)
           return (manyLocations pairs)
         popStrings 0 = return mempty
         popStrings count = do
           comment "buried strings"
-          writeLine (printf "g_SA.top -= %d;" count)
           pairs <-
-            forM [0 .. count - 1] <| \n -> do
+            forM [1 .. count] <| \n -> do
               let var = buriedStringVar n
-              writeLine (printf "uint8_t* %s = g_SA.top[%d];" var n)
-              return (BuriedString n, var)
+              writeLine (printf "uint8_t* %s = g_SA.top[-%d];" var n)
+              return (BuriedString (n - 1), var)
+          writeLine (printf "g_SA.top -= %d;" count)
           return (manyLocations pairs)
 
 genIntCases :: ArgInfo -> CCode -> [(Int, Body)] -> Body -> CWriter ()
