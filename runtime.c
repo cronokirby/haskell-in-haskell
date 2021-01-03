@@ -20,11 +20,6 @@ typedef void *(*CodeLabel)(void);
 /// and returns the new location after moving that closure (if necessary).
 typedef uint8_t *(*EvacFunction)(uint8_t *);
 
-/// For static objects, evacuating them should return their current location
-uint8_t *static_evac(uint8_t *base) {
-  return base;
-}
-
 /// An InfoTable contains the information about the functions of a closure
 typedef struct InfoTable {
   /// The function we can call to enter the closure
@@ -33,20 +28,29 @@ typedef struct InfoTable {
   EvacFunction evac;
 } InfoTable;
 
-/// We provide an entry function for a string that always fails
-void *string_entry() {
-  panic("attempted to call a string's entry function");
-  return NULL;
+/// For static objects, evacuating them should return their current location
+uint8_t *static_evac(uint8_t *base) {
+  return base;
 }
+
+/// For closures that have already been evacuated
+uint8_t *already_evac(uint8_t *base) {
+  uint8_t *ret;
+  memcpy(&ret, base + sizeof(InfoTable *), sizeof(uint8_t *));
+  return ret;
+}
+
+/// A table we can share between closures that are already evacuated
+InfoTable table_for_already_evac = {NULL, &already_evac};
 
 /// The Infotable we use for strings
 ///
 /// The entry should never be called, so we provide a panicking function
-InfoTable table_for_string = {&string_entry, &static_evac};
+InfoTable table_for_string = {NULL, &static_evac};
 static InfoTable *table_pointer_for_string = &table_for_string;
 
 /// The InfoTable we use for string literals
-InfoTable table_for_string_literal = {&string_entry, &static_evac};
+InfoTable table_for_string_literal = {NULL, &static_evac};
 
 /// Represents the argument stack
 ///
