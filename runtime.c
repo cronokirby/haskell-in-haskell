@@ -56,10 +56,12 @@ InfoTable table_for_already_evac = {NULL, &already_evac};
 /// A pointer to the above table
 static InfoTable *table_pointer_for_already_evac = &table_for_already_evac;
 
+uint8_t *string_evac(uint8_t *);
+
 /// The Infotable we use for strings
 ///
 /// The entry should never be called, so we provide a panicking function
-InfoTable table_for_string = {NULL, &static_evac};
+InfoTable table_for_string = {NULL, &string_evac};
 static InfoTable *table_pointer_for_string = &table_for_string;
 
 /// The InfoTable we use for string literals
@@ -184,12 +186,12 @@ static double HEAP_GROWTH = 3;
 
 /// Collect a single root
 void collect_root(uint8_t **root) {
+  uint8_t* old = *root;
   *root = read_info_table(*root)->evac(*root);
 }
 
 /// Grow the heap, removing useless objects
 void collect_garbage(size_t extra_required) {
-  DEBUG_PRINT("GC. 0x%04X ↓", g_Heap.capacity);
   Heap old = g_Heap;
 
   size_t new_capacity = HEAP_GROWTH * old.capacity;
@@ -224,7 +226,7 @@ void collect_garbage(size_t extra_required) {
   if (comfortable_size < g_Heap.capacity) {
     g_Heap.capacity = comfortable_size;
   }
-  DEBUG_PRINT(" 0x%04X ↑ 0x%04x\n", necessary_size, g_Heap.capacity);
+  DEBUG_PRINT("GC. 0x%05X ↓ x%05X ↑ 0x%05x\n", old.capacity, necessary_size, g_Heap.capacity);
 }
 
 /// Reserve a certain amount of bytes in the Heap
@@ -251,6 +253,13 @@ uint8_t *string_concat(uint8_t *s1, uint8_t *s2) {
   size_t len2 = strlen((char *)data2);
 
   size_t required = sizeof(InfoTable *) + len1 + len2 + 1;
+  size_t min_size = sizeof(InfoTable *) + sizeof(uint8_t*);
+  size_t extra = 0;
+  // We need to make sure that the string has enough space for a relocation
+  if (required < min_size) {
+    extra = min_size - required;
+    required += extra;
+  }
   if (g_Heap.cursor + required > g_Heap.data + g_Heap.capacity) {
     // Push the two strings on the stack, so they're roots for the GC
     g_SA.top[0] = data1;
@@ -272,12 +281,23 @@ uint8_t *string_concat(uint8_t *s1, uint8_t *s2) {
   g_Heap.cursor += len1;
   memcpy(g_Heap.cursor, data2, len2 + 1);
   g_Heap.cursor += len2 + 1;
+  g_Heap.cursor += extra;
 
   return ret;
 }
 
+/// The evacuation function for strings
+uint8_t *string_evac(uint8_t *base) {
+  uint8_t *new_base = heap_cursor();
+  size_t len = strlen((char *)(base + sizeof(InfoTable *)));
+  heap_write(base, sizeof(InfoTable *) + len + 1);
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+  return new_base;
+}
+
 /// The starting size for the Heap
-static const size_t BASE_HEAP_SIZE = 1 << 16;
+static const size_t BASE_HEAP_SIZE = 1 << 8;
 /// The starting size for each Stack
 static const size_t STACK_SIZE = 1 << 10;
 
