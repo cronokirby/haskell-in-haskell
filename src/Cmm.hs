@@ -333,7 +333,7 @@ data ArgInfo = ArgInfo
     -- | How many bound strings there are
     boundStrings :: Int
   }
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Represents the body of a function.
 --

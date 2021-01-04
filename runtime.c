@@ -42,6 +42,8 @@ uint8_t *already_evac(uint8_t *base) {
 
 /// A table we can share between closures that are already evacuated
 InfoTable table_for_already_evac = {NULL, &already_evac};
+/// A pointer to the above table
+static InfoTable *table_pointer_for_already_evac = &table_for_already_evac;
 
 /// The Infotable we use for strings
 ///
@@ -170,7 +172,7 @@ InfoTable *read_info_table(uint8_t *data) {
 static size_t HEAP_GROWTH = 2;
 
 /// Collect a single root
-static void collect_root(uint8_t **root) {
+void collect_root(uint8_t **root) {
   *root = read_info_table(*root)->evac(*root);
 }
 

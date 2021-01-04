@@ -106,6 +106,20 @@ buriedStringVar n = "buried_string_" <> show n
 stringLiteralVar :: Index -> CCode
 stringLiteralVar n = "string_literal_" <> show n
 
+-- | A variable name for the evac function given a bound argument shape
+evacArgInfoVar :: ArgInfo -> CCode
+evacArgInfoVar (ArgInfo 0 0 0) = "evac_empty"
+evacArgInfoVar ArgInfo {..} =
+  "evac"
+    <> fold
+      [ part "pointers" boundPointers,
+        part "ints" boundInts,
+        part "strings" boundStrings
+      ]
+  where
+    part _ 0 = ""
+    part tag n = "_" <> show n <> "_" <> tag
+
 {- Nested Identifiers -}
 
 -- | Represents a sequence of function names
@@ -587,8 +601,11 @@ genFunction Function {..} =
     let current = displayPath currentPath
         currentTable = tableName currentPath
         currentPointer = tablePtrName currentPath
+        evac = case isGlobal of
+          Just _ -> "&static_evac"
+          Nothing -> printf "&%s" (evacArgInfoVar boundArgs)
     writeLine (printf "void* %s(void);" current)
-    writeLine (printf "InfoTable %s = { &%s, &static_evac };" currentTable current)
+    writeLine (printf "InfoTable %s = { &%s, %s };" currentTable current evac)
     -- If it this is a global, we need to create a place for the info table
     -- pointer to live
     when (isJust isGlobal)
@@ -663,6 +680,65 @@ genStaticStrings strings =
       writeLine (printf "} %s = { &table_for_string_literal, %s };" var (show s))
       return (singleLocation (PrimStringLocation s) ("(uint8_t*)&" <> var))
 
+-- | Gather all the bound argument shapes in our program
+--
+-- This is nice so that we can have one garbage collection
+-- pattern for each of these.
+gatherBoundArgTypes :: Cmm -> Set.Set ArgInfo
+gatherBoundArgTypes (Cmm functions function) =
+  foldMap inFunction (function : functions)
+  where
+    inFunction :: Function -> Set.Set ArgInfo
+    inFunction Function {..} =
+      inThisFunction <> foldMap inFunction subFunctions
+      where
+        -- We only include this pattern if it can be potentially GCed
+        inThisFunction = case isGlobal of
+          Just _ -> Set.empty
+          Nothing -> Set.singleton boundArgs
+
+-- | Generate the evacuation function for a certain argument shape
+genEvacFunction :: ArgInfo -> CWriter ()
+genEvacFunction info@ArgInfo {..} = do
+  let thisFunction = evacArgInfoVar info
+  writeLine (printf "uint8_t* %s(uint8_t* base) {" thisFunction)
+  indented <| do
+    comment "evacuating roots recursively"
+    writeLine "uint8_t* cursor = base + sizeof(InfoTable*);"
+    writeLine "uint8_t* root;"
+    replicateM_ boundPointers <| do
+      writeLine "root = read_ptr(cursor);"
+      writeLine "collect_root(&root);"
+      writeLine "memcpy(cursor, &root, sizeof(uint8_t*));"
+      writeLine "cursor += sizeof(uint8_t*);"
+    unless (boundInts == 0)
+      <| writeLine (printf "cursor += %d * sizeof(int64_t);" boundInts)
+    replicateM_ boundStrings <| do
+      writeLine "root = read_ptr(cursor);"
+      writeLine "collect_root(&root);"
+      writeLine "memcpy(cursor, &root, sizeof(uint8_t*));"
+      writeLine "cursor += sizeof(uint8_t*);"
+    comment "relocating closure"
+    writeLine "size_t closure_size = sizeof(InfoTable*);"
+    case info of
+      ArgInfo 0 0 0 ->
+        writeLine "closure_size += sizeof(uint8_t*);"
+      _ -> do
+        writeLine
+          ( printf
+              "closure_size += %d * sizeof(uint8_t*);"
+              (boundPointers + boundStrings)
+          )
+        writeLine (printf "closure_size += %d * sizeof(int64_t);" boundInts)
+    writeLine "uint8_t* new_base = heap_cursor();"
+    writeLine "heap_write(base, closure_size);"
+    comment "replacing old closure with indirection"
+    writeLine "memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable*));"
+    writeLine "memcpy(base + sizeof(InfoTable*), &new_base, sizeof(uint8_t*));"
+    writeLine "return new_base;"
+  writeLine "}"
+  writeLine ""
+
 genMainFunction :: CWriter ()
 genMainFunction = do
   writeLine "int main() {"
@@ -682,6 +758,8 @@ genCmm :: Cmm -> CWriter ()
 genCmm cmm@(Cmm functions entry) = do
   writeLine "#include \"runtime.c\"\n"
   stringLocations <- genStaticStrings (gatherStrings cmm)
+  writeLine ""
+  forM_ (gatherBoundArgTypes cmm) genEvacFunction
   writeLine ""
   withLocations stringLocations <| do
     forM_ functions <| \f -> do
