@@ -10,6 +10,17 @@ void panic(const char *message) {
   exit(-1);
 }
 
+#ifdef DEBUG
+#define DEBUG_PRINT(...)                                                       \
+  do {                                                                         \
+    fprintf(stderr, __VA_ARGS__);                                              \
+  } while (0)
+#else
+#define DEBUG_PRINT(...)                                                       \
+  do {                                                                         \
+  } while (0)
+#endif
+
 /// A code label takes no arguments, and returns the next function.
 ///
 /// We have to return a void*, because we can't easily have a recursive
@@ -169,7 +180,7 @@ InfoTable *read_info_table(uint8_t *data) {
   return ret;
 }
 
-static size_t HEAP_GROWTH = 2;
+static double HEAP_GROWTH = 3;
 
 /// Collect a single root
 void collect_root(uint8_t **root) {
@@ -178,6 +189,7 @@ void collect_root(uint8_t **root) {
 
 /// Grow the heap, removing useless objects
 void collect_garbage(size_t extra_required) {
+  DEBUG_PRINT("GC. 0x%04X ↓", g_Heap.capacity);
   Heap old = g_Heap;
 
   size_t new_capacity = HEAP_GROWTH * old.capacity;
@@ -212,6 +224,7 @@ void collect_garbage(size_t extra_required) {
   if (comfortable_size < g_Heap.capacity) {
     g_Heap.capacity = comfortable_size;
   }
+  DEBUG_PRINT(" 0x%04X ↑ 0x%04x\n", necessary_size, g_Heap.capacity);
 }
 
 /// Reserve a certain amount of bytes in the Heap
