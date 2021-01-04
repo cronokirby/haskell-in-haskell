@@ -612,6 +612,8 @@ genFunction Function {..} =
       <| writeLine (printf "InfoTable* %s = &%s;" currentPointer currentTable)
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
+    writeLine "DEBUG_PRINT(\"stack before %s\\n\", __func__);"
+    writeLine "print_stack();"
     withSubFunctionTable subFunctions
       <| withLocations maybeAllocatedClosures
       <| indented

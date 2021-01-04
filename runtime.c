@@ -148,16 +148,19 @@ void heap_write(void *data, size_t bytes) {
 
 /// Write a pointer into the heap
 void heap_write_ptr(uint8_t *ptr) {
+  DEBUG_PRINT("heap_write_ptr %p at %p\n", ptr, g_Heap.cursor);
   heap_write(&ptr, sizeof(uint8_t *));
 }
 
 /// Write an info table pointer into the heap
 void heap_write_info_table(InfoTable *ptr) {
+  DEBUG_PRINT("heap_write_table %p at %p\n", ptr, g_Heap.cursor);
   heap_write(&ptr, sizeof(InfoTable *));
 }
 
 /// Write an integer into the heap
 void heap_write_int(int64_t x) {
+  DEBUG_PRINT("heap_write_int %l at %p\n", x, g_Heap.cursor);
   heap_write(&x, sizeof(int64_t));
 }
 
@@ -179,6 +182,7 @@ int64_t read_int(uint8_t *data) {
 InfoTable *read_info_table(uint8_t *data) {
   InfoTable *ret;
   memcpy(&ret, data, sizeof(InfoTable *));
+  DEBUG_PRINT("read_info_table %p, table: %p\n", data, ret);
   return ret;
 }
 
@@ -186,12 +190,18 @@ static double HEAP_GROWTH = 3;
 
 /// Collect a single root
 void collect_root(uint8_t **root) {
-  uint8_t* old = *root;
+  DEBUG_PRINT("collect %p\n", *root);
+  uint8_t *old = *root;
   *root = read_info_table(*root)->evac(*root);
+  DEBUG_PRINT("%p -> %p\n", old, *root);
 }
 
+void print_stack();
 /// Grow the heap, removing useless objects
 void collect_garbage(size_t extra_required) {
+  DEBUG_PRINT("GC start: %p\n", g_Heap.cursor);
+  DEBUG_PRINT("stack before GC:\n");
+  print_stack();
   Heap old = g_Heap;
 
   size_t new_capacity = HEAP_GROWTH * old.capacity;
@@ -208,12 +218,17 @@ void collect_garbage(size_t extra_required) {
   g_Heap.capacity = new_capacity;
 
   if (g_StringRegister != NULL) {
+    DEBUG_PRINT("string register\n");
     collect_root(&g_StringRegister);
   }
   if (g_NodeRegister != NULL) {
+    DEBUG_PRINT("node register\n");
     collect_root(&g_NodeRegister);
   }
+  DEBUG_PRINT("collecting stack %p -> %p\n", g_SA.base, g_SA.top);
+
   for (uint8_t **p = g_SA.base; p < g_SA.top; ++p) {
+    DEBUG_PRINT("collecting stack slot: %p\n", *p);
     collect_root(p);
   }
   // At this point, all references into the old heap are eliminated
@@ -226,7 +241,8 @@ void collect_garbage(size_t extra_required) {
   if (comfortable_size < g_Heap.capacity) {
     g_Heap.capacity = comfortable_size;
   }
-  DEBUG_PRINT("GC. 0x%05X ↓ 0x%05X ↑ 0x%05X\n", old.capacity, necessary_size, g_Heap.capacity);
+  DEBUG_PRINT("GC Done. 0x%05X ↓ 0x%05X ↑ 0x%05X\n", old.capacity, necessary_size,
+              g_Heap.capacity);
 }
 
 /// Reserve a certain amount of bytes in the Heap
@@ -253,23 +269,24 @@ uint8_t *string_concat(uint8_t *s1, uint8_t *s2) {
   size_t len2 = strlen((char *)data2);
 
   size_t required = sizeof(InfoTable *) + len1 + len2 + 1;
-  size_t min_size = sizeof(InfoTable *) + sizeof(uint8_t*);
+  size_t min_size = sizeof(InfoTable *) + sizeof(uint8_t *);
   size_t extra = 0;
   // We need to make sure that the string has enough space for a relocation
   if (required < min_size) {
     extra = min_size - required;
     required += extra;
   }
+  DEBUG_PRINT("string_concat: %p %p, at: %p, required: 0x%X\n", s1, s2, g_Heap.cursor, required);
   if (g_Heap.cursor + required > g_Heap.data + g_Heap.capacity) {
     // Push the two strings on the stack, so they're roots for the GC
-    g_SA.top[0] = data1;
-    g_SA.top[1] = data2;
+    g_SA.top[0] = s1;
+    g_SA.top[1] = s2;
     g_SA.top += 2;
 
     collect_garbage(required);
 
-    data2 = g_SA.top[-1];
-    data1 = g_SA.top[-2];
+    data2 = g_SA.top[-1] + sizeof(InfoTable*);
+    data1 = g_SA.top[-2] + sizeof(InfoTable*);
     g_SA.top -= 2;
   }
 
@@ -297,7 +314,7 @@ uint8_t *string_evac(uint8_t *base) {
 }
 
 /// The starting size for the Heap
-static const size_t BASE_HEAP_SIZE = 1 << 8;
+static const size_t BASE_HEAP_SIZE = 1 << 7;
 /// The starting size for each Stack
 static const size_t STACK_SIZE = 1 << 10;
 
@@ -328,4 +345,11 @@ void cleanup() {
   free(g_Heap.data);
   free(g_SA.base);
   free(g_SB.base);
+}
+
+void print_stack() {
+  for (uint8_t **p = g_SA.base; p < g_SA.top; ++p) {
+    DEBUG_PRINT("%p ", *p);
+  }
+  DEBUG_PRINT("\n");
 }
