@@ -226,7 +226,7 @@ void collect_garbage(size_t extra_required) {
   if (comfortable_size < g_Heap.capacity) {
     g_Heap.capacity = comfortable_size;
   }
-  DEBUG_PRINT("GC. 0x%05X ↓ 0x%05X ↑ 0x%05x\n", old.capacity, necessary_size, g_Heap.capacity);
+  DEBUG_PRINT("GC. 0x%05X ↓ 0x%05X ↑ 0x%05X\n", old.capacity, necessary_size, g_Heap.capacity);
 }
 
 /// Reserve a certain amount of bytes in the Heap
