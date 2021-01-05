@@ -278,6 +278,8 @@ data Instruction
     AllocInt Location
   | -- | Allocate a string on the heap
     AllocString Location
+    -- | Push an update frame
+  | PushUpdate
   deriving (Show)
 
 -- | An allocation records information about how much a given expression will allocate
@@ -831,7 +833,7 @@ separateNames bound = do
       filterM (getStorage >>> fmap (== LocalStorage storageType)) bound
 
 genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
-genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) =
+genLamdbdaForm functionName isGlobal (LambdaForm bound u args expr) =
   withStorages argStorages <| withNewSubFunctionCount <| do
     let argCount = length args
     (boundPtrs, boundInts, boundStrings) <- separateNames bound
@@ -844,7 +846,10 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound _ args expr) =
             <> boundLocations BoundString boundStrings
             <> argLocations
     (normalBody, subFunctions) <- withLocations locations (genFunctionBody expr)
-    let body = NormalBody normalBody
+    let updateExtra = case u of
+          N -> mempty
+          U -> Body mempty 0 [PushUpdate]
+        body = NormalBody (updateExtra <> normalBody)
     return Function {..}
   where
     getMyLocation :: FunctionName -> ContextM (Maybe (ValName, Location))
