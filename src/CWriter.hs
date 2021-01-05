@@ -360,7 +360,7 @@ genInstructions (Body _ _ instrs) =
           writeLine (printf "return read_info_table(%s)->entry;" l)
       EnterCaseContinuation -> do
         writeLine "--g_SB.top;"
-        writeLine "return g_SB.top[0].as_continuation;"
+        writeLine "return g_SB.top[0].as_code;"
       Exit -> writeLine "return NULL;"
       Builtin2 b location1 location2 -> do
         l1 <- getCLocation location1
@@ -377,7 +377,7 @@ genInstructions (Body _ _ instrs) =
           writeLine "++g_SA.top;"
       PushCaseContinuation index -> do
         function <- getSubFunction index
-        writeLine (printf "g_SB.top[0].as_continuation = &%s;" function)
+        writeLine (printf "g_SB.top[0].as_code = &%s;" function)
         writeLine "++g_SB.top;"
       Bury location ->
         getCLocation location >>= \l -> do
@@ -409,6 +409,13 @@ genInstructions (Body _ _ instrs) =
           writeLine (printf "heap_write_ptr(%s);" l)
       PrintError s ->
         writeLine (printf "puts(\"Error:\\n%s\");" s)
+      PushUpdate -> do
+        writeLine "save_SB();"
+        writeLine "save_SA();"
+        writeLine "g_SB.top[0].as_code = g_NodeRegister;"
+        -- If we encounter a case expression, it knows what to do here.
+        writeLine "g_SB.top[1].as_code = update_constructor();"
+        writeLine "g_SB.top += 2;"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
 genNormalBody argCount bound body = do

@@ -79,12 +79,16 @@ typedef struct StackA {
   uint8_t **top;
   /// The base pointer of the argument stack.
   ///
-  /// We need to keep this around to free the stack on program exit.
+  /// This is used to adjust the bottom of the stack, to implement updates
   uint8_t **base;
+  /// A pointer to all of the data
+  ///
+  /// We keep this around so that we can free the stack on program exit
+  uint8_t **data;
 } StackA;
 
 /// The "A" or argument stack
-StackA g_SA = {NULL, NULL};
+StackA g_SA = {NULL, NULL, NULL};
 
 /// Represents an item on the secondary stack.
 ///
@@ -92,7 +96,10 @@ StackA g_SA = {NULL, NULL};
 /// pointer for a continuation.
 typedef union StackBItem {
   int64_t as_int;
-  CodeLabel as_continuation;
+  CodeLabel as_code;
+  uint8_t *as_closure;
+  union StackBItem *as_sb_base;
+  uint8_t **as_sa_base;
 } StackBItem;
 
 /// Represents the secondary stack.
@@ -101,10 +108,11 @@ typedef union StackBItem {
 typedef struct StackB {
   StackBItem *top;
   StackBItem *base;
+  StackBItem *data;
 } StackB;
 
 /// The secondary stack
-StackB g_SB = {NULL, NULL};
+StackB g_SB = {NULL, NULL, NULL};
 
 /// The register holding integer returns
 int64_t g_IntRegister = 0xBAD;
@@ -119,6 +127,8 @@ int64_t g_TagRegister = 0xBAD;
 int64_t g_ConstructorArgCountRegister = 0xBAD;
 /// The register holding the location of the current closure
 uint8_t *g_NodeRegister = NULL;
+/// The register holding a constructor closure to update
+uint8_t *g_ConstrUpdateRegister = NULL;
 
 /// A data structure representing our global Heap of memory
 typedef struct Heap {
@@ -226,8 +236,8 @@ void collect_garbage(size_t extra_required) {
   if (comfortable_size < g_Heap.capacity) {
     g_Heap.capacity = comfortable_size;
   }
-  DEBUG_PRINT("GC Done. 0x%05X ↓ 0x%05X ↑ 0x%05X\n", old.capacity, necessary_size,
-              g_Heap.capacity);
+  DEBUG_PRINT("GC Done. 0x%05X ↓ 0x%05X ↑ 0x%05X\n", old.capacity,
+              necessary_size, g_Heap.capacity);
 }
 
 /// Reserve a certain amount of bytes in the Heap
@@ -269,8 +279,8 @@ uint8_t *string_concat(uint8_t *s1, uint8_t *s2) {
 
     collect_garbage(required);
 
-    data2 = g_SA.top[-1] + sizeof(InfoTable*);
-    data1 = g_SA.top[-2] + sizeof(InfoTable*);
+    data2 = g_SA.top[-1] + sizeof(InfoTable *);
+    data1 = g_SA.top[-2] + sizeof(InfoTable *);
     g_SA.top -= 2;
   }
 
@@ -293,12 +303,36 @@ uint8_t *string_evac(uint8_t *base) {
   size_t bytes = strlen((char *)(base + sizeof(InfoTable *))) + 1;
   heap_write(base, sizeof(InfoTable *) + bytes);
   // We need to make sure we also have enough space for the relocation
-  if (bytes < sizeof(uint8_t*)) {
-    g_Heap.cursor += sizeof(uint8_t*) - bytes;
+  if (bytes < sizeof(uint8_t *)) {
+    g_Heap.cursor += sizeof(uint8_t *) - bytes;
   }
   memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
   memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
   return new_base;
+}
+
+/// Save the current contents of the B stack
+void save_sb() {
+  g_SB.top[0].as_sb_base = g_SB.base;
+  g_SB.base = g_SB.top;
+  ++g_SB.top;
+}
+
+/// Save the current contents of the A stack
+void save_sa() {
+  g_SB.top[0].as_sa_base = g_SA.base;
+  g_SA.base = g_SA.top;
+  ++g_SB.top;
+}
+
+/// The code that gets called when we hit an update frame when we're expecting
+/// a case continuation instead.
+CodeLabel update_constructor() {
+  g_SB.top -= 4;
+  g_ConstrUpdateRegister = g_SB.top[3].as_closure;
+  g_SA.base = g_SB.top[2].as_sa_base;
+  g_SB.base = g_SB.top[1].as_sb_base;
+  return g_SB.top[0].as_code;
 }
 
 /// The starting size for the Heap
@@ -315,22 +349,23 @@ void setup() {
   g_Heap.cursor = g_Heap.data;
   g_Heap.capacity = BASE_HEAP_SIZE;
 
-  g_SA.base = malloc(STACK_SIZE * sizeof(InfoTable *));
-  if (g_SA.base == NULL) {
+  g_SA.data = malloc(STACK_SIZE * sizeof(InfoTable *));
+  if (g_SA.data == NULL) {
     panic("Failed to initialize Argument Stack");
   }
   g_SA.top = g_SA.base;
 
-  g_SB.base = malloc(STACK_SIZE * sizeof(StackBItem));
-  if (g_SB.base == NULL) {
+  g_SB.data = malloc(STACK_SIZE * sizeof(StackBItem));
+  if (g_SB.data == NULL) {
     panic("Failed to initialize Secondary Stack");
   }
-  g_SB.top = g_SB.base;
+  g_SB.top = g_SB.data;
+  g_SB.base = g_SB.data;
 }
 
 /// Cleanup all the memory areas that we've created
 void cleanup() {
   free(g_Heap.data);
-  free(g_SA.base);
-  free(g_SB.base);
+  free(g_SA.data);
+  free(g_SB.data);
 }
