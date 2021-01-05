@@ -249,6 +249,23 @@ getFreeNames :: FreeNames a => a -> STGM [ValName]
 getFreeNames a =
   asks (topLevelNames >>> Set.difference (freeNames a) >>> Set.toList)
 
+makeLambdaForm :: [ValName] -> Expr -> STGM LambdaForm
+makeLambdaForm names expr = do
+  free <- getFreeNames (LambdaForm [] N names expr)
+  let u = updateable names expr
+  return (LambdaForm free u names expr)
+  where
+    updateable :: [ValName] -> Expr -> Updateable
+    -- If we have arguments, then we can't be evaluated further
+    updateable (_ : _) _ = N
+    -- Primitives can't be evaluated any further
+    updateable [] (Primitive _) = N
+    -- Errors are not updateable, since they exit the program
+    updateable [] (Error _) = N
+    updateable [] (Constructor _ _) = N
+    updateable [] (Box _ _) = N
+    updateable _ _ = U
+
 makeCase :: Expr -> Alts -> STGM Expr
 makeCase scrut alts = do
   free <- getFreeNames alts
@@ -263,15 +280,15 @@ gatherApplications expression = go expression []
 literalToAtom :: Literal -> STGM ([Binding], Atom)
 literalToAtom (StringLiteral s) = do
   name <- fresh
-  let l = LambdaForm [] U [] (Box StringBox (PrimitiveAtom (PrimString s)))
+  l <- makeLambdaForm [] (Box StringBox (PrimitiveAtom (PrimString s)))
   return ([Binding name l], NameAtom name)
 literalToAtom (IntLiteral i) = do
   name <- fresh
-  let l = LambdaForm [] U [] (Box IntBox (PrimitiveAtom (PrimInt i)))
+  l <- makeLambdaForm [] (Box IntBox (PrimitiveAtom (PrimInt i)))
   return ([Binding name l], NameAtom name)
 literalToAtom (BoolLiteral b) = do
   name <- fresh
-  let l = LambdaForm [] N [] (Constructor (if b then 1 else 0) [])
+  l <- makeLambdaForm [] (Constructor (if b then 1 else 0) [])
   return ([Binding name l], NameAtom name)
 
 atomize :: S.Expr Scheme -> STGM ([Binding], Atom)
@@ -307,7 +324,7 @@ saturateConstructor alwaysSaturate name atoms = do
       lambdaNames <- replicateM diff fresh
       let root = Constructor tag (atoms ++ map NameAtom lambdaNames)
       bindingName <- fresh
-      lambda <- attachFreeNames (LambdaForm [] N lambdaNames root)
+      lambda <- makeLambdaForm lambdaNames root
       return (NeededFilling [Binding bindingName (removeBindingName bindingName lambda)] bindingName)
 
 saturateConstructorAsExpr :: ConstructorName -> [Atom] -> [Binding] -> STGM Expr
@@ -420,12 +437,6 @@ convertBranches branches scrut = case head branches of
     findPatterns :: (S.Pattern -> STGM a) -> [(S.Pattern, S.Expr Scheme)] -> STGM [(a, Expr)]
     findPatterns conv = takeWhile (fst >>> (/= S.Wildcard)) >>> traverse (\(pat, e) -> liftA2 (,) (conv pat) (convertExpr e))
 
--- Gather the free names appearing in an expression
-attachFreeNames :: LambdaForm -> STGM LambdaForm
-attachFreeNames lambda@(LambdaForm _ u names expr) = do
-  free <- getFreeNames lambda
-  return (LambdaForm free (if null names then u else N) names expr)
-
 removeBindingName :: ValName -> LambdaForm -> LambdaForm
 removeBindingName name (LambdaForm free u names expr) =
   LambdaForm (filter (/= name) free) u names expr
@@ -439,7 +450,7 @@ exprToLambda :: S.Expr Scheme -> STGM LambdaForm
 exprToLambda expr = do
   let (names, e) = gatherLambdas expr
   e' <- convertExpr e
-  attachFreeNames (LambdaForm [] U names e')
+  makeLambdaForm names e'
   where
     gatherLambdas :: S.Expr Scheme -> ([ValName], S.Expr Scheme)
     gatherLambdas (S.LambdaExpr name _ e) =
@@ -472,7 +483,7 @@ convertAST (AST _ defs) =
   where
     makeEntry boxType b n = do
       theCase <- makeCase (Apply n []) (Unbox boxType "#v" (Builtin b [NameAtom "#v"]))
-      return (LambdaForm [] U [] theCase)
+      return (LambdaForm [] N [] theCase)
 
     gatherBindings =
       defs |> convertValueDefinitions |> fmap (builtins ++)
