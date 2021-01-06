@@ -176,6 +176,11 @@ void heap_write_int(int64_t x) {
   heap_write(&x, sizeof(int64_t));
 }
 
+/// Write a short unsigned integer into the heap
+void heap_write_uint16(uint16_t x) {
+  heap_write(&x, sizeof(uint16_t));
+}
+
 /// Read a ptr from a chunk of data
 uint8_t *read_ptr(uint8_t *data) {
   uint8_t *ret;
@@ -348,6 +353,9 @@ void *update_constructor() {
   return g_SB.top[0].as_code;
 }
 
+/// The table we use when creating a partial application closure
+InfoTable table_for_partial_application = {NULL, &static_evac};
+
 /// Check if we need to create an application update.
 ///
 /// This happens if insuffient arguments are passed to us on the stack.
@@ -355,16 +363,50 @@ void *update_constructor() {
 /// We return either NULL, indicating that we need to continue, or
 /// we return the codelabel to call next.
 CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
+  // NOTE: Be very careful to not create any temporaries that might get
+  // invalidated by garbage collection before calling `h_reserve`!
   int64_t args = g_SA.top - g_SA.base;
   if (args >= arg_count) {
     return NULL;
   }
-  // TODO: Actually create an indirection closure here
-  // Restore the stacks, but also remove the unneeded fake continuation,
-  // and the closure to update
+  // We don't want to pull out the closure just yet, it might get garbage
+  // collected!
+  StackBItem *saved_SB_base = g_SB.base[0].as_sb_base;
+  uint8_t **saved_SA_base = g_SB.base[1].as_sa_base;
+
+  // NOTE: Our stacks can't even contain 2^16 items.
+  // This saves space in the partial application closure
+  uint16_t b_items = g_SB.base - saved_SB_base;
+  uint16_t a_items = g_SA.base - saved_SA_base;
+  size_t saved_B_size = sizeof(StackBItem) * b_items;
+  size_t saved_A_size = sizeof(uint8_t *) * a_items;
+  size_t required =
+      sizeof(InfoTable *) + sizeof(uint8_t *) + saved_B_size + saved_A_size;
+  heap_reserve(required);
+
+  uint8_t *closure = g_SB.base[2].as_closure;
+  // Adjust stack by removing the update frame
+  size_t above_frame = g_SB.top - g_SB.base + 4;
+  for (size_t i = 0; i < above_frame; ++i) {
+    g_SB.base[i] = g_SB.base[i + 4];
+  }
   g_SB.top -= 4;
-  g_SA.base = g_SB.top[1].as_sa_base;
-  g_SB.base = g_SB.top[0].as_sb_base;
+  // Restoring old stack bases
+  g_SA.base = saved_SA_base;
+  g_SB.base = saved_SB_base;
+
+  // Constructing the new closure
+  heap_write_info_table(&table_for_partial_application);
+  heap_write_uint16(a_items);
+  heap_write_uint16(b_items);
+  // NOTE: this works in my mental model of C, but I am not a lawyer
+  // heap_write uses memcpy under the hood
+  heap_write(g_SA.base, saved_A_size);
+  heap_write(g_SB.base, saved_B_size);
+
+  // Replacing the old closure with an indirection
+  // TODO
+
   // Return to the function that called us.
   return current;
 }
