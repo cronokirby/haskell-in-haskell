@@ -353,8 +353,89 @@ void *update_constructor() {
   return g_SB.top[0].as_code;
 }
 
+/// The entry function for partial applications.
+void *partial_application_entry() {
+  uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *);
+
+  CodeLabel ret;
+  memcpy(&ret, cursor, sizeof(CodeLabel));
+  cursor += sizeof(CodeLabel);
+
+  uint16_t b_items;
+  memcpy(&b_items, cursor, sizeof(uint16_t));
+  cursor += sizeof(uint16_t);
+  uint16_t a_items;
+  memcpy(&a_items, cursor, sizeof(uint16_t));
+  cursor += sizeof(uint16_t);
+
+  // Push saved stack arguments
+  size_t b_size = b_items * sizeof(StackBItem);
+  memcpy(g_SB.top, cursor, b_size);
+  g_SB.top += b_items;
+  cursor += b_size;
+  size_t a_size = a_items * sizeof(uint8_t *);
+  memcpy(g_SA.top, cursor, a_size);
+  g_SA.top += a_items;
+
+  // Jump to saved function
+  return ret;
+}
+
+/// THe evacuation function for a partial application
+uint8_t *partial_application_evac(uint8_t *base) {
+  uint8_t *cursor = base + sizeof(InfoTable *) + sizeof(CodeLabel);
+
+  // We'll need the number of items later
+  uint16_t b_items;
+  memcpy(&b_items, cursor, sizeof(uint16_t));
+  cursor += sizeof(uint16_t);
+  size_t b_size = b_items * sizeof(StackBItem);
+  uint16_t a_items;
+  memcpy(&a_items, cursor, sizeof(uint16_t));
+  cursor += sizeof(uint16_t);
+  size_t a_size = a_items * sizeof(uint8_t *);
+
+  // Skip over the b items
+  cursor += b_size;
+
+  // Collect the roots recursively
+  for (size_t i = 0; i < a_items; ++i) {
+    uint8_t *root;
+    memcpy(&root, cursor, sizeof(uint8_t *));
+    collect_root(&root);
+    memcpy(&root, cursor, sizeof(uint8_t *));
+    cursor += sizeof(uint8_t *);
+  }
+
+  // Write the entire closure over
+  size_t total_size = sizeof(InfoTable *) + sizeof(CodeLabel) + b_size + a_size;
+  uint8_t *ret = heap_cursor();
+  heap_write(base, total_size);
+  return ret;
+}
+
 /// The table we use when creating a partial application closure
-InfoTable table_for_partial_application = {NULL, &static_evac};
+InfoTable table_for_partial_application = {&partial_application_entry,
+                                           &partial_application_evac};
+
+/// The entry function for an indirection just enters the its pointee
+void *indirection_entry() {
+  uint8_t *closure = read_ptr(g_NodeRegister + sizeof(InfoTable *));
+  return read_info_table(closure)->entry;
+}
+
+/// The evacuation function for an indirection.
+///
+/// This has the effect of removing indirections, since we don't recreate
+/// a new indirection in the heap.
+uint8_t *indirection_evac(uint8_t *base) {
+  uint8_t *closure = read_ptr(base + sizeof(InfoTable *));
+  return read_info_table(closure)->evac(closure);
+}
+
+/// The table we use for an indirection closure
+InfoTable table_for_indirection = {&indirection_entry, &indirection_evac};
+InfoTable *table_pointer_for_indirection = &table_for_indirection;
 
 /// Check if we need to create an application update.
 ///
@@ -369,43 +450,42 @@ CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
   if (args >= arg_count) {
     return NULL;
   }
-  // We don't want to pull out the closure just yet, it might get garbage
-  // collected!
+
+  uint16_t b_items = g_SB.top - (g_SB.base + 4);
+  uint16_t a_items = g_SA.top - g_SA.base;
+  size_t b_size = b_items * sizeof(StackBItem);
+  size_t a_size = a_items * sizeof(uint8_t *);
+  size_t required = sizeof(InfoTable *) + sizeof(uint8_t *) + a_size + b_size;
+  heap_reserve(required);
+
+  // Pull out what we need from the update frame
+  uint8_t *closure = g_SB.base[2].as_closure;
   StackBItem *saved_SB_base = g_SB.base[0].as_sb_base;
   uint8_t **saved_SA_base = g_SB.base[1].as_sa_base;
 
-  // NOTE: Our stacks can't even contain 2^16 items.
-  // This saves space in the partial application closure
-  uint16_t b_items = g_SB.base - saved_SB_base;
-  uint16_t a_items = g_SA.base - saved_SA_base;
-  size_t saved_B_size = sizeof(StackBItem) * b_items;
-  size_t saved_A_size = sizeof(uint8_t *) * a_items;
-  size_t required =
-      sizeof(InfoTable *) + sizeof(uint8_t *) + saved_B_size + saved_A_size;
-  heap_reserve(required);
-
-  uint8_t *closure = g_SB.base[2].as_closure;
-  // Adjust stack by removing the update frame
-  size_t above_frame = g_SB.top - g_SB.base + 4;
-  for (size_t i = 0; i < above_frame; ++i) {
+  // Remove the update frame
+  for (size_t i = 0; i < b_items; ++i) {
     g_SB.base[i] = g_SB.base[i + 4];
   }
   g_SB.top -= 4;
+
+  // Construct the new closure
+  uint8_t *indirection = heap_cursor();
+  heap_write_info_table(&table_for_partial_application);
+  heap_write(current, sizeof(CodeLabel));
+  heap_write_uint16(b_items);
+  heap_write_uint16(a_items);
+  // NOTE: this works in my mental model of C, but I am not a lawyer
+  // heap_write uses memcpy under the hood
+  heap_write(g_SB.base, b_size);
+  heap_write(g_SA.base, a_size);
+
+  memcpy(closure, &table_pointer_for_indirection, sizeof(InfoTable *));
+  memcpy(closure + sizeof(InfoTable *), &indirection, sizeof(uint8_t *));
+
   // Restoring old stack bases
   g_SA.base = saved_SA_base;
   g_SB.base = saved_SB_base;
-
-  // Constructing the new closure
-  heap_write_info_table(&table_for_partial_application);
-  heap_write_uint16(a_items);
-  heap_write_uint16(b_items);
-  // NOTE: this works in my mental model of C, but I am not a lawyer
-  // heap_write uses memcpy under the hood
-  heap_write(g_SA.base, saved_A_size);
-  heap_write(g_SB.base, saved_B_size);
-
-  // Replacing the old closure with an indirection
-  // TODO
 
   // Return to the function that called us.
   return current;
