@@ -622,7 +622,7 @@ genFunction Function {..} =
     writeLine (printf "void* %s() {" current)
     writeLine "DEBUG_PRINT(\"%s\\n\", __func__);"
     indented <| do
-      unless (argCount == 0)
+      unless (argCount == 0 || isJust isGlobal)
         <| writeLine (printf "check_application_update(%d, %s);" argCount current)
       withSubFunctionTable subFunctions
         <| withLocations maybeAllocatedClosures
