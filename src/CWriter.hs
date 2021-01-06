@@ -410,11 +410,12 @@ genInstructions (Body _ _ instrs) =
       PrintError s ->
         writeLine (printf "puts(\"Error:\\n%s\");" s)
       PushUpdate -> do
+        comment "pushing update frame"
         writeLine "save_SB();"
         writeLine "save_SA();"
-        writeLine "g_SB.top[0].as_code = g_NodeRegister;"
+        writeLine "g_SB.top[0].as_closure = g_NodeRegister;"
         -- If we encounter a case expression, it knows what to do here.
-        writeLine "g_SB.top[1].as_code = update_constructor();"
+        writeLine "g_SB.top[1].as_code = &update_constructor;"
         writeLine "g_SB.top += 2;"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
@@ -619,10 +620,12 @@ genFunction Function {..} =
       <| writeLine (printf "InfoTable* %s = &%s;" currentPointer currentTable)
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
-    withSubFunctionTable subFunctions
-      <| withLocations maybeAllocatedClosures
-      <| indented
-      <| genFunctionBody argCount boundArgs body
+    indented <| do
+      unless (argCount == 0)
+        <| writeLine (printf "check_application_update(%d, %s);" argCount current)
+      withSubFunctionTable subFunctions
+        <| withLocations maybeAllocatedClosures
+        <| genFunctionBody argCount boundArgs body
     writeLine "}"
   where
     -- The idea is that we'll initialize these variable on demand as we

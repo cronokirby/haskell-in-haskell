@@ -223,7 +223,7 @@ void collect_garbage(size_t extra_required) {
     collect_root(&g_NodeRegister);
   }
 
-  for (uint8_t **p = g_SA.base; p < g_SA.top; ++p) {
+  for (uint8_t **p = g_SA.data; p < g_SA.top; ++p) {
     collect_root(p);
   }
   // At this point, all references into the old heap are eliminated
@@ -312,14 +312,14 @@ uint8_t *string_evac(uint8_t *base) {
 }
 
 /// Save the current contents of the B stack
-void save_sb() {
+void save_SB() {
   g_SB.top[0].as_sb_base = g_SB.base;
   g_SB.base = g_SB.top;
   ++g_SB.top;
 }
 
 /// Save the current contents of the A stack
-void save_sa() {
+void save_SA() {
   g_SB.top[0].as_sa_base = g_SA.base;
   g_SA.base = g_SA.top;
   ++g_SB.top;
@@ -327,12 +327,33 @@ void save_sa() {
 
 /// The code that gets called when we hit an update frame when we're expecting
 /// a case continuation instead.
-CodeLabel update_constructor() {
+void* update_constructor() {
   g_SB.top -= 4;
   g_ConstrUpdateRegister = g_SB.top[3].as_closure;
   g_SA.base = g_SB.top[2].as_sa_base;
   g_SB.base = g_SB.top[1].as_sb_base;
   return g_SB.top[0].as_code;
+}
+
+/// Check if we need to create an application update.
+///
+/// This happens if insuffient arguments are passed to us on the stack.
+///
+/// We return either NULL, indicating that we need to continue, or
+/// we return the codelabel to call next.
+CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
+  int64_t args = g_SA.top - g_SA.base;
+  if (args >= arg_count) {
+    return NULL;
+  }
+  // TODO: Actually create an indirection closure here
+  // Restore the stacks, but also remove the unneeded fake continuation,
+  // and the closure to update
+  g_SB.top -= 4;
+  g_SA.base = g_SB.top[1].as_sa_base;
+  g_SB.base = g_SB.top[0].as_sb_base;
+  // Return to the function that called us.
+  return current;
 }
 
 /// The starting size for the Heap
@@ -353,7 +374,8 @@ void setup() {
   if (g_SA.data == NULL) {
     panic("Failed to initialize Argument Stack");
   }
-  g_SA.top = g_SA.base;
+  g_SA.base = g_SA.data;
+  g_SA.top = g_SA.data;
 
   g_SB.data = malloc(STACK_SIZE * sizeof(StackBItem));
   if (g_SB.data == NULL) {
