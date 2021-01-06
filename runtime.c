@@ -44,6 +44,11 @@ uint8_t *static_evac(uint8_t *base) {
   return base;
 }
 
+/// It's useful for to have a null table to use that's valid for the GC,
+/// but can't be entered
+InfoTable table_for_null = {NULL, &static_evac};
+static InfoTable *table_pointer_for_null = &table_for_null;
+
 /// For closures that have already been evacuated
 uint8_t *already_evac(uint8_t *base) {
   uint8_t *ret;
@@ -126,9 +131,9 @@ int64_t g_TagRegister = 0xBAD;
 /// The register holding the number of constructor args returned
 int64_t g_ConstructorArgCountRegister = 0xBAD;
 /// The register holding the location of the current closure
-uint8_t *g_NodeRegister = NULL;
+uint8_t *g_NodeRegister = (uint8_t *)&table_pointer_for_null;
 /// The register holding a constructor closure to update
-uint8_t *g_ConstrUpdateRegister = NULL;
+uint8_t *g_ConstrUpdateRegister = (uint8_t *)&table_pointer_for_null;
 
 /// A data structure representing our global Heap of memory
 typedef struct Heap {
@@ -225,6 +230,11 @@ void collect_garbage(size_t extra_required) {
 
   for (uint8_t **p = g_SA.data; p < g_SA.top; ++p) {
     collect_root(p);
+  }
+  // Collect all the closures in the update frames
+  for (StackBItem *base = g_SB.base; base != g_SB.data;
+       base = base[0].as_sb_base) {
+    collect_root(&base[2].as_closure);
   }
   // At this point, all references into the old heap are eliminated
   free(old.data);
@@ -327,7 +337,10 @@ void save_SA() {
 
 /// The code that gets called when we hit an update frame when we're expecting
 /// a case continuation instead.
-void* update_constructor() {
+void *update_constructor() {
+  // At this point, the topmost part of our update frame has been lobbed off,
+  // now we need to chop off the rest, and also go to the "real" update
+  // continuation
   g_SB.top -= 4;
   g_ConstrUpdateRegister = g_SB.top[3].as_closure;
   g_SA.base = g_SB.top[2].as_sa_base;
