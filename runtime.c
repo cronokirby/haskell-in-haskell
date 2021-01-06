@@ -368,6 +368,7 @@ void *partial_application_entry() {
   memcpy(&a_items, cursor, sizeof(uint16_t));
   cursor += sizeof(uint16_t);
 
+
   // Push saved stack arguments
   size_t b_size = b_items * sizeof(StackBItem);
   memcpy(g_SB.top, cursor, b_size);
@@ -420,8 +421,8 @@ InfoTable table_for_partial_application = {&partial_application_entry,
 
 /// The entry function for an indirection just enters the its pointee
 void *indirection_entry() {
-  uint8_t *closure = read_ptr(g_NodeRegister + sizeof(InfoTable *));
-  return read_info_table(closure)->entry;
+  g_NodeRegister = read_ptr(g_NodeRegister + sizeof(InfoTable *));
+  return read_info_table(g_NodeRegister)->entry;
 }
 
 /// The evacuation function for an indirection.
@@ -472,7 +473,7 @@ CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
   // Construct the new closure
   uint8_t *indirection = heap_cursor();
   heap_write_info_table(&table_for_partial_application);
-  heap_write(current, sizeof(CodeLabel));
+  heap_write(&current, sizeof(CodeLabel));
   heap_write_uint16(b_items);
   heap_write_uint16(a_items);
   // NOTE: this works in my mental model of C, but I am not a lawyer
