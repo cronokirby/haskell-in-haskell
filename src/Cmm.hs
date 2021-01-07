@@ -846,9 +846,10 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound u args expr) =
             <> boundLocations BoundString boundStrings
             <> argLocations
     (normalBody, subFunctions) <- withLocations locations (genFunctionBody expr)
-    let updateExtra = case u of
-          N -> mempty
-          U -> Body mempty 0 [PushUpdate]
+    let updateExtra = case (isGlobal, u) of
+          (Just _, _) -> mempty
+          (Nothing, N) -> mempty
+          (Nothing, U) -> Body mempty 0 [PushUpdate]
         body = NormalBody (updateExtra <> normalBody)
     return Function {..}
   where

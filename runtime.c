@@ -125,15 +125,15 @@ int64_t g_IntRegister = 0xBAD;
 ///
 /// This is **not** a pointer to the character data, but rather,
 /// the location in memory where this string closure resides.
-uint8_t *g_StringRegister = (uint8_t*)&table_pointer_for_null;
+uint8_t *g_StringRegister = NULL;
 /// The register holding constructor tag returns
 int64_t g_TagRegister = 0xBAD;
 /// The register holding the number of constructor args returned
 int64_t g_ConstructorArgCountRegister = 0xBAD;
 /// The register holding the location of the current closure
-uint8_t *g_NodeRegister = (uint8_t *)&table_pointer_for_null;
+uint8_t *g_NodeRegister = NULL;
 /// The register holding a constructor closure to update
-uint8_t *g_ConstrUpdateRegister = (uint8_t *)&table_pointer_for_null;
+uint8_t *g_ConstrUpdateRegister = NULL;
 
 /// A data structure representing our global Heap of memory
 typedef struct Heap {
@@ -226,9 +226,17 @@ void collect_garbage(size_t extra_required) {
   g_Heap.cursor = g_Heap.data;
   g_Heap.capacity = new_capacity;
 
-  collect_root(&g_StringRegister);
-  collect_root(&g_NodeRegister);
-  collect_root(&g_ConstrUpdateRegister);
+  if (g_StringRegister != NULL) {
+
+    collect_root(&g_StringRegister);
+  }
+  if (g_NodeRegister != NULL) {
+
+    collect_root(&g_NodeRegister);
+  }
+  if (g_ConstrUpdateRegister != NULL) {
+    collect_root(&g_ConstrUpdateRegister);
+  }
 
   for (uint8_t **p = g_SA.data; p < g_SA.top; ++p) {
     collect_root(p);
@@ -337,19 +345,6 @@ void save_SA() {
   ++g_SB.top;
 }
 
-/// The code that gets called when we hit an update frame when we're expecting
-/// a case continuation instead.
-void *update_constructor() {
-  // At this point, the topmost part of our update frame has been lobbed off,
-  // now we need to chop off the rest, and also go to the "real" update
-  // continuation
-  g_SB.top -= 4;
-  g_ConstrUpdateRegister = g_SB.top[3].as_closure;
-  g_SA.base = g_SB.top[2].as_sa_base;
-  g_SB.base = g_SB.top[1].as_sb_base;
-  return g_SB.top[0].as_code;
-}
-
 /// The entry function for partial applications.
 void *partial_application_entry() {
   uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *);
@@ -433,6 +428,30 @@ uint8_t *indirection_evac(uint8_t *base) {
 /// The table we use for an indirection closure
 InfoTable table_for_indirection = {&indirection_entry, &indirection_evac};
 InfoTable *table_pointer_for_indirection = &table_for_indirection;
+
+/// The code that gets called when we hit an update frame when we're expecting
+/// a case continuation instead.
+void *update_constructor() {
+  // At this point, the topmost part of our update frame has been lobbed off,
+  // now we need to chop off the rest, and also go to the "real" update
+  // continuation
+  g_SB.top -= 4;
+
+  uint8_t *closure = g_SB.top[3].as_closure;
+  DEBUG_PRINT("update_constructor, closure: %p\n", closure);
+  // If we already have an updating thunk, just make us point to
+  // to that one instead.
+  if (g_ConstrUpdateRegister != NULL) {
+    memcpy(closure, &table_pointer_for_indirection, sizeof(InfoTable *));
+    memcpy(closure + sizeof(InfoTable *), &g_ConstrUpdateRegister,
+           sizeof(uint8_t *));
+  } else {
+    g_ConstrUpdateRegister = closure;
+  }
+  g_SA.base = g_SB.top[2].as_sa_base;
+  g_SB.base = g_SB.top[1].as_sb_base;
+  return g_SB.top[0].as_code;
+}
 
 /// Check if we need to create an application update.
 ///
