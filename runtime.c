@@ -515,17 +515,19 @@ void *with_constructor_entry() {
 }
 
 uint8_t *with_constructor_evac(uint8_t *base) {
-  uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *) + sizeof(uint16_t);
+  DEBUG_PRINT("constructor_evac: base: %p\n", base);
+  uint8_t *cursor = base + sizeof(InfoTable *) + sizeof(uint16_t);
 
   uint16_t items;
   memcpy(&items, cursor, sizeof(uint16_t));
-  items += sizeof(uint16_t);
+  cursor += sizeof(uint16_t);
+  DEBUG_PRINT("  items: %u\n", items);
 
   size_t items_size = items * sizeof(uint8_t *);
   uint8_t *end = cursor + items_size;
-  for (; cursor < end; ++cursor) {
-    uint8_t *root;
-    memcpy(&root, cursor, sizeof(uint8_t *));
+  for (; cursor < end; cursor += sizeof(uint8_t*)) {
+    uint8_t *root = read_ptr(cursor);
+    DEBUG_PRINT("  cursor: %p, root: %p\n", cursor, root);
     collect_root(&root);
     memcpy(cursor, &root, sizeof(uint8_t *));
   }
@@ -540,12 +542,15 @@ InfoTable table_for_with_constructor = {&with_constructor_entry,
 InfoTable *table_pointer_for_with_constructor = &table_for_with_constructor;
 
 void update_with_constructor() {
+  DEBUG_PRINT("update_with_constructor: %p\n", g_ConstrUpdateRegister);
   uint16_t items = g_ConstructorArgCountRegister;
   size_t items_size = items * sizeof(uint8_t *);
+  DEBUG_PRINT("  items: %u, items_size: %u\n", items, items_size);
   size_t required = sizeof(InfoTable *) + 2 * sizeof(uint16_t) + items_size;
   heap_reserve(required);
 
   uint8_t *indirection = heap_cursor();
+  DEBUG_PRINT("  -> %p\n", indirection);
   heap_write_info_table(&table_for_with_constructor);
   heap_write_uint16(g_TagRegister);
   heap_write_uint16(items);
