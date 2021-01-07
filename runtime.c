@@ -461,9 +461,12 @@ void *with_int_entry() {
 }
 
 uint8_t *with_int_evac(uint8_t *base) {
-  uint8_t *ret = heap_cursor();
+  uint8_t *new_base = heap_cursor();
   heap_write(base, sizeof(InfoTable *) + sizeof(int64_t));
-  return ret;
+
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+  return new_base;
 }
 
 InfoTable table_for_with_int = {&with_int_entry, &with_int_evac};
@@ -483,9 +486,12 @@ void *with_string_entry() {
 }
 
 uint8_t *with_string_evac(uint8_t *base) {
-  uint8_t *ret = heap_cursor();
+  uint8_t *new_base = heap_cursor();
   heap_write(base, sizeof(InfoTable *) + sizeof(int64_t));
-  return ret;
+
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+  return new_base;
 }
 
 InfoTable table_for_with_string = {&with_string_entry, &with_string_evac};
@@ -532,9 +538,12 @@ uint8_t *with_constructor_evac(uint8_t *base) {
     memcpy(cursor, &root, sizeof(uint8_t *));
   }
 
-  uint8_t *ret = heap_cursor();
+  uint8_t *new_base = heap_cursor();
   heap_write(base, sizeof(InfoTable *) + 2 * sizeof(uint16_t) + items_size);
-  return ret;
+
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+  return new_base;
 }
 
 InfoTable table_for_with_constructor = {&with_constructor_entry,
