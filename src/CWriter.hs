@@ -608,7 +608,11 @@ genFunctionBody argCount boundArgs = \case
     genIntCases boundArgs "update_with_constructor();" "g_TagRegister" cases default'
   StringCaseBody cases default' ->
     genStringCases boundArgs cases default'
-  ContinuationBody body ->
+  ContinuationBody updateType body -> do
+    let updateWith = case updateType of
+          IntUpdate -> "update_with_int();"
+          StringUpdate -> "update_with_string();"
+    genCasePrelude updateWith
     genContinuationBody boundArgs body
   NormalBody body -> genNormalBody argCount boundArgs body
 
@@ -666,7 +670,7 @@ gatherStrings (Cmm functions entry) =
         foldMap inBody (default' : map snd branches)
       TagCaseBody branches default' ->
         foldMap inBody (default' : map snd branches)
-      ContinuationBody body -> inBody body
+      ContinuationBody _ body -> inBody body
       NormalBody body -> inBody body
 
     inBody :: Body -> Set.Set String

@@ -23,6 +23,7 @@ module Cmm
     FunctionName (..),
     Function (..),
     Location (..),
+    DirectUpdateType(..),
     FunctionBody (..),
     Body (..),
     Instruction (..),
@@ -176,6 +177,12 @@ locationType = \case
   StringRegister -> StringVar
   PrimStringLocation _ -> StringVar
 
+-- | The type of updated used in the case of a direct value update
+data DirectUpdateType
+  = IntUpdate
+  | StringUpdate
+  deriving (Show)
+
 -- | Represents a kind of builtin taking two arguments
 data Builtin2
   = -- | IntR <- a + b
@@ -278,8 +285,8 @@ data Instruction
     AllocInt Location
   | -- | Allocate a string on the heap
     AllocString Location
-    -- | Push an update frame
-  | PushUpdate
+  | -- | Push an update frame
+    PushUpdate
   deriving (Show)
 
 -- | An allocation records information about how much a given expression will allocate
@@ -350,7 +357,7 @@ data FunctionBody
   | -- | A function body of a continuation
     --
     -- This is kind of like a normal body, but bound arguments are buried instead.
-    ContinuationBody Body
+    ContinuationBody DirectUpdateType Body
   | -- | Represents a normal function body
     NormalBody Body
   deriving (Show)
@@ -595,13 +602,13 @@ genCaseFunction index bound alts =
     handleAlts :: Alts -> ContextM (FunctionBody, [Function])
     handleAlts = \case
       BindPrim IntBox name expr ->
-        withTypeAndLocation name IntVar IntRegister (makeDirectBody expr)
+        withTypeAndLocation name IntVar IntRegister (makeDirectBody IntUpdate expr)
       BindPrim StringBox name expr ->
-        withTypeAndLocation name StringVar StringRegister (makeDirectBody expr)
+        withTypeAndLocation name StringVar StringRegister (makeDirectBody StringUpdate expr)
       Unbox IntBox name expr ->
-        withTypeAndLocation name IntVar IntRegister (makeDirectBody expr)
+        withTypeAndLocation name IntVar IntRegister (makeDirectBody IntUpdate expr)
       Unbox StringBox name expr ->
-        withTypeAndLocation name StringVar StringRegister (makeDirectBody expr)
+        withTypeAndLocation name StringVar StringRegister (makeDirectBody StringUpdate expr)
       IntAlts branches defaultExpr ->
         handleBranches IntCaseBody (const genFunctionBody) branches defaultExpr
       StringAlts branches defaultExpr ->
@@ -627,10 +634,10 @@ genCaseFunction index bound alts =
         withTypeAndLocation name typ location =
           withStorages [(name, LocalStorage typ)] >>> withLocations [(name, location)]
 
-        makeDirectBody :: Expr -> ContextM (FunctionBody, [Function])
-        makeDirectBody expr = do
+        makeDirectBody :: DirectUpdateType -> Expr -> ContextM (FunctionBody, [Function])
+        makeDirectBody updateType expr = do
           (body, subFunctions) <- genFunctionBody expr
-          return (ContinuationBody body, subFunctions)
+          return (ContinuationBody updateType body, subFunctions)
 
     handleBranches ::
       ([(a, Body)] -> Body -> FunctionBody) ->
