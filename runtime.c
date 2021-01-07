@@ -232,6 +232,9 @@ void collect_garbage(size_t extra_required) {
   if (g_NodeRegister != NULL) {
     collect_root(&g_NodeRegister);
   }
+  if (g_ConstrUpdateRegister != NULL) {
+    collect_root(&g_ConstrUpdateRegister);
+  }
 
   for (uint8_t **p = g_SA.data; p < g_SA.top; ++p) {
     collect_root(p);
@@ -367,7 +370,6 @@ void *partial_application_entry() {
   uint16_t a_items;
   memcpy(&a_items, cursor, sizeof(uint16_t));
   cursor += sizeof(uint16_t);
-
 
   // Push saved stack arguments
   size_t b_size = b_items * sizeof(StackBItem);
