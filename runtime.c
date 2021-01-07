@@ -125,7 +125,7 @@ int64_t g_IntRegister = 0xBAD;
 ///
 /// This is **not** a pointer to the character data, but rather,
 /// the location in memory where this string closure resides.
-uint8_t *g_StringRegister = NULL;
+uint8_t *g_StringRegister = (uint8_t*)&table_pointer_for_null;
 /// The register holding constructor tag returns
 int64_t g_TagRegister = 0xBAD;
 /// The register holding the number of constructor args returned
@@ -226,15 +226,9 @@ void collect_garbage(size_t extra_required) {
   g_Heap.cursor = g_Heap.data;
   g_Heap.capacity = new_capacity;
 
-  if (g_StringRegister != NULL) {
-    collect_root(&g_StringRegister);
-  }
-  if (g_NodeRegister != NULL) {
-    collect_root(&g_NodeRegister);
-  }
-  if (g_ConstrUpdateRegister != NULL) {
-    collect_root(&g_ConstrUpdateRegister);
-  }
+  collect_root(&g_StringRegister);
+  collect_root(&g_NodeRegister);
+  collect_root(&g_ConstrUpdateRegister);
 
   for (uint8_t **p = g_SA.data; p < g_SA.top; ++p) {
     collect_root(p);
