@@ -554,8 +554,18 @@ genContinuationBody buriedArgs body = do
           writeLine (printf "g_SA.top -= %d;" count)
           return (manyLocations pairs)
 
-genIntCases :: ArgInfo -> CCode -> [(Int, Body)] -> Body -> CWriter ()
-genIntCases buriedArgs scrut cases default' = do
+genCasePrelude :: CCode -> CWriter ()
+genCasePrelude updateWith = do
+  comment "check for constructor updates"
+  writeLine "if (g_ConstrUpdateRegister != NULL) {"
+  indented <| do
+    writeLine updateWith
+    writeLine "g_ConstrUpdateRegister = NULL;"
+  writeLine "}"
+
+genIntCases :: ArgInfo -> CCode -> CCode -> [(Int, Body)] -> Body -> CWriter ()
+genIntCases buriedArgs updateWith scrut cases default' = do
+  genCasePrelude updateWith
   writeLine (printf "switch (%s) {" scrut)
   indented <| do
     forM_ cases genCase
@@ -574,6 +584,7 @@ genIntCases buriedArgs scrut cases default' = do
 
 genStringCases :: ArgInfo -> [(String, Body)] -> Body -> CWriter ()
 genStringCases buriedArgs cases default' = do
+  genCasePrelude "update_with_string();"
   writeLine "char* scrut = (char*)(g_StringRegister + sizeof(InfoTable*));"
   forM_ (zip [0 ..] cases) genCase
   genDefault default'
@@ -592,9 +603,9 @@ genStringCases buriedArgs cases default' = do
 genFunctionBody :: Int -> ArgInfo -> FunctionBody -> CWriter ()
 genFunctionBody argCount boundArgs = \case
   IntCaseBody cases default' ->
-    genIntCases boundArgs "g_IntRegister" cases default'
+    genIntCases boundArgs "update_with_int();" "g_IntRegister" cases default'
   TagCaseBody cases default' ->
-    genIntCases boundArgs "g_TagRegister" cases default'
+    genIntCases boundArgs "update_with_constructor();" "g_TagRegister" cases default'
   StringCaseBody cases default' ->
     genStringCases boundArgs cases default'
   ContinuationBody body ->

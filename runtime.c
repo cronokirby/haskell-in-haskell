@@ -127,7 +127,7 @@ int64_t g_IntRegister = 0xBAD;
 /// the location in memory where this string closure resides.
 uint8_t *g_StringRegister = NULL;
 /// The register holding constructor tag returns
-int64_t g_TagRegister = 0xBAD;
+uint16_t g_TagRegister = 0xBAD;
 /// The register holding the number of constructor args returned
 int64_t g_ConstructorArgCountRegister = 0xBAD;
 /// The register holding the location of the current closure
@@ -438,7 +438,8 @@ void *update_constructor() {
   g_SB.top -= 4;
 
   uint8_t *closure = g_SB.top[3].as_closure;
-  DEBUG_PRINT("update_constructor, closure: %p\n", closure);
+  DEBUG_PRINT("update_constructor, closure: %p, constr: %p\n", closure,
+              g_ConstrUpdateRegister);
   // If we already have an updating thunk, just make us point to
   // to that one instead.
   if (g_ConstrUpdateRegister != NULL) {
@@ -451,6 +452,109 @@ void *update_constructor() {
   g_SA.base = g_SB.top[2].as_sa_base;
   g_SB.base = g_SB.top[1].as_sb_base;
   return g_SB.top[0].as_code;
+}
+
+void *with_int_entry() {
+  g_IntRegister = read_int(g_NodeRegister + sizeof(InfoTable *));
+  --g_SB.top;
+  return g_SB.top[0].as_code;
+}
+
+uint8_t *with_int_evac(uint8_t *base) {
+  uint8_t *ret = heap_cursor();
+  heap_write(base, sizeof(InfoTable *) + sizeof(int64_t));
+  return ret;
+}
+
+InfoTable table_for_with_int = {&with_int_entry, &with_int_evac};
+
+void update_with_int() {
+  DEBUG_PRINT("update %p with %d\n", g_ConstrUpdateRegister, g_IntRegister);
+  InfoTable *table = &table_for_with_int;
+  memcpy(g_ConstrUpdateRegister, &table, sizeof(InfoTable *));
+  memcpy(g_ConstrUpdateRegister + sizeof(InfoTable *), &g_IntRegister,
+         sizeof(int64_t));
+}
+
+void *with_string_entry() {
+  g_StringRegister = read_ptr(g_NodeRegister + sizeof(InfoTable *));
+  --g_SB.top;
+  return g_SB.top[0].as_code;
+}
+
+uint8_t *with_string_evac(uint8_t *base) {
+  uint8_t *ret = heap_cursor();
+  heap_write(base, sizeof(InfoTable *) + sizeof(int64_t));
+  return ret;
+}
+
+InfoTable table_for_with_string = {&with_string_entry, &with_string_evac};
+
+void update_with_string() {
+  InfoTable *table = &table_for_with_string;
+  memcpy(g_ConstrUpdateRegister, &table, sizeof(InfoTable *));
+  memcpy(g_ConstrUpdateRegister + sizeof(InfoTable *), &g_StringRegister,
+         sizeof(uint8_t *));
+}
+
+void *with_constructor_entry() {
+  uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *);
+
+  memcpy(&g_TagRegister, cursor, sizeof(uint16_t));
+  cursor += sizeof(uint16_t);
+
+  uint16_t items;
+  memcpy(&items, cursor, sizeof(uint16_t));
+  cursor += sizeof(uint16_t);
+
+  memcpy(g_SA.top, cursor, items * sizeof(uint8_t *));
+  g_SA.top += items;
+
+  --g_SB.top;
+  return g_SB.top[0].as_code;
+}
+
+uint8_t *with_constructor_evac(uint8_t *base) {
+  uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *) + sizeof(uint16_t);
+
+  uint16_t items;
+  memcpy(&items, cursor, sizeof(uint16_t));
+  items += sizeof(uint16_t);
+
+  size_t items_size = items * sizeof(uint8_t *);
+  uint8_t *end = cursor + items_size;
+  for (; cursor < end; ++cursor) {
+    uint8_t *root;
+    memcpy(&root, cursor, sizeof(uint8_t *));
+    collect_root(&root);
+    memcpy(cursor, &root, sizeof(uint8_t *));
+  }
+
+  uint8_t *ret = heap_cursor();
+  heap_write(base, sizeof(InfoTable *) + 2 * sizeof(uint16_t) + items_size);
+  return ret;
+}
+
+InfoTable table_for_with_constructor = {&with_constructor_entry,
+                                        &with_constructor_evac};
+InfoTable *table_pointer_for_with_constructor = &table_for_with_constructor;
+
+void update_with_constructor() {
+  uint16_t items = g_ConstructorArgCountRegister;
+  size_t items_size = items * sizeof(uint8_t *);
+  size_t required = sizeof(InfoTable *) + 2 * sizeof(uint16_t) + items_size;
+  heap_reserve(required);
+
+  uint8_t *indirection = heap_cursor();
+  heap_write_info_table(&table_for_with_constructor);
+  heap_write_uint16(g_TagRegister);
+  heap_write_uint16(items);
+  heap_write(g_SA.top - items, items_size);
+
+  memcpy(g_ConstrUpdateRegister, &table_pointer_for_indirection,
+         sizeof(InfoTable *));
+  memcpy(g_ConstrUpdateRegister + sizeof(InfoTable *), &indirection,
+         sizeof(uint8_t *));
 }
 
 /// Check if we need to create an application update.
