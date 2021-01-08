@@ -615,7 +615,7 @@ genFunctionBody argCount boundArgs = \case
     genCasePrelude updateWith
     genContinuationBody boundArgs body
   NormalBody body -> genNormalBody argCount boundArgs body
-
+ 
 -- | Generate the C code for a function
 genFunction :: Function -> CWriter ()
 genFunction Function {..} =

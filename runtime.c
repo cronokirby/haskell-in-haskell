@@ -438,8 +438,6 @@ void *update_constructor() {
   g_SB.top -= 4;
 
   uint8_t *closure = g_SB.top[3].as_closure;
-  DEBUG_PRINT("update_constructor, closure: %p, constr: %p\n", closure,
-              g_ConstrUpdateRegister);
   // If we already have an updating thunk, just make us point to
   // to that one instead.
   if (g_ConstrUpdateRegister != NULL) {
@@ -457,6 +455,8 @@ void *update_constructor() {
 void *with_int_entry() {
   g_IntRegister = read_int(g_NodeRegister + sizeof(InfoTable *));
   --g_SB.top;
+  DEBUG_PRINT("with_int_entry at %p returning %ld\n", g_NodeRegister,
+              g_IntRegister);
   return g_SB.top[0].as_code;
 }
 
@@ -472,7 +472,6 @@ uint8_t *with_int_evac(uint8_t *base) {
 InfoTable table_for_with_int = {&with_int_entry, &with_int_evac};
 
 void update_with_int() {
-  DEBUG_PRINT("update %p with %d\n", g_ConstrUpdateRegister, g_IntRegister);
   InfoTable *table = &table_for_with_int;
   memcpy(g_ConstrUpdateRegister, &table, sizeof(InfoTable *));
   memcpy(g_ConstrUpdateRegister + sizeof(InfoTable *), &g_IntRegister,
@@ -504,6 +503,7 @@ void update_with_string() {
 }
 
 void *with_constructor_entry() {
+  DEBUG_PRINT("with_constructor_entry at %p:\n", g_NodeRegister);
   uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *);
 
   memcpy(&g_TagRegister, cursor, sizeof(uint16_t));
@@ -512,6 +512,7 @@ void *with_constructor_entry() {
   uint16_t items;
   memcpy(&items, cursor, sizeof(uint16_t));
   cursor += sizeof(uint16_t);
+  g_ConstructorArgCountRegister = items;
 
   memcpy(g_SA.top, cursor, items * sizeof(uint8_t *));
   g_SA.top += items;
@@ -521,19 +522,16 @@ void *with_constructor_entry() {
 }
 
 uint8_t *with_constructor_evac(uint8_t *base) {
-  DEBUG_PRINT("constructor_evac: base: %p\n", base);
   uint8_t *cursor = base + sizeof(InfoTable *) + sizeof(uint16_t);
 
   uint16_t items;
   memcpy(&items, cursor, sizeof(uint16_t));
   cursor += sizeof(uint16_t);
-  DEBUG_PRINT("  items: %u\n", items);
 
   size_t items_size = items * sizeof(uint8_t *);
   uint8_t *end = cursor + items_size;
-  for (; cursor < end; cursor += sizeof(uint8_t*)) {
+  for (; cursor < end; cursor += sizeof(uint8_t *)) {
     uint8_t *root = read_ptr(cursor);
-    DEBUG_PRINT("  cursor: %p, root: %p\n", cursor, root);
     collect_root(&root);
     memcpy(cursor, &root, sizeof(uint8_t *));
   }
@@ -551,15 +549,12 @@ InfoTable table_for_with_constructor = {&with_constructor_entry,
 InfoTable *table_pointer_for_with_constructor = &table_for_with_constructor;
 
 void update_with_constructor() {
-  DEBUG_PRINT("update_with_constructor: %p\n", g_ConstrUpdateRegister);
   uint16_t items = g_ConstructorArgCountRegister;
   size_t items_size = items * sizeof(uint8_t *);
-  DEBUG_PRINT("  items: %u, items_size: %u\n", items, items_size);
   size_t required = sizeof(InfoTable *) + 2 * sizeof(uint16_t) + items_size;
   heap_reserve(required);
 
   uint8_t *indirection = heap_cursor();
-  DEBUG_PRINT("  -> %p\n", indirection);
   heap_write_info_table(&table_for_with_constructor);
   heap_write_uint16(g_TagRegister);
   heap_write_uint16(items);
@@ -626,7 +621,7 @@ CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
 }
 
 /// The starting size for the Heap
-static const size_t BASE_HEAP_SIZE = 1 << 7;
+static const size_t BASE_HEAP_SIZE = 1 << 12;
 /// The starting size for each Stack
 static const size_t STACK_SIZE = 1 << 10;
 
