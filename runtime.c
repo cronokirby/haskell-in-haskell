@@ -250,6 +250,9 @@ void collect_garbage(size_t extra_required) {
   for (uint8_t **p = g_SA.data; p < g_SA.top; ++p) {
     collect_root(p);
   }
+  for (CAFCell *p = g_CAFListHead; p != NULL; p = p->next) {
+    collect_root(&p->closure);
+  }
   // Collect all the closures in the update frames
   for (StackBItem *base = g_SB.base; base != g_SB.data;
        base = base[0].as_sb_base) {
@@ -290,7 +293,7 @@ void *black_hole_entry() {
 uint8_t *black_hole_evac(uint8_t *base) {
   uint8_t *new_base = heap_cursor();
   heap_write(base, sizeof(InfoTable *) + sizeof(uint8_t *));
-  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable));
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable*));
   memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
   return new_base;
 }
@@ -662,7 +665,7 @@ CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
 }
 
 /// The starting size for the Heap
-static const size_t BASE_HEAP_SIZE = 1 << 16;
+static const size_t BASE_HEAP_SIZE = 1 << 6;
 /// The starting size for each Stack
 static const size_t STACK_SIZE = 1 << 10;
 
