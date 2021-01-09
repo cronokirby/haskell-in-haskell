@@ -732,21 +732,6 @@ genEvacFunction info@ArgInfo {..} = do
   let thisFunction = evacArgInfoVar info
   writeLine (printf "uint8_t* %s(uint8_t* base) {" thisFunction)
   indented <| do
-    comment "evacuating roots recursively"
-    writeLine "uint8_t* cursor = base + sizeof(InfoTable*);"
-    writeLine "uint8_t* root;"
-    replicateM_ boundPointers <| do
-      writeLine "root = read_ptr(cursor);"
-      writeLine "collect_root(&root);"
-      writeLine "memcpy(cursor, &root, sizeof(uint8_t*));"
-      writeLine "cursor += sizeof(uint8_t*);"
-    unless (boundInts == 0)
-      <| writeLine (printf "cursor += %d * sizeof(int64_t);" boundInts)
-    replicateM_ boundStrings <| do
-      writeLine "root = read_ptr(cursor);"
-      writeLine "collect_root(&root);"
-      writeLine "memcpy(cursor, &root, sizeof(uint8_t*));"
-      writeLine "cursor += sizeof(uint8_t*);"
     comment "relocating closure"
     writeLine "size_t closure_size = sizeof(InfoTable*);"
     case info of
@@ -764,7 +749,23 @@ genEvacFunction info@ArgInfo {..} = do
     comment "replacing old closure with indirection"
     writeLine "memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable*));"
     writeLine "memcpy(base + sizeof(InfoTable*), &new_base, sizeof(uint8_t*));"
+    comment "evacuating roots recursively"
+    writeLine "uint8_t* cursor = new_base + sizeof(InfoTable*);"
+    writeLine "uint8_t* root;"
+    replicateM_ boundPointers <| do
+      writeLine "root = read_ptr(cursor);"
+      writeLine "collect_root(&root);"
+      writeLine "memcpy(cursor, &root, sizeof(uint8_t*));"
+      writeLine "cursor += sizeof(uint8_t*);"
+    unless (boundInts == 0)
+      <| writeLine (printf "cursor += %d * sizeof(int64_t);" boundInts)
+    replicateM_ boundStrings <| do
+      writeLine "root = read_ptr(cursor);"
+      writeLine "collect_root(&root);"
+      writeLine "memcpy(cursor, &root, sizeof(uint8_t*));"
+      writeLine "cursor += sizeof(uint8_t*);"
     writeLine "return new_base;"
+
   writeLine "}"
   writeLine ""
 

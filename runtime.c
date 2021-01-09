@@ -375,35 +375,35 @@ void *partial_application_entry() {
 
 /// THe evacuation function for a partial application
 uint8_t *partial_application_evac(uint8_t *base) {
-  uint8_t *cursor = base + sizeof(InfoTable *) + sizeof(CodeLabel);
+  uint8_t *items_base = base + sizeof(InfoTable *) + sizeof(CodeLabel);
 
-  // We'll need the number of items later
+  // Get the number of items, in order to calculate size
   uint16_t b_items;
-  memcpy(&b_items, cursor, sizeof(uint16_t));
-  cursor += sizeof(uint16_t);
+  memcpy(&b_items, items_base, sizeof(uint16_t));
   size_t b_size = b_items * sizeof(StackBItem);
   uint16_t a_items;
-  memcpy(&a_items, cursor, sizeof(uint16_t));
-  cursor += sizeof(uint16_t);
+  memcpy(&a_items, items_base + sizeof(uint16_t), sizeof(uint16_t));
   size_t a_size = a_items * sizeof(uint8_t *);
 
-  // Skip over the b items
-  cursor += b_size;
+  // Move over the closure
+  size_t total_size = sizeof(InfoTable *) + sizeof(CodeLabel) +
+                      2 * sizeof(uint16_t) + b_size + a_size;
+  uint8_t *new_base = heap_cursor();
+  heap_write(base, total_size);
+  // Replace the old closure with an evacuation indirection
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
 
   // Collect the roots recursively
-  for (size_t i = 0; i < a_items; ++i) {
+  for (uint8_t *cursor = new_base + total_size - a_size;
+       cursor < new_base + total_size; cursor += sizeof(uint8_t *)) {
     uint8_t *root;
     memcpy(&root, cursor, sizeof(uint8_t *));
     collect_root(&root);
-    memcpy(&root, cursor, sizeof(uint8_t *));
-    cursor += sizeof(uint8_t *);
+    memcpy(cursor, &root, sizeof(uint8_t *));
   }
 
-  // Write the entire closure over
-  size_t total_size = sizeof(InfoTable *) + sizeof(CodeLabel) + b_size + a_size;
-  uint8_t *ret = heap_cursor();
-  heap_write(base, total_size);
-  return ret;
+  return new_base;
 }
 
 /// The table we use when creating a partial application closure
@@ -422,7 +422,10 @@ void *indirection_entry() {
 /// a new indirection in the heap.
 uint8_t *indirection_evac(uint8_t *base) {
   uint8_t *closure = read_ptr(base + sizeof(InfoTable *));
-  return read_info_table(closure)->evac(closure);
+  uint8_t *new_base = read_info_table(closure)->evac(closure);
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+  return new_base;
 }
 
 /// The table we use for an indirection closure
@@ -486,10 +489,17 @@ void *with_string_entry() {
 
 uint8_t *with_string_evac(uint8_t *base) {
   uint8_t *new_base = heap_cursor();
-  heap_write(base, sizeof(InfoTable *) + sizeof(int64_t));
+  heap_write(base, sizeof(InfoTable *) + sizeof(uint8_t *));
 
   memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
   memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+
+  uint8_t *cursor = new_base + sizeof(InfoTable *);
+  uint8_t *root;
+  memcpy(&root, cursor, sizeof(uint8_t *));
+  collect_root(&root);
+  memcpy(cursor, &root, sizeof(uint8_t *));
+
   return new_base;
 }
 
@@ -522,25 +532,32 @@ void *with_constructor_entry() {
 }
 
 uint8_t *with_constructor_evac(uint8_t *base) {
-  uint8_t *cursor = base + sizeof(InfoTable *) + sizeof(uint16_t);
+  uint8_t *items_base = base + sizeof(InfoTable *) + sizeof(uint16_t);
 
   uint16_t items;
-  memcpy(&items, cursor, sizeof(uint16_t));
-  cursor += sizeof(uint16_t);
-
+  memcpy(&items, items_base, sizeof(uint16_t));
   size_t items_size = items * sizeof(uint8_t *);
-  uint8_t *end = cursor + items_size;
-  for (; cursor < end; cursor += sizeof(uint8_t *)) {
+
+  size_t total_size = sizeof(InfoTable *) + 2 * sizeof(uint16_t) + items_size;
+
+  // Move over this closure
+  uint8_t *new_base = heap_cursor();
+  heap_write(base, total_size);
+  // Replace this closure with an evacuation indirection
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+
+  // Evacuate the roots recursively
+  uint8_t *cursor = new_base + sizeof(InfoTable *) + sizeof(uint16_t);
+
+  uint8_t *end = new_base + total_size;
+  for (uint8_t *cursor = end - items_size; cursor < end;
+       cursor += sizeof(uint8_t *)) {
     uint8_t *root = read_ptr(cursor);
     collect_root(&root);
     memcpy(cursor, &root, sizeof(uint8_t *));
   }
 
-  uint8_t *new_base = heap_cursor();
-  heap_write(base, sizeof(InfoTable *) + 2 * sizeof(uint16_t) + items_size);
-
-  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable *));
-  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
   return new_base;
 }
 
@@ -621,7 +638,7 @@ CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
 }
 
 /// The starting size for the Heap
-static const size_t BASE_HEAP_SIZE = 1 << 12;
+static const size_t BASE_HEAP_SIZE = 1 << 6;
 /// The starting size for each Stack
 static const size_t STACK_SIZE = 1 << 10;
 
