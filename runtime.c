@@ -374,6 +374,7 @@ void save_SA() {
 
 /// The entry function for partial applications.
 void *partial_application_entry() {
+  DEBUG_PRINT("%s\n", __func__);
   uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *);
 
   CodeLabel ret;
@@ -439,6 +440,7 @@ InfoTable table_for_partial_application = {&partial_application_entry,
 
 /// The entry function for an indirection just enters the its pointee
 void *indirection_entry() {
+  DEBUG_PRINT("%s\n", __func__);
   g_NodeRegister = read_ptr(g_NodeRegister + sizeof(InfoTable *));
   return read_info_table(g_NodeRegister)->entry;
 }
@@ -483,10 +485,9 @@ void *update_constructor() {
 }
 
 void *with_int_entry() {
+  DEBUG_PRINT("%s\n", __func__);
   g_IntRegister = read_int(g_NodeRegister + sizeof(InfoTable *));
   --g_SB.top;
-  DEBUG_PRINT("with_int_entry at %p returning %ld\n", g_NodeRegister,
-              g_IntRegister);
   return g_SB.top[0].as_code;
 }
 
@@ -509,6 +510,7 @@ void update_with_int() {
 }
 
 void *with_string_entry() {
+  DEBUG_PRINT("%s\n", __func__);
   g_StringRegister = read_ptr(g_NodeRegister + sizeof(InfoTable *));
   --g_SB.top;
   return g_SB.top[0].as_code;
@@ -540,7 +542,7 @@ void update_with_string() {
 }
 
 void *with_constructor_entry() {
-  DEBUG_PRINT("with_constructor_entry at %p:\n", g_NodeRegister);
+  DEBUG_PRINT("%s\n", __func__);
   uint8_t *cursor = g_NodeRegister + sizeof(InfoTable *);
 
   memcpy(&g_TagRegister, cursor, sizeof(uint16_t));
