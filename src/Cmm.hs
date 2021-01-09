@@ -23,10 +23,11 @@ module Cmm
     FunctionName (..),
     Function (..),
     Location (..),
-    DirectUpdateType(..),
+    DirectUpdateType (..),
     FunctionBody (..),
     Body (..),
     Instruction (..),
+    ClosureType(..),
     Index,
     Allocation (..),
     Builtin2 (..),
@@ -102,6 +103,10 @@ data Storage
     -- to store it alongside the closure, since it can just reference it
     -- directly GlobalStorage Index
     GlobalStorage Index
+  | -- | This variable is a top level value that can be updated
+    --
+    -- Note that CAFs and Globals share indices
+    CAFStorage Index
   deriving (Eq, Show)
 
 -- | Represents what type of variable something will end up being
@@ -131,6 +136,8 @@ data Location
     BoundString Index
   | -- | This variable is just a global function
     Global Index
+  | -- | This variable is a top-level updateable value
+    CAF Index
   | -- | This variable is a closure we've allocated, with the index being the sub function index
     --
     -- This can be sparse, i.e. if we have 4 subfunctions, 2 of which are global, we might
@@ -165,6 +172,7 @@ locationType = \case
   ConstructorArg _ -> PointerVar
   Bound _ -> PointerVar
   Global _ -> PointerVar
+  CAF _ -> PointerVar
   Allocated _ -> PointerVar
   Buried _ -> PointerVar
   CurrentNode -> PointerVar
@@ -287,6 +295,10 @@ data Instruction
     AllocString Location
   | -- | Push an update frame
     PushUpdate
+  | -- | Create the dynamic heap part of a CAF
+    --
+    -- We use the index to neatly indicate which CAF we need to update
+    CreateCAFClosure Index
   deriving (Show)
 
 -- | An allocation records information about how much a given expression will allocate
@@ -362,6 +374,12 @@ data FunctionBody
     NormalBody Body
   deriving (Show)
 
+data ClosureType
+  = DynamicClosure
+  | GlobalClosure Index
+  | CAFClosure Index
+  deriving (Show)
+
 -- | Represents a function.
 --
 -- Functions are the units of execution, but have a bunch of "metadata"
@@ -369,12 +387,11 @@ data FunctionBody
 data Function = Function
   { -- | The name of the function
     functionName :: FunctionName,
-    -- | If an index is present, then this function corresponds to a certain global index
+    -- | This allows us to distinguish between dynamic closures, Globals, and CAFs
     --
-    -- We do things this way, that way we can traverse the function tree to build up
-    -- a table of index functions to fully resolved function names. Trying
-    -- to generate the fully resolved function name at this stage would be annoying.
-    isGlobal :: Maybe Index,
+    -- We want to tell them apart, because we need to generate different surrounding
+    -- infrastructure in each case
+    closureType :: ClosureType,
     -- | Information about the number of pointer arguments
     --
     -- Since primitives can't be passed to functions, this just the number of pointers
@@ -586,7 +603,7 @@ genCaseFunction index bound alts =
       return Function {..}
   where
     functionName = CaseFunction index
-    isGlobal = Nothing
+    closureType = DynamicClosure
     argCount = 0
 
     getBuriedArgs :: ContextM (ArgInfo, [(ValName, Location)])
@@ -736,6 +753,7 @@ genLet bindings expr = do
         storage <- getStorage name
         case storage of
           GlobalStorage index -> return (name, Global index)
+          CAFStorage index -> return (name, CAF index)
           LocalStorage PointerVar -> return (name, Allocated i)
           other -> error (show other <> " is not a valid storage for the closure " <> show name)
 
@@ -839,8 +857,8 @@ separateNames bound = do
     extract storageType =
       filterM (getStorage >>> fmap (== LocalStorage storageType)) bound
 
-genLamdbdaForm :: FunctionName -> Maybe Index -> LambdaForm -> ContextM Function
-genLamdbdaForm functionName isGlobal (LambdaForm bound u args expr) =
+genLamdbdaForm :: FunctionName -> ClosureType -> LambdaForm -> ContextM Function
+genLamdbdaForm functionName closureType (LambdaForm bound u args expr) =
   withStorages argStorages <| withNewSubFunctionCount <| do
     let argCount = length args
     (boundPtrs, boundInts, boundStrings) <- separateNames bound
@@ -853,10 +871,11 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound u args expr) =
             <> boundLocations BoundString boundStrings
             <> argLocations
     (normalBody, subFunctions) <- withLocations locations (genFunctionBody expr)
-    let updateExtra = case (isGlobal, u) of
-          (Just _, _) -> mempty
-          (Nothing, N) -> mempty
-          (Nothing, U) -> Body mempty 0 [PushUpdate]
+    let updateExtra = case (closureType, u) of
+          (GlobalClosure _, _) -> mempty
+          (CAFClosure i, _) -> Body (Allocation 1 1 0 0) 0 [CreateCAFClosure i, PushUpdate]
+          (DynamicClosure, N) -> mempty
+          (DynamicClosure, U) -> Body mempty 0 [PushUpdate]
         body = NormalBody (updateExtra <> normalBody)
     return Function {..}
   where
@@ -866,6 +885,7 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound u args expr) =
         storage <- getStorage name
         return <| Just <| case storage of
           GlobalStorage index -> (name, Global index)
+          CAFStorage index -> (name, CAF index)
           LocalStorage PointerVar -> (name, CurrentNode)
           s -> error ("Storage " ++ show s ++ " is not a valid storage for a function")
       _ -> return Nothing
@@ -882,23 +902,26 @@ genLamdbdaForm functionName isGlobal (LambdaForm bound u args expr) =
 genBinding :: Binding -> ContextM Function
 genBinding (Binding name form) = do
   storage <- getStorage name
-  let isGlobal' = case storage of
-        GlobalStorage index -> Just index
-        _ -> Nothing
-  genLamdbdaForm (PlainFunction name) isGlobal' form
+  let closureType' = case storage of
+        GlobalStorage index -> GlobalClosure index
+        CAFStorage index -> CAFClosure index
+        _ -> DynamicClosure
+  genLamdbdaForm (PlainFunction name) closureType' form
 
 -- | Generate Cmm code from STG, in a contextful way
 genCmm :: STG -> ContextM Cmm
 genCmm (STG bindings entryForm) = do
   entryIndex <- fresh
   topLevel <-
-    forM bindings <| \(Binding name _) -> do
+    forM bindings <| \(Binding name (LambdaForm _ u _ _)) -> do
       index <- fresh
-      return (name, GlobalStorage index, Global index)
+      case u of
+        N -> return (name, GlobalStorage index, Global index)
+        U -> return (name, CAFStorage index, CAF index)
   let topLevelStorages = map (\(name, storage, _) -> (name, storage)) topLevel
       topLevelLocations = map (\(name, _, location) -> (name, location)) topLevel
   withStorages topLevelStorages <| withLocations topLevelLocations <| do
-    entry <- genLamdbdaForm Entry (Just entryIndex) entryForm
+    entry <- genLamdbdaForm Entry (GlobalClosure entryIndex) entryForm
     topLevelFunctions <- forM bindings genBinding
     return (Cmm topLevelFunctions entry)
 

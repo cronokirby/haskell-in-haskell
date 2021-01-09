@@ -12,13 +12,13 @@ import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (intercalate)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import Ourlude
 import Text.Printf (printf)
 
 -- | The type we use to store global function information
-type Globals = IntMap IdentPath
+type TopLevels = IntMap IdentPath
 
 {- Locations -}
 
@@ -57,6 +57,9 @@ manyLocations = Map.fromList >>> LocationTable
 type CCode = String
 
 {- Common variable names -}
+
+cafCellFor :: IdentPath -> CCode
+cafCellFor path = "caf_cell_for_" <> displayPath path
 
 -- | A variable name for allocation
 allocationSizeVar :: CCode
@@ -184,7 +187,8 @@ data Context = Context
     -- or table, or its static pointer.
     --
     -- The location table always contains the static pointer of a global
-    globals :: Globals,
+    globals :: TopLevels,
+    cafs :: TopLevels,
     -- | A table for CCode to use different locations
     locationTable :: LocationTable,
     -- | A table mapping indexed sub functions to full identifier paths
@@ -194,7 +198,7 @@ data Context = Context
 
 -- | A context we can use at the start of our traversal
 startingContext :: Context
-startingContext = Context mempty 0 mempty mempty mempty
+startingContext = Context mempty 0 mempty mempty mempty mempty
 
 -- | A computational context we use when generating C code
 newtype CWriter a = CWriter (ReaderT Context (Writer CCode) a)
@@ -233,7 +237,7 @@ insideFunction name =
 -- | Execute some computation, with access to certain globals
 --
 -- We'll also have access to the location of their tables
-withGlobals :: Globals -> CWriter a -> CWriter a
+withGlobals :: TopLevels -> CWriter a -> CWriter a
 withGlobals globals =
   local (\r -> r {globals = globals})
     >>> withLocations impliedLocations
@@ -255,6 +259,16 @@ getGlobalFunction i = do
   return (displayPath path)
   where
     err = error ("Global Function " <> show i <> " does not exist")
+
+withCafs :: TopLevels -> CWriter a -> CWriter a
+withCafs cafs =
+  local (\r -> r {cafs = cafs}) >>> withLocations impliedLocations
+  where
+    location (i, path) =
+      singleLocation (CAF i) (printf "(uint8_t*)&%s" (cafCellFor path))
+
+    impliedLocations =
+      cafs |> IntMap.toList |> foldMap location
 
 -- | Execute some computation, with access to certain locations
 withLocations :: LocationTable -> CWriter a -> CWriter a
@@ -291,21 +305,29 @@ getCLocation location = do
   where
     err = error ("could not find C location for " ++ show location)
 
+getCafCell :: Index -> CWriter CCode
+getCafCell n = asks (cafs >>> IntMap.findWithDefault err n >>> cafCellFor)
+  where
+    err = error ("CAF " <> show n <> " has no cell associated with it")
+
 -- | Traverse our IR representation, gathering all global functions
 --
 -- We do this, since each global function has a unique index. This allows us to gather
 -- all the global functions used throughout the program in advance.
-gatherGlobals :: Cmm -> CWriter (IntMap IdentPath)
+gatherGlobals :: Cmm -> CWriter (TopLevels, TopLevels)
 gatherGlobals (Cmm functions entry) = gatherInFunctions (entry : functions)
   where
-    gatherInFunctions :: [Function] -> CWriter (IntMap IdentPath)
+    gatherInFunctions :: [Function] -> CWriter (TopLevels, TopLevels)
     gatherInFunctions = foldMapM gatherInFunction
 
-    gatherInFunction :: Function -> CWriter (IntMap IdentPath)
+    gatherInFunction :: Function -> CWriter (TopLevels, TopLevels)
     gatherInFunction Function {..} =
       insideFunction functionName <| do
         current <- asks currentFunction
-        let thisMapping = maybe mempty (`IntMap.singleton` current) isGlobal
+        let thisMapping = case closureType of
+              DynamicClosure -> mempty
+              GlobalClosure i -> (IntMap.singleton i current, mempty)
+              CAFClosure i -> (mempty, IntMap.singleton i current)
         thoseMappings <- gatherInFunctions subFunctions
         return (thisMapping <> thoseMappings)
 
@@ -418,6 +440,15 @@ genInstructions (Body _ _ instrs) =
         -- If we encounter a case expression, it knows what to do here.
         writeLine "g_SB.top[1].as_code = &update_constructor;"
         writeLine "g_SB.top += 2;"
+      CreateCAFClosure index -> do
+        cell <- getCafCell index
+        writeLine (printf "*g_CAFListLast = &%s;" cell)
+        writeLine (printf "g_CAFListLast = &%s.next;" cell)
+        writeLine (printf "%s.closure = heap_cursor();" cell)
+        writeLine (printf "g_NodeRegister = %s.closure;" cell)
+        writeLine "heap_write_info_table(&table_for_black_hole);"
+        -- For padding purposes
+        writeLine "heap_write_ptr(NULL);"
 
 genNormalBody :: Int -> ArgInfo -> Body -> CWriter ()
 genNormalBody argCount bound body = do
@@ -615,7 +646,7 @@ genFunctionBody argCount boundArgs = \case
     genCasePrelude updateWith
     genContinuationBody boundArgs body
   NormalBody body -> genNormalBody argCount boundArgs body
- 
+
 -- | Generate the C code for a function
 genFunction :: Function -> CWriter ()
 genFunction Function {..} =
@@ -625,22 +656,31 @@ genFunction Function {..} =
     let current = displayPath currentPath
         currentTable = tableName currentPath
         currentPointer = tablePtrName currentPath
-        evac = case isGlobal of
-          Just _ -> "&static_evac"
-          Nothing -> printf "&%s" (evacArgInfoVar boundArgs)
+        evac = case closureType of
+          DynamicClosure -> printf "&%s" (evacArgInfoVar boundArgs)
+          _ -> "&static_evac"
     writeLine (printf "void* %s(void);" current)
     writeLine (printf "InfoTable %s = { &%s, %s };" currentTable current evac)
     -- If it this is a global, we need to create a place for the info table
     -- pointer to live
-    when (isJust isGlobal)
-      <| writeLine (printf "InfoTable* %s = &%s;" currentPointer currentTable)
+    case closureType of
+      DynamicClosure -> return ()
+      GlobalClosure _ ->
+        writeLine (printf "InfoTable* %s = &%s;" currentPointer currentTable)
+      CAFClosure _ -> do
+        writeLine (printf "InfoTable* %s = &%s;" currentPointer currentTable)
+        let currentCell = cafCellFor currentPath
+        writeLine (printf "CAFCell %s = {&table_for_indirection, (uint8_t*)&%s, NULL};" currentCell currentPointer)
+
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
     writeLine "DEBUG_PRINT(\"%s\\n\", __func__);"
     indented <| do
       unless (argCount == 0) <| do
-        when (isJust isGlobal)
-          <| writeLine (printf "g_NodeRegister = (uint8_t*)&%s;" currentPointer)
+        case closureType of
+          GlobalClosure _ ->
+            writeLine (printf "g_NodeRegister = (uint8_t*)&%s;" currentPointer)
+          _ -> return ()
         writeLine (printf "check_application_update(%d, %s);" argCount current)
       withSubFunctionTable subFunctions
         <| withLocations maybeAllocatedClosures
@@ -722,9 +762,9 @@ gatherBoundArgTypes (Cmm functions function) =
       inThisFunction <> foldMap inFunction subFunctions
       where
         -- We only include this pattern if it can be potentially GCed
-        inThisFunction = case isGlobal of
-          Just _ -> Set.empty
-          Nothing -> Set.singleton boundArgs
+        inThisFunction = case closureType of
+          DynamicClosure -> Set.singleton boundArgs
+          _ -> Set.empty
 
 -- | Generate the evacuation function for a certain argument shape
 genEvacFunction :: ArgInfo -> CWriter ()
@@ -803,5 +843,5 @@ genCmm cmm@(Cmm functions entry) = do
 -- | Convert our Cmm IR into actual C code
 writeC :: Cmm -> CCode
 writeC cmm =
-  let (globals, _) = runCWriter (gatherGlobals cmm)
-   in withGlobals globals (genCmm cmm) |> runCWriter |> snd
+  let ((globals, cafs), _) = runCWriter (gatherGlobals cmm)
+   in genCmm cmm |> withGlobals globals |> withCafs cafs |> runCWriter |> snd

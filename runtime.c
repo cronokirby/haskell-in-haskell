@@ -72,6 +72,15 @@ static InfoTable *table_pointer_for_string = &table_for_string;
 /// The InfoTable we use for string literals
 InfoTable table_for_string_literal = {NULL, &static_evac};
 
+typedef struct CAFCell {
+  InfoTable *table;
+  uint8_t *closure;
+  struct CAFCell *next;
+} CAFCell;
+
+CAFCell *g_CAFListHead = NULL;
+CAFCell **g_CAFListLast = &g_CAFListHead;
+
 /// Represents the argument stack
 ///
 /// Each argument represents the location in memory where the closure
@@ -272,6 +281,21 @@ void heap_reserve(size_t amount) {
     collect_garbage(amount);
   }
 }
+
+void *black_hole_entry() {
+  fputs("infinite loop detected", stderr);
+  return NULL;
+}
+
+uint8_t *black_hole_evac(uint8_t *base) {
+  uint8_t *new_base = heap_cursor();
+  heap_write(base, sizeof(InfoTable *) + sizeof(uint8_t *));
+  memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable));
+  memcpy(base + sizeof(InfoTable *), &new_base, sizeof(uint8_t *));
+  return new_base;
+}
+
+InfoTable table_for_black_hole = {&black_hole_entry, &black_hole_evac};
 
 /// Concat two strings together, returning the location of the new string
 ///
@@ -638,7 +662,7 @@ CodeLabel check_application_update(int64_t arg_count, CodeLabel current) {
 }
 
 /// The starting size for the Heap
-static const size_t BASE_HEAP_SIZE = 1 << 6;
+static const size_t BASE_HEAP_SIZE = 1 << 16;
 /// The starting size for each Stack
 static const size_t STACK_SIZE = 1 << 10;
 
