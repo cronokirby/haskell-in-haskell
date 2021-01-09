@@ -286,7 +286,7 @@ void heap_reserve(size_t amount) {
 }
 
 void *black_hole_entry() {
-  fputs("infinite loop detected", stderr);
+  fputs("infinite loop detected\n", stderr);
   return NULL;
 }
 
