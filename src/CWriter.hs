@@ -435,7 +435,6 @@ genInstructions (Body _ _ instrs) =
         comment "pushing update frame"
         writeLine "save_SB();"
         writeLine "save_SA();"
-        writeLine "DEBUG_PRINT(\"update frame for %p\\n\", g_NodeRegister);"
         writeLine "g_SB.top[0].as_closure = g_NodeRegister;"
         -- If we encounter a case expression, it knows what to do here.
         writeLine "g_SB.top[1].as_code = &update_constructor;"
@@ -674,8 +673,8 @@ genFunction Function {..} =
 
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
-    writeLine "DEBUG_PRINT(\"%s\\n\", __func__);"
     indented <| do
+      writeLine "DEBUG_PRINT(\"%s\\n\", __func__);"
       unless (argCount == 0) <| do
         case closureType of
           GlobalClosure _ ->
