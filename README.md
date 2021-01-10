@@ -249,6 +249,34 @@ bad usage of memory as early as possible.
 
 This is the source of most bugs in the compiler.
 
+## Tests
+
+There are two forms of tests. Some stages have basic tests, which can be run with
+
+```
+cabal test
+
+```
+
+
+but these mainly cover the frontend of the compiler.
+
+A more extensive suite of tests can be run with:
+
+```
+python3 integration_tests.py
+```
+
+This script will go over all the Haskell files in `integration_tests/`,
+and run the full compiler over them, and then run `gcc` over the outputted
+C, and then run the resulting executable, making sure that the output
+matches the expected results.
+
+For this to work, you need to have `gcc` available, along with `ubsan` and `asan`.
+These are used in order to detect memory issues early in the tests.
+
+This suite is slower, but much more effective at finding problems.
+
 # Resources
 
 I'm currently writing [a series](https://cronokirby.com/series/haskell-in-haskell/)
