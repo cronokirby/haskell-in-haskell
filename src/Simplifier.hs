@@ -35,6 +35,7 @@ import Control.Monad.Reader (ReaderT (..), ask, asks, local)
 import Control.Monad.State (MonadState, StateT (..), execStateT, get, gets, modify', put)
 import Data.Foldable (asum)
 import Data.Function (on)
+import Data.Functor (($>))
 import Data.List (elemIndex, foldl', groupBy, transpose)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
@@ -44,165 +45,108 @@ import Parser (ConstructorDefinition (..), ConstructorName, Literal (..), Name, 
 import qualified Parser as P
 import Types (FreeTypeVars (..), Scheme (..), Type (..), TypeName, TypeVar, closeType)
 
-data AST t = AST TypeInformation [ValueDefinition t] deriving (Eq, Show)
-
-data ValueDefinition t = ValueDefinition ValName (Maybe Scheme) t (Expr t) deriving (Eq, Show)
-
-data Builtin
-  = Add
-  | Sub
-  | Mul
-  | Div
-  | Compose
-  | Concat
-  | Cash
-  | Less
-  | LessEqual
-  | Greater
-  | GreaterEqual
-  | EqualTo
-  | NotEqualTo
-  | And
-  | Or
-  | Negate
-  deriving (Eq, Show)
-
-data Expr t
-  = LetExpr [ValueDefinition t] (Expr t)
-  | CaseExpr (Expr t) [(Pattern, Expr t)]
-  | Error String
-  | LitExpr Literal
-  | Builtin Builtin
-  | NameExpr Name
-  | ApplyExpr (Expr t) (Expr t)
-  | LambdaExpr ValName t (Expr t)
-  deriving (Eq, Show)
-
-data Pattern
-  = Wildcard
-  | LiteralPattern Literal
-  | ConstructorPattern ConstructorName [ValName]
-  deriving (Eq, Show)
-
-subst :: Name -> Expr t -> Expr t -> Expr t
-subst old new = go
-  where
-    names :: [ValueDefinition t] -> [Name]
-    names = map (\(ValueDefinition n _ _ _) -> n)
-
-    go (NameExpr name) | name == old = new
-    go (ApplyExpr f e) = ApplyExpr (go f) (go e)
-    go (CaseExpr scrut branches) =
-      CaseExpr (go scrut) (map (second go) branches)
-    go (LambdaExpr name t e) | name /= old = LambdaExpr name t (go e)
-    go (LetExpr defs e)
-      | old `notElem` names defs =
-        let changeDef (ValueDefinition n dec t e') = ValueDefinition n dec t (go e')
-         in LetExpr (map changeDef defs) (go e)
-    go terminal = terminal
-
+-- | The kind of error that can happen while simplifying
 data SimplifierError
-  = -- Multiple type annotations are present for the same value
+  = -- | Multiple type annotations are present for the same value
     MultipleTypeAnnotations ValName [Scheme]
-  | -- Different pattern lengths have been observed for the same function definition
+  | -- | Different pattern lengths have been observed for the same function definition
     DifferentPatternLengths ValName [Int]
-  | -- An annotation doesn't have a corresponding definition
+  | -- | An annotation doesn't have a corresponding definition
     UnimplementedAnnotation ValName
-  | -- An error that can occurr while resolving a reference to a type
-    SimplifierResolution ResolutionError
-  | -- A type variable is not bound in a constructor
+  | -- | An error that can occurr while resolving types
+    ResolutionError ResolutionError
+  | -- | A type variable is not bound in a constructor
     UnboundTypeVarsInConstructor [TypeVar] ConstructorName
   deriving (Eq, Show)
 
--- An error that can occurr while resolving a reference to a type
+-- | An error that can happen while resolving a reference to a type
 data ResolutionError
-  = -- A reference to some type that doesn't exist
+  = -- | A reference to some type that doesn't exist
     UnknownType TypeName
-  | -- A mismatch of a type constructor with expected vs actual args
+  | -- | A mismatch of a type constructor with expected vs actual args
     MismatchedTypeArgs TypeName Int Int
-  | -- A type synonym ends up being cyclical
+  | -- | A type synonym ends up being cyclical
     CyclicalTypeSynonym TypeName [TypeName]
-  | -- We tried to lookup a constructor that doesn't exist
+  | -- | We tried to lookup a constructor that doesn't exist
     UnknownConstructor ConstructorName
   deriving (Eq, Show)
 
--- Represents the context we have access to in the simplifier
+-- | The AST we return after the simplifier stage
 --
--- We do this in order to keep a global source of fresh variables
-newtype Simplifier a = Simplifier (StateT Int (Except SimplifierError) a)
-  deriving (Functor, Applicative, Monad, MonadState Int, MonadError SimplifierError)
+-- This is paremeterized over what kind of type annotations are present in our AST.
+--
+-- We've grouped global information about types from the definitions into a central map.
+-- The remaining definitions in our AST are for values.
+data AST t = AST TypeInformation [ValueDefinition t] deriving (Eq, Show)
 
-runSimplifier :: Simplifier a -> Either SimplifierError a
-runSimplifier (Simplifier m) = runStateT m 0 |> runExcept |> fmap fst
-
--- Create a fresh name in the Tree folding context
-fresh :: Simplifier ValName
-fresh = do
-  c <- get
-  put (c + 1)
-  return ("$" ++ show c)
-
-{- Gathering Type Information -}
-
--- The information we have about a given constructor
+-- | The information we have about a given constructor
 data ConstructorInfo = ConstructorInfo
-  { -- The arity i.e. number of arguments that the constructor takes
+  { -- | The arity i.e. number of arguments that the constructor takes
     --
     -- This information is in the type, but much more convenient to have readily available
     constructorArity :: Int,
-    -- The type of this constructor, as a function
+    -- | The type of this constructor, as a function
     constructorType :: Scheme,
-    -- The number this constructor has
+    -- | The number / tag this constructor has
     constructorNumber :: Int
   }
   deriving (Eq, Show)
 
--- A ConstructorMap is a map from constructor names to information about them
+-- | A ConstructorMap is a map from constructor names to information about them
 type ConstructorMap = Map.Map ConstructorName ConstructorInfo
 
--- Represents the information we might have when resolving a type name
+-- | Represents the information we might have when resolving a type name
 data ResolvingInformation
-  = -- The name is a synonym for a fully resolved expression
+  = -- | The name is a synonym for a fully resolved expression
     Synonym Type
-  | -- The name is a custom type with a certain arity
+  | -- | The name is a custom type with a certain arity
     Custom Int
   deriving (Eq, Show)
 
+-- | Return the number of arguments we expect a type with some arguments to have
+typeArity :: ResolvingInformation -> Int
+typeArity = \case
+  Synonym _ -> 0
+  Custom n -> n
+
+-- | A resolution map provides us with information about each type appearing in our program
 type ResolutionMap = Map.Map TypeName ResolvingInformation
 
--- This is a record of all information you might want to have about the types
--- that have been declared in the program.
+-- | This is a record of all information you might want to have about the types in our program
 data TypeInformation = TypeInformation
-  { -- A map of all of the type synonyms, fully resolved to a given type
+  { -- | A map of all of the type synonyms, fully resolved to a given type
     resolutions :: ResolutionMap,
-    -- A map from each constructor's name to the information we have about that constructor
+    -- | A map from each constructor's name to the information we have about that constructor
     constructorMap :: ConstructorMap
   }
   deriving (Eq, Show)
 
--- A class for monadic contexts with access to type information
+-- | A class for monadic contexts with access to type information
 class Monad m => HasTypeInformation m where
-  -- Access the type information available in this context
+  -- | Access the type information available in this context
   typeInformation :: m TypeInformation
 
--- A class for monadic contexts in which resolution errors can be thrown
+-- | A class for monadic contexts in which resolution errors can be thrown
 class HasTypeInformation m => ResolutionM m where
   throwResolution :: ResolutionError -> m a
 
+-- | Given a resolution map, fully resolve a type, or throw an error
+--
+-- This replaces all references to synonyms with concrete types.
 resolve :: ResolutionMap -> Type -> Either ResolutionError Type
-resolve _ IntT = return IntT
-resolve _ StringT = return StringT
-resolve _ BoolT = return BoolT
-resolve _ (TVar a) = return (TVar a)
-resolve mp (t1 :-> t2) = (:->) <$> resolve mp t1 <*> resolve mp t2
-resolve mp ct@(CustomType name ts) = case Map.lookup name mp of
-  Nothing -> Left (UnknownType name)
-  Just (Synonym t)
-    | null ts -> return t
-    | otherwise -> Left (MismatchedTypeArgs name 0 (length ts))
-  Just (Custom arity)
-    | arity == length ts -> return ct
-    | otherwise -> Left (MismatchedTypeArgs name arity (length ts))
+resolve mp = go
+  where
+    go :: Type -> Either ResolutionError Type
+    go = \case
+      t1 :-> t2 -> (:->) <$> go t1 <*> go t2
+      ct@(CustomType name ts) -> case Map.lookup name mp of
+        Nothing -> Left (UnknownType name)
+        Just resolved -> unless (expectedArity == actual) (Left err) $> ct
+          where
+            expectedArity = typeArity resolved
+            actual = length ts
+            err = MismatchedTypeArgs name expectedArity actual
+      terminal -> return terminal
 
 -- Resolve a type in a context where we can throw resolution errors, and have access
 -- to type information
@@ -222,6 +166,84 @@ lookupConstructor name = do
   mp <- constructorMap <$> typeInformation
   let info = Map.lookup name mp
   maybe (throwResolution (UnknownConstructor name)) return info
+
+-- | Represents a single definition for a value.
+--
+-- This is parameterized over the kind of type annotations appearing in our definitions.
+--
+-- We have a name for this definition, a potential type annotation provided by the user,
+-- a type annotation provided by us, and an expression appearing on the right side of this definition.
+data ValueDefinition t = ValueDefinition ValName (Maybe Scheme) t (Expr t) deriving (Eq, Show)
+
+-- | Represents a builtin operation in our language
+data Builtin
+  = Add
+  | Sub
+  | Mul
+  | Div
+  | Compose
+  | Concat
+  | Cash
+  | Less
+  | LessEqual
+  | Greater
+  | GreaterEqual
+  | EqualTo
+  | NotEqualTo
+  | And
+  | Or
+  | Negate
+  deriving (Eq, Show)
+
+-- | Represents a kind of expression in our language
+data Expr t
+  = LetExpr [ValueDefinition t] (Expr t)
+  | CaseExpr (Expr t) [(Pattern, Expr t)]
+  | Error String
+  | LitExpr Literal
+  | Builtin Builtin
+  | NameExpr Name
+  | ApplyExpr (Expr t) (Expr t)
+  | LambdaExpr ValName t (Expr t)
+  deriving (Eq, Show)
+
+-- | Represents a pattern that appears in a case expression
+--
+-- Unlike in the parser, patterns are completely flat. They cannot
+-- contain further nested patterns. One big job of this module is
+-- is to remove the nesting present in the parser.
+--
+-- Note that simple name patterns don't appear here. This is because
+-- our simplification process replaces that with a wildcard, and uses
+-- the scrutinee in the body of that branch instead.
+data Pattern
+  = Wildcard
+  | LiteralPattern Literal
+  | ConstructorPattern ConstructorName [ValName]
+  deriving (Eq, Show)
+
+-- | Substitute a name for an expression, replacing all of its occurrences
+--
+-- This respects lexical scoping rules, so won't replace bindings that shadow
+-- this one.
+substituteName :: Name -> Expr t -> Expr t -> Expr t
+substituteName old new = go
+  where
+    names :: [ValueDefinition t] -> [Name]
+    names = map (\(ValueDefinition n _ _ _) -> n)
+
+    go (NameExpr name) | name == old = new
+    go (ApplyExpr f e) = ApplyExpr (go f) (go e)
+    go (CaseExpr scrut branches) =
+      CaseExpr (go scrut) (map (second go) branches)
+    go (LambdaExpr name t e) | name /= old = LambdaExpr name t (go e)
+    go (LetExpr defs e)
+      | old `notElem` names defs =
+        let changeDef (ValueDefinition n dec t e') = ValueDefinition n dec t (go e')
+         in LetExpr (map changeDef defs) (go e)
+    go terminal = terminal
+
+{- Gathering Type Information -}
 
 gatherConstructorMap :: MonadError SimplifierError m => [P.Definition] -> m ConstructorMap
 gatherConstructorMap =
@@ -353,10 +375,26 @@ gatherResolutions defs = do
             resolved <- liftEither (resolve resolutions' unresolved)
             modify' (Map.insert n (Synonym resolved))
 
+-- | Represents the context we have access to in the simplifier
+--
+-- We do this in order to keep a global source of fresh variables
+newtype Simplifier a = Simplifier (StateT Int (Except SimplifierError) a)
+  deriving (Functor, Applicative, Monad, MonadState Int, MonadError SimplifierError)
+
+runSimplifier :: Simplifier a -> Either SimplifierError a
+runSimplifier (Simplifier m) = runStateT m 0 |> runExcept |> fmap fst
+
+-- Create a fresh name in the Tree folding context
+fresh :: Simplifier ValName
+fresh = do
+  c <- get
+  put (c + 1)
+  return ("$" ++ show c)
+
 -- Gather all of the type information we need from the parsed definitions
 gatherTypeInformation :: [P.Definition] -> Simplifier TypeInformation
 gatherTypeInformation defs = do
-  resolutions' <- either (SimplifierResolution >>> throwError) return (gatherResolutions defs)
+  resolutions' <- either (ResolutionError >>> throwError) return (gatherResolutions defs)
   constructorMap' <- gatherConstructorMap defs
   return (TypeInformation resolutions' constructorMap')
 
@@ -646,7 +684,7 @@ foldTree patCount theTree = do
       Fail -> return (Error "Pattern Match Failure")
       Leaf expr -> return expr
       Swap i tree' -> go (swap i names) tree'
-      SubstOut old tree' -> subst old (NameExpr (head names)) <$> go names tree'
+      SubstOut old tree' -> substituteName old (NameExpr (head names)) <$> go names tree'
       Select branches default' -> do
         let rest = tail names
             scrut = NameExpr (head names)
