@@ -249,6 +249,7 @@ void collect_garbage(size_t extra_required) {
 
   for (uint8_t **p = g_SA.data; p < g_SA.top; ++p) {
     collect_root(p);
+
   }
   for (CAFCell *p = g_CAFListHead; p != NULL; p = p->next) {
     collect_root(&p->closure);
@@ -291,6 +292,7 @@ void *black_hole_entry() {
 }
 
 uint8_t *black_hole_evac(uint8_t *base) {
+  DEBUG_PRINT("black_hole_evac, base: %p\n", base);
   uint8_t *new_base = heap_cursor();
   heap_write(base, sizeof(InfoTable *) + sizeof(uint8_t *));
   memcpy(base, &table_pointer_for_already_evac, sizeof(InfoTable*));
@@ -461,6 +463,15 @@ uint8_t *indirection_evac(uint8_t *base) {
 InfoTable table_for_indirection = {&indirection_entry, &indirection_evac};
 InfoTable *table_pointer_for_indirection = &table_for_indirection;
 
+uint8_t* caf_cell_evac(uint8_t* base) {
+  uint8_t* root = read_ptr(base + sizeof(InfoTable*));
+  collect_root(&root);
+  memcpy(base + sizeof(InfoTable*), &root, sizeof(uint8_t*));
+  return base;
+}
+
+InfoTable table_for_caf_cell = {&indirection_entry, &caf_cell_evac};
+
 /// The code that gets called when we hit an update frame when we're expecting
 /// a case continuation instead.
 void *update_constructor() {
@@ -470,6 +481,7 @@ void *update_constructor() {
   g_SB.top -= 4;
 
   uint8_t *closure = g_SB.top[3].as_closure;
+  DEBUG_PRINT("update_constructor: %p\n", closure);
   // If we already have an updating thunk, just make us point to
   // to that one instead.
   if (g_ConstrUpdateRegister != NULL) {
@@ -503,6 +515,7 @@ uint8_t *with_int_evac(uint8_t *base) {
 InfoTable table_for_with_int = {&with_int_entry, &with_int_evac};
 
 void update_with_int() {
+  DEBUG_PRINT("update_with_int: %p with %ld\n", g_ConstrUpdateRegister, g_IntRegister);
   InfoTable *table = &table_for_with_int;
   memcpy(g_ConstrUpdateRegister, &table, sizeof(InfoTable *));
   memcpy(g_ConstrUpdateRegister + sizeof(InfoTable *), &g_IntRegister,

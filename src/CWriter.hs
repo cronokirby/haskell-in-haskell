@@ -669,7 +669,7 @@ genFunction Function {..} =
       CAFClosure _ -> do
         writeLine (printf "InfoTable* %s = &%s;" currentPointer currentTable)
         let currentCell = cafCellFor currentPath
-        writeLine (printf "CAFCell %s = {&table_for_indirection, (uint8_t*)&%s, NULL};" currentCell currentPointer)
+        writeLine (printf "CAFCell %s = {&table_for_caf_cell, (uint8_t*)&%s, NULL};" currentCell currentPointer)
 
     forM_ subFunctions genFunction
     writeLine (printf "void* %s() {" current)
