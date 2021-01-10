@@ -148,18 +148,19 @@ resolve mp = go
       t1 :-> t2 -> (:->) <$> go t1 <*> go t2
       terminal -> return terminal
 
--- Resolve a type in a context where we can throw resolution errors, and have access
+-- | Resolve a type in a context where we can throw resolution errors, and have access
 -- to type information
 resolveM :: ResolutionM m => Type -> m Type
 resolveM expr = do
   resolutions' <- resolutions <$> typeInformation
   either throwResolution return (resolve resolutions' expr)
 
+-- | Check if some name is a constructor
 isConstructor :: HasTypeInformation m => Name -> m Bool
 isConstructor name =
   typeInformation |> fmap (constructorMap >>> Map.member name)
 
--- Try and lookup the information about a given constructor, failing with a resolution error
+-- | Try and lookup the information about a given constructor, failing with a resolution error
 -- if that constructor doesn't exist
 lookupConstructor :: ResolutionM m => ConstructorName -> m ConstructorInfo
 lookupConstructor name = do
@@ -245,6 +246,9 @@ substituteName old new = go
 
 {- Gathering Type Information -}
 
+-- | Create a map for constructor information
+--
+-- We need the ability to throw simplifier errors to do this.
 gatherConstructorMap :: MonadError SimplifierError m => [P.Definition] -> m ConstructorMap
 gatherConstructorMap =
   foldMapM <| \case
@@ -265,40 +269,40 @@ gatherConstructorMap =
 
 {- Resolving all of the type synonyms -}
 
--- Which type definitions does this type reference?
+-- | Which type definitions does this type reference?
 typeDependencies :: Type -> Set.Set TypeName
 typeDependencies = \case
   t1 :-> t2 -> typeDependencies t1 <> typeDependencies t2
   CustomType name exprs -> Set.singleton name <> foldMap typeDependencies exprs
   _ -> mempty
 
--- This is the state we keep track of while sorting the graph of types
+-- | This is the state we keep track of while sorting the graph of types
 data SorterState = SorterState
-  { -- All of the type names we haven't seen yet
+  { -- | All of the type names we haven't seen yet
     unseen :: Set.Set TypeName,
-    -- The current output we've generated so far
+    -- | The current output we've generated so far
     output :: [TypeName]
   }
 
--- The context in which the topological sorting of the type graph takes place
+-- | The context in which the topological sorting of the type graph takes place
 --
 -- We have access to a set of ancestors to keep track of cycles, the current state,
 -- which we can modify, and the ability to throw exceptions.
 type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except ResolutionError)) a
 
--- Run the sorter, given a seed state
+-- | Run the sorter, given a seed state
 runSorter :: SorterM a -> SorterState -> Either ResolutionError a
 runSorter m st =
   runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
 
--- Given a mapping from names to shallow types, find a linear ordering of these types
+-- | Given a mapping from names to shallow types, find a linear ordering of these types
 --
 -- The types are sorted topologically, based on their dependencies. This means that
 -- a type will come after all of its dependencies
 sortTypeSynonyms :: Map.Map TypeName Type -> Either ResolutionError [TypeName]
 sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap reverse
   where
-    -- Find the dependencies of a given type name
+    -- | Find the dependencies of a given type name
     --
     -- This acts similarly to a "neighbors" function in a traditional graph
     deps :: TypeName -> Set.Set TypeName
@@ -336,14 +340,14 @@ sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap r
         withAncestor name (forM_ (deps name) dfs)
         out name
 
--- Gather all of the custom types, along with the number of arguments they contain
+-- | Gather all of the custom types, along with the number of arguments they contain
 gatherCustomTypes :: [P.Definition] -> Map.Map TypeName Int
 gatherCustomTypes =
   foldMap <| \case
     P.DataDefinition name vars _ -> Map.singleton name (length vars)
     _ -> Map.empty
 
--- Gather all of the type synonyms, at a superficial level
+-- | Gather all of the type synonyms, at a superficial level
 --
 -- This will only look at one level of definition, and won't act recursively
 gatherTypeSynonyms :: [P.Definition] -> Map.Map TypeName Type
@@ -352,8 +356,10 @@ gatherTypeSynonyms =
     P.TypeSynonym name expr -> Map.singleton name expr
     _ -> Map.empty
 
+-- | A monad we use for gathering a resolution map
 type MakeResolutionM a = ReaderT (Map.Map TypeName Type) (StateT ResolutionMap (Except ResolutionError)) a
 
+-- | Gather all the resolving information from types
 gatherResolutions :: [P.Definition] -> Either ResolutionError ResolutionMap
 gatherResolutions defs = do
   let customInfo = gatherCustomTypes defs
@@ -381,17 +387,18 @@ gatherResolutions defs = do
 newtype Simplifier a = Simplifier (StateT Int (Except SimplifierError) a)
   deriving (Functor, Applicative, Monad, MonadState Int, MonadError SimplifierError)
 
+-- | Run the simplifier, producing an error, or value
 runSimplifier :: Simplifier a -> Either SimplifierError a
 runSimplifier (Simplifier m) = runStateT m 0 |> runExcept |> fmap fst
 
--- Create a fresh name in the Tree folding context
+-- | Create a fresh name in the simplifier context
 fresh :: Simplifier ValName
 fresh = do
   c <- get
   put (c + 1)
   return ("$" ++ show c)
 
--- Gather all of the type information we need from the parsed definitions
+-- | Gather all of the type information we need from the parsed definitions
 gatherTypeInformation :: [P.Definition] -> Simplifier TypeInformation
 gatherTypeInformation defs = do
   resolutions' <- either (ResolutionError >>> throwError) return (gatherResolutions defs)
@@ -400,6 +407,7 @@ gatherTypeInformation defs = do
 
 {- Converting the actual AST and Expression Tree -}
 
+-- | Convert an expression to a simplified expression
 convertExpr :: P.Expr -> Simplifier (Expr ())
 -- We replace binary expressions with the corresponding bultin functions
 convertExpr (P.BinExpr op e1 e2) = do
@@ -458,7 +466,7 @@ convertExpr (P.LetExpr defs e) = do
   e' <- convertExpr e
   return (LetExpr defs' e')
 
--- This converts value definitions by gathering the different patterns into a single lambda expression,
+-- | This converts value definitions by gathering the different patterns into a single lambda expression,
 -- and adding the optional type annotation if it exists.
 -- This will emit errors if any discrepencies are encountered.
 convertValueDefinitions :: [P.ValueDefinition] -> Simplifier [ValueDefinition ()]
@@ -502,11 +510,12 @@ convertValueDefinitions =
 
 {- Pattern Matching Simplifying -}
 
--- Check that a pattern is not a wildcard
+-- | Check that a pattern is not a wildcard
 notWildcard :: P.Pattern -> Bool
 notWildcard P.WildcardPattern = False
 notWildcard _ = True
 
+-- | Swap the 0th element and the ith element
 swap :: Int -> [a] -> [a]
 swap i xs = (xs !! i) : (zip [0 ..] xs |> filter ((/= i) . fst) |> map snd)
 
@@ -516,6 +525,7 @@ swap i xs = (xs !! i) : (zip [0 ..] xs |> filter ((/= i) . fst) |> map snd)
 -- definition.
 newtype Matrix a = Matrix [Row a] deriving (Eq, Show)
 
+-- | Check that a matrix is coherent
 validateMatrix :: MonadError SimplifierError m => ValName -> Matrix a -> m ()
 validateMatrix name (Matrix rows) = do
   let lengths = map (rowPats >>> length) rows
@@ -529,18 +539,20 @@ validateMatrix name (Matrix rows) = do
     throwError (UnimplementedAnnotation name)
   return ()
 
--- Represents a row in our pattern matrix
+-- | Represents a row in our pattern matrix
 data Row a = Row
-  { -- The patterns contained in this row
+  { -- | The patterns contained in this row
     rowPats :: [P.Pattern],
-    -- The value contained in this row
+    -- | The value contained in this row
     rowVal :: a
   }
   deriving (Eq, Show)
 
+-- | True if a row consists only of wild cards
 allWildCards :: Row a -> Bool
 allWildCards = rowPats >>> all (== P.WildcardPattern)
 
+-- | Gather a list of patterns into a list of branches
 gatherBranches :: [P.Pattern] -> [Branch]
 gatherBranches = foldMap pluckHead >>> Set.toList
   where
@@ -552,15 +564,15 @@ gatherBranches = foldMap pluckHead >>> Set.toList
         Set.singleton (ConstructorBranch name (length pats))
       _ -> Set.empty
 
--- Get all the columns of a matrix
+-- | Get all the columns of a matrix
 columns :: Matrix a -> [[P.Pattern]]
 columns (Matrix rows) = rows |> map rowPats |> transpose
 
--- Select the index of the next column in the matrix
+-- | Select the index of the next column in the matrix
 nextColumn :: Matrix a -> Maybe Int
 nextColumn = columns >>> map (any notWildcard) >>> elemIndex True
 
--- Swap the nth column of a matrix with the first column
+-- | Swap the nth column of a matrix with the first column
 swapColumn :: Int -> Matrix a -> Matrix a
 swapColumn index (Matrix rows) =
   let vals = map rowVal rows
@@ -568,7 +580,7 @@ swapColumn index (Matrix rows) =
       transformed = pats |> transpose |> swap index |> transpose
    in Matrix (zipWith Row transformed vals)
 
--- Find the first name present in the first column of a matrix
+-- | Find the first name present in the first column of a matrix
 firstName :: Matrix a -> Maybe String
 firstName (Matrix rows) = map stripName rows |> asum
   where
@@ -576,7 +588,7 @@ firstName (Matrix rows) = map stripName rows |> asum
     stripName (Row (P.NamePattern n : _) _) = Just n
     stripName _ = Nothing
 
--- Calculate the resulting matrix after choosing the default branch
+-- | Calculate the resulting matrix after choosing the default branch
 defaultMatrix :: Matrix a -> Matrix a
 defaultMatrix (Matrix rows) =
   rows |> filter isDefault |> map stripHead |> Matrix
@@ -591,7 +603,7 @@ defaultMatrix (Matrix rows) =
     stripHead :: Row a -> Row a
     stripHead (Row pats a) = Row (tail pats) a
 
--- Calculate the matrix resulting after taking a branch
+-- | Calculate the matrix resulting after taking a branch
 branchMatrix :: Branch -> Matrix a -> Matrix a
 branchMatrix branch (Matrix rows) =
   rows |> map (\(Row pats a) -> (`Row` a) <$> newPats pats) |> catMaybes |> Matrix
@@ -616,27 +628,27 @@ branchMatrix branch (Matrix rows) =
       pat : rest -> (++ rest) <$> matches branch pat
       [] -> Just []
 
--- Represents a decision tree we use to generate a case expression.
+-- | Represents a decision tree we use to generate a case expression.
 --
 -- The idea is that the tree represents an imperative set of commands we can
 -- use to advance our matches against some expressions.
 data Tree a
-  = -- Represents a failure in our pattern matching process
+  = -- | Represents a failure in our pattern matching process
     Fail
-  | -- Represents the output of a value
+  | -- | Represents the output of a value
     Leaf a
-  | -- Swapping the current value in index `i` with the first value, then continue
+  | -- | Swapping the current value in index `i` with the first value, then continue
     Swap Int (Tree a)
-  | -- Replace all occurences of a given name with the first value's name, and continue
+  | -- | Replace all occurences of a given name with the first value's name, and continue
     SubstOut Name (Tree a)
-  | -- Here we have the actual branching
+  | -- | Here we have the actual branching
     --
     -- Each of these is a distinct possibility, based on the first value.
     -- The last item is the default branch.
     Select [(Branch, Tree a)] (Tree a)
   deriving (Eq, Show)
 
--- Represents a type of branch we can take in our decision tree
+-- | Represents a type of branch we can take in our decision tree
 data Branch
   = -- A branch for a constructor of a certain arity
     ConstructorBranch ConstructorName Int
@@ -644,7 +656,7 @@ data Branch
     LiteralBranch Literal
   deriving (Eq, Ord, Show)
 
--- Build up a decision tree from a pattern matrix
+-- | Build up a decision tree from a pattern matrix
 buildTree :: Matrix a -> Tree a
 buildTree (Matrix []) = Fail
 buildTree (Matrix (r : _)) | allWildCards r = Leaf (rowVal r)
@@ -661,7 +673,7 @@ buildTree mat = case nextColumn mat of
           Nothing -> baseTree
   Just n -> Swap n (buildTree (swapColumn n mat))
 
--- Fold down a decision tree yielding expressions into a final case expression
+-- | Fold down a decision tree yielding expressions into a final case expression
 --
 -- We need to know the number of initial values we're matching against,
 -- and have access to the context in which we fold down trees.
@@ -694,6 +706,7 @@ foldTree patCount theTree = do
           [] -> defaultExpr
           _ -> CaseExpr scrut (branchCases ++ [(Wildcard, defaultExpr)])
 
+-- | Compile a pattern matrix into a list of lambda names, and an expression using pattern matching
 compileMatrix :: Matrix (Expr t) -> Simplifier ([ValName], Expr t)
 compileMatrix mat@(Matrix rows) =
   let patCount = length (rowPats (head rows))
@@ -701,6 +714,7 @@ compileMatrix mat@(Matrix rows) =
 
 {- Glueing it all together -}
 
+-- | Convert a list of definitions into a list of sipmlified definitions
 convertDefinitions :: [P.Definition] -> Simplifier [ValueDefinition ()]
 convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefinitions
   where
