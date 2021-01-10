@@ -38,7 +38,7 @@ import Data.Function (on)
 import Data.Functor (($>))
 import Data.List (elemIndex, foldl', groupBy, transpose)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Set as Set
 import Ourlude
 import Parser (ConstructorDefinition (..), ConstructorName, Literal (..), Name, ValName)
@@ -138,14 +138,14 @@ resolve mp = go
   where
     go :: Type -> Either ResolutionError Type
     go = \case
-      t1 :-> t2 -> (:->) <$> go t1 <*> go t2
-      ct@(CustomType name ts) -> case Map.lookup name mp of
-        Nothing -> Left (UnknownType name)
-        Just resolved -> unless (expectedArity == actual) (Left err) $> ct
-          where
-            expectedArity = typeArity resolved
+      ct@(CustomType name ts) -> do
+        resolved <- maybe (Left (UnknownType name)) Right (Map.lookup name mp)
+        let expectedArity = typeArity resolved
             actual = length ts
             err = MismatchedTypeArgs name expectedArity actual
+        unless (expectedArity == actual) (Left err)
+        return ct
+      t1 :-> t2 -> (:->) <$> go t1 <*> go t2
       terminal -> return terminal
 
 -- Resolve a type in a context where we can throw resolution errors, and have access
