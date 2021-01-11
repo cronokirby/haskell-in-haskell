@@ -36,6 +36,7 @@ import Data.List (elemIndex, foldl', groupBy, transpose)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
+import Debug.Trace
 import Ourlude
 import Parser (ConstructorDefinition (..), ConstructorName, Literal (..), Name, ValName)
 import qualified Parser as P
@@ -93,12 +94,6 @@ data ResolvingInformation
     Custom Int
   deriving (Eq, Show)
 
--- | Return the number of arguments we expect a type with some arguments to have
-typeArity :: ResolvingInformation -> Int
-typeArity = \case
-  Synonym _ -> 0
-  Custom n -> n
-
 -- | A resolution map provides us with information about each type appearing in our program
 type ResolutionMap = Map.Map TypeName ResolvingInformation
 
@@ -115,13 +110,15 @@ resolve mp = go
   where
     go :: Type -> Either SimplifierError Type
     go = \case
-      ct@(CustomType name ts) -> do
-        resolved <- maybe (Left (UnknownType name)) Right (Map.lookup name mp)
-        let expectedArity = typeArity resolved
-            actual = length ts
-            err = MismatchedTypeArgs name expectedArity actual
-        unless (expectedArity == actual) (Left err)
-        return ct
+      CustomType name ts -> do
+        ts' <- mapM go ts
+        let arity = length ts'
+        case Map.lookup name mp of
+          Nothing -> Left (UnknownType name)
+          Just (Synonym _) | arity /= 0 -> Left (MismatchedTypeArgs name 0 arity)
+          Just (Synonym t) -> return t
+          Just (Custom expected) | arity /= expected -> Left (MismatchedTypeArgs name expected arity)
+          Just (Custom _) -> return (CustomType name ts')
       t1 :-> t2 -> (:->) <$> go t1 <*> go t2
       terminal -> return terminal
 
@@ -240,9 +237,11 @@ gatherConstructorMap =
 
 resolveConstructorMap :: ResolutionMap -> ConstructorMap -> Either SimplifierError ConstructorMap
 resolveConstructorMap mp =
-  traverse <| \(ConstructorInfo arity (Scheme vars t) number) -> do
-    resolved <- resolve mp t
-    return (ConstructorInfo arity (Scheme vars resolved) number)
+  traceShow mp
+    <| traverse
+    <| \(ConstructorInfo arity (Scheme vars t) number) -> do
+      resolved <- resolve mp t
+      return (ConstructorInfo arity (Scheme vars resolved) number)
 
 {- Resolving all of the type synonyms -}
 
@@ -355,15 +354,23 @@ gatherResolutions defs = do
             resolved <- liftEither (resolve resolutions' unresolved)
             modify' (Map.insert n (Synonym resolved))
 
+data SimplifierContext = SimplifierContext
+  { resolutionMap :: ResolutionMap,
+    constructorInfo :: ConstructorMap
+  }
+
 -- | Represents the context we have access to in the simplifier
 --
 -- We do this in order to keep a global source of fresh variables
-newtype Simplifier a = Simplifier (ReaderT ResolutionMap (StateT Int (Except SimplifierError)) a)
-  deriving (Functor, Applicative, Monad, MonadReader ResolutionMap, MonadState Int, MonadError SimplifierError)
+newtype Simplifier a = Simplifier (ReaderT SimplifierContext (StateT Int (Except SimplifierError)) a)
+  deriving (Functor, Applicative, Monad, MonadReader SimplifierContext, MonadState Int, MonadError SimplifierError)
 
 -- | Run the simplifier, producing an error, or value
-runSimplifier :: ResolutionMap -> Simplifier a -> Either SimplifierError a
-runSimplifier mp (Simplifier m) = runReaderT m mp |> (`runStateT` 0) |> runExcept |> fmap fst
+runSimplifier :: SimplifierContext -> Simplifier a -> Either SimplifierError a
+runSimplifier ctx (Simplifier m) = runReaderT m ctx |> (`runStateT` 0) |> runExcept |> fmap fst
+
+instance HasConstructorMap Simplifier where
+  constructorMap = asks constructorInfo
 
 -- | Create a fresh name in the simplifier context
 fresh :: Simplifier ValName
@@ -374,9 +381,17 @@ fresh = do
 
 makeScheme :: Type -> Simplifier Scheme
 makeScheme typ = do
-  mp <- ask
+  mp <- asks resolutionMap
   resolved <- liftEither (resolve mp typ)
   return (closeType resolved)
+
+validatePattern :: P.Pattern -> Simplifier ()
+validatePattern = \case
+  P.ConstructorPattern name pats -> do
+    ok <- isConstructor name
+    unless ok (throwError (UnknownConstructor name))
+    forM_ pats validatePattern
+  _ -> return ()
 
 {- Converting the actual AST and Expression Tree -}
 
@@ -429,6 +444,7 @@ convertExpr (P.ApplyExpr f exprs) = do
   return (foldl' ApplyExpr f' exprs')
 convertExpr (P.CaseExpr expr patterns) = do
   expr' <- convertExpr expr
+  forM_ patterns (fst >>> validatePattern)
   matrix <- Matrix <$> traverse (\(p, e) -> Row [p] <$> convertExpr e) patterns
   -- We're guaranteed to have a single name, because we have a single column
   (names, caseExpr) <- compileMatrix matrix
@@ -462,8 +478,10 @@ convertValueDefinitions =
     makeMatrix = traverse makeRow >>> fmap (catMaybes >>> Matrix)
       where
         makeRow = \case
-          P.NameDefinition _ pats body ->
-            (Just <<< Row pats) <$> convertExpr body
+          P.NameDefinition _ pats body -> do
+            forM_ pats validatePattern
+            body' <- convertExpr body
+            return (Just (Row pats body'))
           _ -> return Nothing
 
     gather :: [P.ValueDefinition] -> Simplifier (ValueDefinition ())
@@ -697,9 +715,10 @@ convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefi
 
 simplifier :: P.AST -> Either SimplifierError (AST ())
 simplifier (P.AST defs) = do
-  resolutionMap <- gatherResolutions defs
+  resolutionMap' <- gatherResolutions defs
   constructorMap' <- gatherConstructorMap defs
-  resolvedConstructors <- resolveConstructorMap resolutionMap constructorMap'
-  runSimplifier resolutionMap <| do
+  resolvedConstructors <- resolveConstructorMap resolutionMap' constructorMap'
+  let ctx = SimplifierContext resolutionMap' resolvedConstructors
+  runSimplifier ctx <| do
     defs' <- convertDefinitions defs
     return (AST resolvedConstructors defs')
