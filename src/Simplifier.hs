@@ -238,6 +238,12 @@ gatherConstructorMap =
         <| throwError (UnboundTypeVarsInConstructor (Set.toList freeInScheme) cstr)
       return (Map.singleton cstr info)
 
+resolveConstructorMap :: ResolutionMap -> ConstructorMap -> Either SimplifierError ConstructorMap
+resolveConstructorMap mp =
+  traverse <| \(ConstructorInfo arity (Scheme vars t) number) -> do
+    resolved <- resolve mp t
+    return (ConstructorInfo arity (Scheme vars resolved) number)
+
 {- Resolving all of the type synonyms -}
 
 -- | Which type definitions does this type reference?
@@ -693,6 +699,7 @@ simplifier :: P.AST -> Either SimplifierError (AST ())
 simplifier (P.AST defs) = do
   resolutionMap <- gatherResolutions defs
   constructorMap' <- gatherConstructorMap defs
+  resolvedConstructors <- resolveConstructorMap resolutionMap constructorMap'
   runSimplifier resolutionMap <| do
     defs' <- convertDefinitions defs
-    return (AST constructorMap' defs')
+    return (AST resolvedConstructors defs')
