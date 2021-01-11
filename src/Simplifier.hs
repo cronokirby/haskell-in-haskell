@@ -35,10 +35,9 @@ import Control.Monad.Reader (ReaderT (..), ask, asks, local)
 import Control.Monad.State (MonadState, StateT (..), execStateT, get, gets, modify', put)
 import Data.Foldable (asum)
 import Data.Function (on)
-import Data.Functor (($>))
 import Data.List (elemIndex, foldl', groupBy, transpose)
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Ourlude
 import Parser (ConstructorDefinition (..), ConstructorName, Literal (..), Name, ValName)
