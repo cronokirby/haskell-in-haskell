@@ -33,13 +33,13 @@ import Simplifier
   ( AST (..),
     Builtin (..),
     ConstructorInfo (..),
+    ConstructorMap,
     ConstructorName,
     Expr (..),
-    HasTypeInformation (..),
+    HasConstructorMap (..),
     Literal (..),
     Name,
     Pattern (..),
-    TypeInformation (..),
     TypeName,
     TypeVar,
     ValName,
@@ -142,7 +142,7 @@ instance ActiveTypeVars a => ActiveTypeVars [a] where
 -- as the information about type synonym resolutions.
 data InferEnv = InferEnv
   { bound :: Set.Set TypeName,
-    typeInfo :: TypeInformation
+    constructorInfo :: ConstructorMap
   }
 
 -- The context in which we perform type inference.
@@ -152,11 +152,11 @@ data InferEnv = InferEnv
 newtype Infer a = Infer (ReaderT InferEnv (StateT Int (Except TypeError)) a)
   deriving (Functor, Applicative, Monad, MonadReader InferEnv, MonadState Int, MonadError TypeError)
 
-instance HasTypeInformation Infer where
-  typeInformation = asks typeInfo
+instance HasConstructorMap Infer where
+  constructorMap = asks constructorInfo
 
 -- Run the inference context, provided we have a resolution map
-runInfer :: Infer a -> TypeInformation -> Either TypeError a
+runInfer :: Infer a -> ConstructorMap -> Either TypeError a
 runInfer (Infer m) info =
   runReaderT m (InferEnv Set.empty info)
     |> (`runStateT` 0)
@@ -487,7 +487,7 @@ inferTypes defs = do
   liftEither <| runTyper (typeDefinitions defs') sub
   where
     allConstructors :: Infer (Map.Map ConstructorName Scheme)
-    allConstructors = typeInformation |> fmap (constructorMap >>> Map.map constructorType)
+    allConstructors = Map.map constructorType <$> constructorMap
 
 -- Run the type checker on a given AST, producing just the value definitions, annotated
 typer :: AST () -> Either TypeError (AST Scheme)

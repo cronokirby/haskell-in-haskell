@@ -214,7 +214,7 @@ data STGMInfo = STGMInfo
   { -- The names we know to appear at the top level
     topLevelNames :: Set.Set ValName,
     -- The information about types and constructors
-    typeInfo :: S.TypeInformation
+    constructorInfo :: S.ConstructorMap
   }
 
 -- The Context in which we generate STG code
@@ -223,8 +223,8 @@ data STGMInfo = STGMInfo
 newtype STGM a = STGM (ReaderT STGMInfo (State Int) a)
   deriving (Functor, Applicative, Monad, MonadState Int, MonadReader STGMInfo)
 
-instance S.HasTypeInformation STGM where
-  typeInformation = asks typeInfo
+instance S.HasConstructorMap STGM where
+  constructorMap = asks constructorInfo
 
 
 runSTGM :: STGM a -> STGMInfo -> a

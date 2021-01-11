@@ -17,9 +17,9 @@ module Simplifier
     ConstructorName,
     TypeName,
     Builtin (..),
-    HasTypeInformation (..),
-    TypeInformation (..),
+    HasConstructorMap (..),
     ConstructorInfo (..),
+    ConstructorMap,
     isConstructor,
     lookupConstructorOrFail,
     simplifier,
@@ -67,7 +67,7 @@ data SimplifierError
 --
 -- We've grouped global information about types from the definitions into a central map.
 -- The remaining definitions in our AST are for values.
-data AST t = AST TypeInformation [ValueDefinition t] deriving (Eq, Show)
+data AST t = AST ConstructorMap [ValueDefinition t] deriving (Eq, Show)
 
 -- | The information we have about a given constructor
 data ConstructorInfo = ConstructorInfo
@@ -102,18 +102,10 @@ typeArity = \case
 -- | A resolution map provides us with information about each type appearing in our program
 type ResolutionMap = Map.Map TypeName ResolvingInformation
 
-data TypeInformation = TypeInformation
-  { -- | A map of all of the type synonyms, fully resolved to a given type
-    resolutions :: ResolutionMap,
-    -- | A map from each constructor's name to the information we have about that constructor
-    constructorMap :: ConstructorMap
-  }
-  deriving (Eq, Show)
-
 -- | A class for monadic contexts with access to type information
-class Monad m => HasTypeInformation m where
+class Monad m => HasConstructorMap m where
   -- | Access the type information available in this context
-  typeInformation :: m TypeInformation
+  constructorMap :: m ConstructorMap
 
 -- | Given a resolution map, fully resolve a type, or throw an error
 --
@@ -134,17 +126,16 @@ resolve mp = go
       terminal -> return terminal
 
 -- | Check if some name is a constructor
-isConstructor :: HasTypeInformation m => Name -> m Bool
+isConstructor :: HasConstructorMap m => Name -> m Bool
 isConstructor name =
-  typeInformation |> fmap (constructorMap >>> Map.member name)
+  Map.member name <$> constructorMap
 
 -- | Lookup the information about a given constructor
 --
 -- This should be called only after having made sure the construct exists
-lookupConstructorOrFail :: HasTypeInformation m => ConstructorName -> m ConstructorInfo
-lookupConstructorOrFail name = do
-  mp <- constructorMap <$> typeInformation
-  return (Map.findWithDefault err name mp)
+lookupConstructorOrFail :: HasConstructorMap m => ConstructorName -> m ConstructorInfo
+lookupConstructorOrFail name =
+  Map.findWithDefault err name <$> constructorMap
   where
     err = UnknownConstructor name |> show |> error
 
@@ -229,7 +220,7 @@ substituteName old new = go
 -- | Create a map for constructor information
 --
 -- We need the ability to throw simplifier errors to do this.
-gatherConstructorMap :: MonadError SimplifierError m => [P.Definition] -> m ConstructorMap
+gatherConstructorMap :: [P.Definition] -> Either SimplifierError ConstructorMap
 gatherConstructorMap =
   foldMapM <| \case
     P.DataDefinition name typeVars definitions ->
@@ -374,13 +365,6 @@ fresh = do
   c <- get
   put (c + 1)
   return ("$" ++ show c)
-
--- | Gather all of the type information we need from the parsed definitions
-gatherTypeInformation :: [P.Definition] -> Simplifier TypeInformation
-gatherTypeInformation defs = do
-  resolutions' <- liftEither (gatherResolutions defs)
-  constructorMap' <- gatherConstructorMap defs
-  return (TypeInformation resolutions' constructorMap')
 
 makeScheme :: Type -> Simplifier Scheme
 makeScheme typ = do
@@ -708,7 +692,7 @@ convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefi
 simplifier :: P.AST -> Either SimplifierError (AST ())
 simplifier (P.AST defs) = do
   resolutionMap <- gatherResolutions defs
+  constructorMap' <- gatherConstructorMap defs
   runSimplifier resolutionMap <| do
-    info <- gatherTypeInformation defs
     defs' <- convertDefinitions defs
-    return (AST info defs')
+    return (AST constructorMap' defs')
