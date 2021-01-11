@@ -226,9 +226,6 @@ newtype STGM a = STGM (ReaderT STGMInfo (State Int) a)
 instance S.HasTypeInformation STGM where
   typeInformation = asks typeInfo
 
--- All resolution errors will have been caught in the type checker
-instance S.ResolutionM STGM where
-  throwResolution err = error ("Resolution Error in STG: " ++ show err)
 
 runSTGM :: STGM a -> STGMInfo -> a
 runSTGM (STGM m) info =
@@ -243,7 +240,7 @@ fresh = do
 
 -- Lookup the tag associated with a constructor's name
 constructorTag :: ConstructorName -> STGM Tag
-constructorTag name = S.lookupConstructor name |> fmap S.constructorNumber
+constructorTag name = S.lookupConstructorOrFail name |> fmap S.constructorNumber
 
 getFreeNames :: FreeNames a => a -> STGM [ValName]
 getFreeNames a =
@@ -316,7 +313,7 @@ data ConstructorResult = AlreadyFull Tag [Atom] | NeededFilling [Binding] ValNam
 
 saturateConstructor :: Bool -> ConstructorName -> [Atom] -> STGM ConstructorResult
 saturateConstructor alwaysSaturate name atoms = do
-  (S.ConstructorInfo arity _ tag) <- S.lookupConstructor name
+  (S.ConstructorInfo arity _ tag) <- S.lookupConstructorOrFail name
   let diff = arity - length atoms
   if not alwaysSaturate && diff == 0
     then return (AlreadyFull tag atoms)

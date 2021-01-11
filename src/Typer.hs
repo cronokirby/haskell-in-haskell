@@ -39,14 +39,12 @@ import Simplifier
     Literal (..),
     Name,
     Pattern (..),
-    ResolutionError,
-    ResolutionM (..),
     TypeInformation (..),
     TypeName,
     TypeVar,
     ValName,
     ValueDefinition (..),
-    lookupConstructor,
+    lookupConstructorOrFail,
   )
 import Types (FreeTypeVars (..), Scheme (..), Type (..), asGeneral)
 
@@ -58,8 +56,6 @@ data TypeError
     InfiniteType TypeVar Type
   | -- An undefined name was used
     UnboundName Name
-  | -- An error ocurring because of a resolution
-    TypeResolutionError ResolutionError
   | -- An inferred scheme is not as general as the declared one
     NotGeneralEnough Scheme Scheme
   deriving (Eq, Show)
@@ -158,9 +154,6 @@ newtype Infer a = Infer (ReaderT InferEnv (StateT Int (Except TypeError)) a)
 
 instance HasTypeInformation Infer where
   typeInformation = asks typeInfo
-
-instance ResolutionM Infer where
-  throwResolution = throwError <<< TypeResolutionError
 
 -- Run the inference context, provided we have a resolution map
 runInfer :: Infer a -> TypeInformation -> Either TypeError a
@@ -329,7 +322,7 @@ inferPatternDef scrutinee (pat, e) = do
         let patTypes = map TVar patVars
             patType = foldr (:->) scrutinee' patTypes
             valMap = zip pats patTypes |> Map.fromList
-        constructor <- constructorType <$> lookupConstructor cstr
+        constructor <- constructorType <$> lookupConstructorOrFail cstr
         return ([ExplicitlyInstantiates patType constructor], valMap, Set.fromList patVars)
 
     adjustValAssumptions :: Map.Map ValName Type -> Assumptions -> Assumptions

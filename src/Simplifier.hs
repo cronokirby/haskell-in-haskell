@@ -17,18 +17,15 @@ module Simplifier
     ConstructorName,
     TypeName,
     Builtin (..),
-    ResolutionError,
     HasTypeInformation (..),
-    ResolutionM (..),
     TypeInformation (..),
     ConstructorInfo (..),
     isConstructor,
-    lookupConstructor,
+    lookupConstructorOrFail,
     simplifier,
   )
 where
 
-import Control.Arrow (left)
 import Control.Monad (forM_, replicateM, unless, when)
 import Control.Monad.Except (Except, MonadError (..), liftEither, runExcept)
 import Control.Monad.Reader (MonadReader (..), ReaderT (..), ask, asks, local)
@@ -52,15 +49,9 @@ data SimplifierError
     DifferentPatternLengths ValName [Int]
   | -- | An annotation doesn't have a corresponding definition
     UnimplementedAnnotation ValName
-  | -- | An error that can occurr while resolving types
-    ResolutionError ResolutionError
   | -- | A type variable is not bound in a constructor
     UnboundTypeVarsInConstructor [TypeVar] ConstructorName
-  deriving (Eq, Show)
-
--- | An error that can happen while resolving a reference to a type
-data ResolutionError
-  = -- | A reference to some type that doesn't exist
+  | -- | A reference to some type that doesn't exist
     UnknownType TypeName
   | -- | A mismatch of a type constructor with expected vs actual args
     MismatchedTypeArgs TypeName Int Int
@@ -124,17 +115,13 @@ class Monad m => HasTypeInformation m where
   -- | Access the type information available in this context
   typeInformation :: m TypeInformation
 
--- | A class for monadic contexts in which resolution errors can be thrown
-class HasTypeInformation m => ResolutionM m where
-  throwResolution :: ResolutionError -> m a
-
 -- | Given a resolution map, fully resolve a type, or throw an error
 --
 -- This replaces all references to synonyms with concrete types.
-resolve :: ResolutionMap -> Type -> Either ResolutionError Type
+resolve :: ResolutionMap -> Type -> Either SimplifierError Type
 resolve mp = go
   where
-    go :: Type -> Either ResolutionError Type
+    go :: Type -> Either SimplifierError Type
     go = \case
       ct@(CustomType name ts) -> do
         resolved <- maybe (Left (UnknownType name)) Right (Map.lookup name mp)
@@ -151,13 +138,15 @@ isConstructor :: HasTypeInformation m => Name -> m Bool
 isConstructor name =
   typeInformation |> fmap (constructorMap >>> Map.member name)
 
--- | Try and lookup the information about a given constructor, failing with a resolution error
--- if that constructor doesn't exist
-lookupConstructor :: ResolutionM m => ConstructorName -> m ConstructorInfo
-lookupConstructor name = do
+-- | Lookup the information about a given constructor
+--
+-- This should be called only after having made sure the construct exists
+lookupConstructorOrFail :: HasTypeInformation m => ConstructorName -> m ConstructorInfo
+lookupConstructorOrFail name = do
   mp <- constructorMap <$> typeInformation
-  let info = Map.lookup name mp
-  maybe (throwResolution (UnknownConstructor name)) return info
+  return (Map.findWithDefault err name mp)
+  where
+    err = UnknownConstructor name |> show |> error
 
 -- | Represents a single definition for a value.
 --
@@ -279,10 +268,10 @@ data SorterState = SorterState
 --
 -- We have access to a set of ancestors to keep track of cycles, the current state,
 -- which we can modify, and the ability to throw exceptions.
-type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except ResolutionError)) a
+type SorterM a = ReaderT (Set.Set TypeName) (StateT SorterState (Except SimplifierError)) a
 
 -- | Run the sorter, given a seed state
-runSorter :: SorterM a -> SorterState -> Either ResolutionError a
+runSorter :: SorterM a -> SorterState -> Either SimplifierError a
 runSorter m st =
   runReaderT m Set.empty |> (`runStateT` st) |> runExcept |> fmap fst
 
@@ -290,7 +279,7 @@ runSorter m st =
 --
 -- The types are sorted topologically, based on their dependencies. This means that
 -- a type will come after all of its dependencies
-sortTypeSynonyms :: Map.Map TypeName Type -> Either ResolutionError [TypeName]
+sortTypeSynonyms :: Map.Map TypeName Type -> Either SimplifierError [TypeName]
 sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap reverse
   where
     deps :: TypeName -> Set.Set TypeName
@@ -345,17 +334,17 @@ gatherTypeSynonyms =
     _ -> Map.empty
 
 -- | A monad we use for gathering a resolution map
-type MakeResolutionM a = ReaderT (Map.Map TypeName Type) (StateT ResolutionMap (Except ResolutionError)) a
+type MakeResolutionM a = ReaderT (Map.Map TypeName Type) (StateT ResolutionMap (Except SimplifierError)) a
 
 -- | Gather all the resolving information from types
-gatherResolutions :: [P.Definition] -> Either ResolutionError ResolutionMap
+gatherResolutions :: [P.Definition] -> Either SimplifierError ResolutionMap
 gatherResolutions defs = do
   let customInfo = gatherCustomTypes defs
       typeSynMap = gatherTypeSynonyms defs
   names <- sortTypeSynonyms typeSynMap
   runResolutionM (resolveAll names) typeSynMap (Map.map Custom customInfo)
   where
-    runResolutionM :: MakeResolutionM a -> Map.Map TypeName Type -> ResolutionMap -> Either ResolutionError ResolutionMap
+    runResolutionM :: MakeResolutionM a -> Map.Map TypeName Type -> ResolutionMap -> Either SimplifierError ResolutionMap
     runResolutionM m typeSynMap st =
       runReaderT m typeSynMap |> (`execStateT` st) |> runExcept
 
@@ -389,14 +378,14 @@ fresh = do
 -- | Gather all of the type information we need from the parsed definitions
 gatherTypeInformation :: [P.Definition] -> Simplifier TypeInformation
 gatherTypeInformation defs = do
-  resolutions' <- either (ResolutionError >>> throwError) return (gatherResolutions defs)
+  resolutions' <- liftEither (gatherResolutions defs)
   constructorMap' <- gatherConstructorMap defs
   return (TypeInformation resolutions' constructorMap')
 
 makeScheme :: Type -> Simplifier Scheme
 makeScheme typ = do
   mp <- ask
-  resolved <- either (ResolutionError >>> throwError) return (resolve mp typ)
+  resolved <- liftEither (resolve mp typ)
   return (closeType resolved)
 
 {- Converting the actual AST and Expression Tree -}
@@ -718,7 +707,7 @@ convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefi
 
 simplifier :: P.AST -> Either SimplifierError (AST ())
 simplifier (P.AST defs) = do
-  resolutionMap <- left ResolutionError <| gatherResolutions defs
+  resolutionMap <- gatherResolutions defs
   runSimplifier resolutionMap <| do
     info <- gatherTypeInformation defs
     defs' <- convertDefinitions defs
