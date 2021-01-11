@@ -22,16 +22,16 @@ module Simplifier
     ResolutionM (..),
     TypeInformation (..),
     ConstructorInfo (..),
-    resolveM,
     isConstructor,
     lookupConstructor,
     simplifier,
   )
 where
 
+import Control.Arrow (left)
 import Control.Monad (forM_, replicateM, unless, when)
 import Control.Monad.Except (Except, MonadError (..), liftEither, runExcept)
-import Control.Monad.Reader (ReaderT (..), ask, asks, local)
+import Control.Monad.Reader (MonadReader (..), ReaderT (..), ask, asks, local)
 import Control.Monad.State (MonadState, StateT (..), execStateT, get, gets, modify', put)
 import Data.Foldable (asum)
 import Data.Function (on)
@@ -111,7 +111,6 @@ typeArity = \case
 -- | A resolution map provides us with information about each type appearing in our program
 type ResolutionMap = Map.Map TypeName ResolvingInformation
 
--- | This is a record of all information you might want to have about the types in our program
 data TypeInformation = TypeInformation
   { -- | A map of all of the type synonyms, fully resolved to a given type
     resolutions :: ResolutionMap,
@@ -146,13 +145,6 @@ resolve mp = go
         return ct
       t1 :-> t2 -> (:->) <$> go t1 <*> go t2
       terminal -> return terminal
-
--- | Resolve a type in a context where we can throw resolution errors, and have access
--- to type information
-resolveM :: ResolutionM m => Type -> m Type
-resolveM expr = do
-  resolutions' <- resolutions <$> typeInformation
-  either throwResolution return (resolve resolutions' expr)
 
 -- | Check if some name is a constructor
 isConstructor :: HasTypeInformation m => Name -> m Bool
@@ -301,9 +293,6 @@ runSorter m st =
 sortTypeSynonyms :: Map.Map TypeName Type -> Either ResolutionError [TypeName]
 sortTypeSynonyms mp = runSorter sort (SorterState (Map.keysSet mp) []) |> fmap reverse
   where
-    -- | Find the dependencies of a given type name
-    --
-    -- This acts similarly to a "neighbors" function in a traditional graph
     deps :: TypeName -> Set.Set TypeName
     deps k = Map.findWithDefault Set.empty k (Map.map typeDependencies mp)
 
@@ -383,12 +372,12 @@ gatherResolutions defs = do
 -- | Represents the context we have access to in the simplifier
 --
 -- We do this in order to keep a global source of fresh variables
-newtype Simplifier a = Simplifier (StateT Int (Except SimplifierError) a)
-  deriving (Functor, Applicative, Monad, MonadState Int, MonadError SimplifierError)
+newtype Simplifier a = Simplifier (ReaderT ResolutionMap (StateT Int (Except SimplifierError)) a)
+  deriving (Functor, Applicative, Monad, MonadReader ResolutionMap, MonadState Int, MonadError SimplifierError)
 
 -- | Run the simplifier, producing an error, or value
-runSimplifier :: Simplifier a -> Either SimplifierError a
-runSimplifier (Simplifier m) = runStateT m 0 |> runExcept |> fmap fst
+runSimplifier :: ResolutionMap -> Simplifier a -> Either SimplifierError a
+runSimplifier mp (Simplifier m) = runReaderT m mp |> (`runStateT` 0) |> runExcept |> fmap fst
 
 -- | Create a fresh name in the simplifier context
 fresh :: Simplifier ValName
@@ -403,6 +392,12 @@ gatherTypeInformation defs = do
   resolutions' <- either (ResolutionError >>> throwError) return (gatherResolutions defs)
   constructorMap' <- gatherConstructorMap defs
   return (TypeInformation resolutions' constructorMap')
+
+makeScheme :: Type -> Simplifier Scheme
+makeScheme typ = do
+  mp <- ask
+  resolved <- either (ResolutionError >>> throwError) return (resolve mp typ)
+  return (closeType resolved)
 
 {- Converting the actual AST and Expression Tree -}
 
@@ -496,8 +491,8 @@ convertValueDefinitions =
     gather [] = error "groupBy returned empty list"
     gather valueHeads = do
       let name = getName (head valueHeads)
-          annotations = getTypeAnnotations valueHeads
-      schemeExpr <- case map closeType annotations of
+      annotations <- getTypeAnnotations valueHeads |> mapM makeScheme
+      schemeExpr <- case annotations of
         [] -> return Nothing
         [single] -> return (Just single)
         tooMany -> throwError (MultipleTypeAnnotations name tooMany)
@@ -722,8 +717,9 @@ convertDefinitions = map pluckValueDefinition >>> catMaybes >>> convertValueDefi
     pluckValueDefinition _ = Nothing
 
 simplifier :: P.AST -> Either SimplifierError (AST ())
-simplifier (P.AST defs) =
-  runSimplifier <| do
+simplifier (P.AST defs) = do
+  resolutionMap <- left ResolutionError <| gatherResolutions defs
+  runSimplifier resolutionMap <| do
     info <- gatherTypeInformation defs
     defs' <- convertDefinitions defs
     return (AST info defs')

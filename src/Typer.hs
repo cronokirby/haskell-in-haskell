@@ -47,7 +47,6 @@ import Simplifier
     ValName,
     ValueDefinition (..),
     lookupConstructor,
-    resolveM,
   )
 import Types (FreeTypeVars (..), Scheme (..), Type (..), asGeneral)
 
@@ -345,11 +344,7 @@ inferDefs usageAs defs = do
   together <-
     forM defs <| \(ValueDefinition n declared _ e) -> do
       (as, cs, t, e') <- inferExpr e
-      extra <- case declared of
-        Nothing -> return []
-        Just (Scheme names d) -> do
-          resolved <- resolveM d
-          return [ExplicitlyInstantiates t (Scheme names resolved)]
+      let extra = foldMap (\sc -> [ExplicitlyInstantiates t sc]) declared
       return (as, extra ++ cs, (n, t), ValueDefinition n declared t e')
   bound' <- asks bound
   let as = usageAs <> foldMap (\(x, _, _, _) -> x) together
