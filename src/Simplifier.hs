@@ -36,7 +36,6 @@ import Data.List (elemIndex, foldl', groupBy, transpose)
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
-import Debug.Trace
 import Ourlude
 import Parser (ConstructorDefinition (..), ConstructorName, Literal (..), Name, ValName)
 import qualified Parser as P
@@ -237,8 +236,7 @@ gatherConstructorMap =
 
 resolveConstructorMap :: ResolutionMap -> ConstructorMap -> Either SimplifierError ConstructorMap
 resolveConstructorMap mp =
-  traceShow mp
-    <| traverse
+  traverse
     <| \(ConstructorInfo arity (Scheme vars t) number) -> do
       resolved <- resolve mp t
       return (ConstructorInfo arity (Scheme vars resolved) number)
