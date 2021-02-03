@@ -5,6 +5,7 @@ import Data.Char (toLower)
 import qualified Lexer
 import Ourlude
 import qualified Parser
+import qualified Simplifier
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import Text.Pretty.Simple (pPrint, pPrintString)
@@ -36,6 +37,9 @@ lexerStage = makeStage "Lexer" Lexer.lexer
 parserStage :: Stage [Lexer.Token] Parser.AST
 parserStage = makeStage "Parser" Parser.parser
 
+simplifierStage :: Stage Parser.AST (Simplifier.AST ())
+simplifierStage = makeStage "Simplifier" Simplifier.simplifier
+
 (>->) :: Stage a b -> Stage b c -> Stage a c
 (>->) (Stage _ r1) (Stage n2 r2) = Stage n2 (r1 >=> r2)
 
@@ -55,6 +59,8 @@ readStage "lex" =
   lexerStage |> printStage |> Just
 readStage "parse" =
   lexerStage >-> parserStage |> printStage |> Just
+readStage "simplify" =
+  lexerStage >-> parserStage >-> simplifierStage |> printStage |> Just
 readStage _ = Nothing
 
 process :: Args -> IO ()
