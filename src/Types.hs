@@ -61,7 +61,7 @@ instance FreeTypeVars TypeName where
 instance FreeTypeVars Scheme where
   ftv (Scheme vars t) = Set.difference (ftv t) (Set.fromList vars)
 
-instance (Ord a, FreeTypeVars a) => FreeTypeVars (Set.Set a) where
+instance FreeTypeVars a => FreeTypeVars (Set.Set a) where
   ftv = foldMap ftv
 
 -- Close a type expression over all of the free names appearing inside
